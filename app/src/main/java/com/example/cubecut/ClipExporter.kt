@@ -17,13 +17,17 @@ import java.nio.ByteBuffer
 import kotlin.math.max
 import kotlin.math.min
 
-/** One cut on the timeline: a sound (the stop), the time the timer showed, and whether it becomes a clip. */
+/**
+ * One cut on the timeline: the moment the timer stopped (the first video frame that shows the final time),
+ * the time it showed, and what to export for it.
+ */
 data class CutItem(
-    val soundSec: Double,       // where the stop sound is, in seconds from the start of the video
-    val timeText: String,       // what the timer showed, e.g. "11.263" ("" = unknown)
-    val included: Boolean,      // true = this cut is exported as a clip
-    val note: String,           // why it is only a suggestion, or "added by you"
-    val manual: Boolean         // true if the user added it
+    val stopSec: Double,                  // the first frame that shows the final time, in seconds from the start of the video
+    val timeText: String,                 // what the timer showed, e.g. "11.263" ("" = unknown)
+    val included: Boolean,                // true = this cut is exported as a clip
+    val note: String,                     // why it needs a look, or "added by you"
+    val manual: Boolean,                  // true if the user added it
+    val includeScramble: Boolean = true   // true = clip runs from the end of the previous clip (scramble included); false = the solve only
 )
 
 /** One video file that will be exported. */
@@ -32,25 +36,62 @@ class Clip(
     val startSec: Double,
     val endSec: Double,
     val timeText: String,
-    val cutIndex: Int           // which CutItem it came from (index in the original list)
+    val cutIndex: Int,          // which CutItem it came from (index in the original list)
+    val withScramble: Boolean,  // true = starts where the previous clip ended
+    val solveStartSec: Double,  // where the solve part starts (the time before the stop, minus the "before" buffer); equals startSec when the scramble is left out
+    val noTime: Boolean         // "solve only" was wanted but the time is unknown, so the full clip is used instead
 )
 
+/** "12.112" -> 12.112, "1:02.345" -> 62.345, "" or nonsense -> null. */
+fun parseTimeSeconds(text: String): Double? {
+    val t = text.trim()
+    if (t.isEmpty()) return null
+    val seconds: Double? = if (t.contains(':')) {
+        val parts = t.split(':')
+        val m = if (parts.size == 2) parts[0].toIntOrNull() else null
+        val s = if (parts.size == 2) parts[1].toDoubleOrNull() else null
+        if (m != null && s != null) m * 60.0 + s else null
+    } else {
+        t.toDoubleOrNull()
+    }
+    return seconds?.takeIf { it > 0.0 && it < 3600.0 }
+}
+
 /**
- * Turns the switched-on cuts into clips: a clip ends [endPad] seconds after its stop sound
- * and starts where the previous clip ended (the first one starts at 0:00).
+ * Turns the switched-on cuts into clips.
+ *
+ * Every clip ends [afterPad] seconds after the first frame that shows the time (the stop).
+ *  - With the scramble (includeScramble = true): it starts where the previous clip ended (the first one at 0:00),
+ *    but never later than the solve start minus [beforePad], so the solve is always fully inside.
+ *  - Without the scramble: it starts (time on the timer + [beforePad]) seconds before the stop = just the solve with a buffer.
+ *    If the time is unknown this can't be worked out, so the full clip is used and Clip.noTime says so.
  */
-fun computeClips(items: List<CutItem>, endPad: Double, durationSec: Double): List<Clip> {
-    val order = items.indices.sortedBy { items[it].soundSec }
+fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, durationSec: Double): List<Clip> {
+    val order = items.indices.sortedBy { items[it].stopSec }
     val clips = mutableListOf<Clip>()
     var previousEnd = 0.0
     var number = 0
     for (i in order) {
         val item = items[i]
         if (!item.included) continue
-        val end = if (durationSec > 0) min(item.soundSec + endPad, durationSec) else item.soundSec + endPad
+        val end = if (durationSec > 0) min(item.stopSec + afterPad, durationSec) else item.stopSec + afterPad
         if (end - previousEnd < 1.0) continue          // two cuts too close together: skip the second one
+        val solveSec = parseTimeSeconds(item.timeText)
+        val soloStart: Double? = if (solveSec != null) max(0.0, item.stopSec - solveSec - beforePad) else null
+        val start: Double
+        val noTime: Boolean
+        if (item.includeScramble) {
+            start = if (soloStart != null) min(previousEnd, soloStart) else previousEnd
+            noTime = false
+        } else if (soloStart != null) {
+            start = soloStart
+            noTime = false
+        } else {
+            start = previousEnd
+            noTime = true
+        }
         number++
-        clips.add(Clip(number, previousEnd, end, item.timeText, i))
+        clips.add(Clip(number, start, end, item.timeText, i, item.includeScramble || noTime, soloStart ?: start, noTime))
         previousEnd = end
     }
     return clips
