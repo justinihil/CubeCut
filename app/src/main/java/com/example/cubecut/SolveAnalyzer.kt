@@ -64,6 +64,9 @@ object SolveAnalyzer {
     const val HOLD_MERGE_SEC = 12.0     // look-alike readings of a found time within this long are the same hold, not a new solve
     const val UNREADABLE_MIN_SEC = 15.0 // an unreadable stretch at least this long is reported as "check this part"
 
+    /** Start of the note on a cut whose time was already showing when the video began. Such a cut is switched off and ignored like a deleted one. */
+    const val LEFTOVER_NOTE_START = "this time was already on the timer"
+
     // ---- finding the first frame ----
     const val COARSE_BACK_STEP = 0.5
     const val BACK_STEP = 0.1
@@ -288,7 +291,7 @@ object SolveAnalyzer {
                 var note = ""
                 var include = true
                 if (!certain && earliest < 1.0) {
-                    note = "this time was already on the timer when the video began - probably left over from an earlier solve"
+                    note = "$LEFTOVER_NOTE_START when the video began - probably left over from an earlier solve"
                     include = false
                 } else if (votes < reads * 0.6) {
                     note = "time not steady (read on $votes of $reads frames) - check it"

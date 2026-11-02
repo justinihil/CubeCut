@@ -58,24 +58,33 @@ fun parseTimeSeconds(text: String): Double? {
 }
 
 /**
- * Turns the switched-on cuts into clips.
+ * Turns the cuts into clips.
  *
  * Every clip ends [afterPad] seconds after the first frame that shows the time (the stop).
- *  - With the scramble (includeScramble = true): it starts where the previous clip ended (the first one at 0:00),
- *    but never later than the solve start minus [beforePad], so the solve is always fully inside.
+ *  - With the scramble (includeScramble = true): it starts where the PREVIOUS CUT ended (the first one at 0:00), whether or not
+ *    that previous cut is switched on. So a solve you left out is never dragged into the next clip; its scramble is not
+ *    included either. The start is never later than the solve start minus [beforePad], so the solve is always fully inside.
  *  - Without the scramble: it starts (time on the timer + [beforePad]) seconds before the stop = just the solve with a buffer.
  *    If the time is unknown this can't be worked out, so the full clip is used and Clip.noTime says so.
+ *
+ * A switched-off cut is still a real solve, so it still marks where the next scramble begins. To say "this was not a solve"
+ * the user deletes the cut. A cut that the scan switched off because its time was already on the timer when the video began
+ * (left over from before) is treated like a deleted one, as long as it stays switched off.
  */
 fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, durationSec: Double): List<Clip> {
     val order = items.indices.sortedBy { items[it].stopSec }
     val clips = mutableListOf<Clip>()
-    var previousEnd = 0.0
+    var previousEnd = 0.0          // where the previous cut (exported or not) ends
     var number = 0
     for (i in order) {
         val item = items[i]
-        if (!item.included) continue
+        if (!item.included && item.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START)) continue   // same as deleted
         val end = if (durationSec > 0) min(item.stopSec + afterPad, durationSec) else item.stopSec + afterPad
         if (end - previousEnd < 1.0) continue          // two cuts too close together: skip the second one
+        if (!item.included) {
+            previousEnd = end                          // not exported, but the next scramble still starts after it
+            continue
+        }
         val solveSec = parseTimeSeconds(item.timeText)
         val soloStart: Double? = if (solveSec != null) max(0.0, item.stopSec - solveSec - beforePad) else null
         val start: Double
