@@ -332,6 +332,7 @@ fun EditorScreen() {
             exoPlayer.pause()
             scope.launch {
                 analyzing = true
+                setupExpanded = false                   // fold the Setup box away as soon as the scan starts
                 cancelScan = false
                 analysisDone = 0
                 analysisTotal = 100
@@ -613,18 +614,6 @@ fun EditorScreen() {
                     modifier = Modifier.weight(1f)
                 ) { Text("+ Cut at playhead") }
             }
-            if (analyzing) {
-                val pinnedFraction = if (analysisTotal > 0) analysisDone.toFloat() / analysisTotal else 0f
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    LinearProgressIndicator(
-                        progress = { pinnedFraction },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(6.dp)
-                    )
-                    TextButton(onClick = { cancelScan = true }) { Text("Cancel") }
-                }
-            }
 
             // ===== one switch for the scramble of ALL clips - pinned, so it stays visible while the list scrolls =====
             // (each clip also has its own tick box in its row and can differ afterwards)
@@ -812,6 +801,7 @@ fun EditorScreen() {
                                     style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.weight(1f)
                                 )
+                                TextButton(onClick = { cancelScan = true }) { Text("Cancel") }
                             }
                         }
                     }
