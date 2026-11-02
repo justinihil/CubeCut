@@ -953,44 +953,53 @@ class TimerEngine(val setup: TimerSetup, private val referenceBitmap: Bitmap) {
         "readDigits: $quickReads quick reads, $shapeFinds shape-finder runs; " +
                 "shape finder ${shapeFindNanos / 1_000_000} ms total, straighten+read ${readNanos / 1_000_000} ms total"
 
-    /** Quick version of [readFrame]: just the digits (or null), no picture. Used when scanning many frames. */
+    /** Quick version of [readFrame]: just the digits (or null), no picture. */
     fun readDigits(frame: Bitmap): String? {
         if (!usable) return null
         val gray = TimerVision.bitmapToGray(frame)
         try {
-            val l = setup.layout
-
-            // 1) the position from the previous frame (not in fixed-camera mode: there locate() is already free)
-            val cached = lastQuad
-            if (finder != null && cached != null && quickReadsSinceFind < REFIND_EVERY) {
-                val t0 = System.nanoTime()
-                val digits = reader.read(TimerVision.prep(gray, cached, l.shear, l.invert, l.canvasW, l.canvasH), l)
-                readNanos += System.nanoTime() - t0
-                if (digits != null) {
-                    quickReads++
-                    quickReadsSinceFind++
-                    return digits
-                }
-            }
-
-            // 2) the normal way: find the display by its shape
-            val t1 = System.nanoTime()
-            val q = locate(gray)
-            shapeFindNanos += System.nanoTime() - t1
-            shapeFinds++
-            if (q == null) {
-                lastQuad = null
-                return null
-            }
-            lastQuad = q
-            quickReadsSinceFind = 0
-            val t2 = System.nanoTime()
-            val digits = reader.read(TimerVision.prep(gray, q, l.shear, l.invert, l.canvasW, l.canvasH), l)
-            readNanos += System.nanoTime() - t2
-            return digits
+            return readDigitsGray(gray)
         } finally {
             gray.release()
         }
+    }
+
+    /**
+     * Same as [readDigits], from a picture that is already gray (the whole upright frame). The caller releases [gray].
+     * This is what Find solves uses: the decoder hands over the gray picture directly.
+     */
+    fun readDigitsGray(gray: Mat): String? {
+        if (!usable) return null
+        val l = setup.layout
+
+        // 1) the position from the previous frame (not in fixed-camera mode: there locate() is already free)
+        val cached = lastQuad
+        if (finder != null && cached != null && quickReadsSinceFind < REFIND_EVERY) {
+            val t0 = System.nanoTime()
+            val digits = reader.read(TimerVision.prep(gray, cached, l.shear, l.invert, l.canvasW, l.canvasH), l)
+            readNanos += System.nanoTime() - t0
+            if (digits != null) {
+                quickReads++
+                quickReadsSinceFind++
+                return digits
+            }
+        }
+
+        // 2) the normal way: find the display by its shape
+        val t1 = System.nanoTime()
+        val q = locate(gray)
+        shapeFindNanos += System.nanoTime() - t1
+        shapeFinds++
+        if (q == null) {
+            lastQuad = null
+            return null
+        }
+        lastQuad = q
+        quickReadsSinceFind = 0
+        val t2 = System.nanoTime()
+        val digits = reader.read(TimerVision.prep(gray, q, l.shear, l.invert, l.canvasW, l.canvasH), l)
+        readNanos += System.nanoTime() - t2
+        return digits
     }
 
     fun readFrame(frame: Bitmap): ReadResult {

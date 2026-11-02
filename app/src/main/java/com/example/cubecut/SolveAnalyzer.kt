@@ -80,7 +80,7 @@ object SolveAnalyzer {
     const val MANUAL_BACK_MAX_SEC = 30.0 // "+ Cut at playhead": the playhead may sit anywhere in the hold
 
     // ---- parallel scan ----
-    const val MAX_WORKERS = 3           // at most this many pieces of the video are scanned at the same time
+    const val MAX_WORKERS = 1           // at most this many pieces of the video are scanned at the same time (measured: 2 workers were no faster, the phone's decoder is the limit)
     const val MIN_CHUNK_SEC = 60.0      // a piece is never shorter than this (short videos are scanned in one go)
     const val CHUNK_OVERLAP_SEC = 10.0  // each piece keeps scanning this far into the next one, so a solve on the border is not missed
     const val DUPLICATE_SEC = 6.0       // two equal-looking solves closer than this (from neighbouring pieces) are the same solve
@@ -392,36 +392,35 @@ object SolveAnalyzer {
     // glue to the real video and timer reader
     // ---------------------------------------------------------------------------------------
 
-    /** Reads the display on the frame closest to second [t]. Frames are given back right away (a 1080p frame is ~8 MB). */
-    /** How long one worker spent getting frames out of the video (for the log). */
+    /** How long one worker spent getting pictures out of the video (for the log). */
     private class DecodeStats {
         var nanos = 0L
         var count = 0
     }
 
-    private fun readFrame(retriever: MediaMetadataRetriever, t: Double, durationMs: Long, engine: TimerEngine, stats: DecodeStats): String? {
-        if (t < 0.0 || t * 1000.0 > durationMs) return null
+    /** Reads the display on the picture closest to second [t]. */
+    private fun readFrame(source: GraySource, t: Double, engine: TimerEngine, stats: DecodeStats): String? {
         val t0 = System.nanoTime()
-        val frame = retriever.getFrameAtTime((t * 1_000_000.0).toLong(), MediaMetadataRetriever.OPTION_CLOSEST)
+        val gray = source.gray(t)
         stats.nanos += System.nanoTime() - t0
         stats.count++
-        if (frame == null) return null
+        if (gray == null) return null
         return try {
-            engine.readDigits(frame)
+            engine.readDigitsGray(gray)
         } finally {
-            frame.recycle()
+            gray.release()
         }
     }
 
     /** A reading function that remembers what it already read (the refining steps revisit frames the scan has seen). */
-    private fun memoReader(retriever: MediaMetadataRetriever, durationMs: Long, engine: TimerEngine, stats: DecodeStats): (Double) -> String? {
+    private fun memoReader(source: GraySource, engine: TimerEngine, stats: DecodeStats): (Double) -> String? {
         val memo = HashMap<Long, String?>()
         return { t ->
             val key = Math.round(t * 1000.0)
             if (memo.containsKey(key)) {
                 memo[key]
             } else {
-                val r = readFrame(retriever, t, durationMs, engine, stats)
+                val r = readFrame(source, t, engine, stats)
                 memo[key] = r
                 r
             }
@@ -441,13 +440,12 @@ object SolveAnalyzer {
         fromSec: Double, toSec: Double,
         onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean, stats: DecodeStats
     ): ScanResult {
-        val retriever = MediaMetadataRetriever()
+        val source = openFrameSource(context, uri, durationMs)
         try {
-            retriever.setDataSource(context, uri)
-            val read = memoReader(retriever, durationMs, engine, stats)
+            val read = memoReader(source, engine, stats)
             return scan(read, durationMs / 1000.0, engine.decimals, onProgress, isCancelled, fromSec, toSec)
         } finally {
-            retriever.release()
+            source.close()
         }
     }
 
@@ -582,7 +580,7 @@ object SolveAnalyzer {
         } finally {
             val sb = StringBuilder("Find solves took ${(System.nanoTime() - startNs) / 1_000_000} ms with $n worker(s)")
             for (k in 0 until n) {
-                sb.append("\n  worker $k: ${stats[k].count} frames decoded in ${stats[k].nanos / 1_000_000} ms; ")
+                sb.append("\n  worker $k: ${stats[k].count} frames read in ${stats[k].nanos / 1_000_000} ms; ")
                 sb.append(engines[k]?.statsText() ?: "not started")
             }
             android.util.Log.d("CubeCut", sb.toString())
@@ -591,13 +589,12 @@ object SolveAnalyzer {
 
     /** Checks one moment chosen by the user ("+ Cut at playhead"). */
     fun analyzeOne(context: Context, uri: Uri, atSec: Double, durationMs: Long, engine: TimerEngine): ManualCut {
-        val retriever = MediaMetadataRetriever()
+        val source = RetrieverSource(context, uri, durationMs)       // only a few reads: the simple way is fine
         try {
-            retriever.setDataSource(context, uri)
-            val read = memoReader(retriever, durationMs, engine, DecodeStats())
+            val read = memoReader(source, engine, DecodeStats())
             return locate(read, atSec, durationMs / 1000.0, engine.decimals)
         } finally {
-            retriever.release()
+            source.close()
         }
     }
 }
