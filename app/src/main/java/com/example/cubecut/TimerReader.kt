@@ -911,7 +911,7 @@ class ShapeFinder(refBitmap: Bitmap, cropX: Int, cropY: Int, corners: DoubleArra
 // ---------------------------------------------------------------------------------------
 // Ties it together: find the timer in a frame, then read it
 // ---------------------------------------------------------------------------------------
-class TimerEngine(val setup: TimerSetup, private val referenceBitmap: Bitmap) {
+class TimerEngine(val setup: TimerSetup, referenceBitmap: Bitmap) {
     // in fixed-camera mode there is no shape finder: the saved corners are used as they are
     private val finder: ShapeFinder? =
         if (setup.fixedPosition) null else ShapeFinder(referenceBitmap, setup.cropX, setup.cropY, setup.corners, setup.readCorners)
@@ -919,12 +919,6 @@ class TimerEngine(val setup: TimerSetup, private val referenceBitmap: Bitmap) {
 
     /** How many digits come after the decimal point on this timer. */
     val decimals: Int get() = setup.layout.decimals
-
-    /**
-     * A second engine with the same setup, for another worker thread. The shape finder and the "last position" memory
-     * are not meant to be shared between threads, so every worker gets its own.
-     */
-    fun duplicate(): TimerEngine = TimerEngine(setup, referenceBitmap)
 
     private val usable: Boolean get() = finder == null || finder.ok
 
@@ -938,35 +932,15 @@ class TimerEngine(val setup: TimerSetup, private val referenceBitmap: Bitmap) {
     private var lastQuad: DoubleArray? = null
     private var quickReadsSinceFind = 0
 
-    // numbers for the log (how much work the shortcut saved)
-    var quickReads = 0; private set          // frames read with the remembered position (no shape finder)
-    var shapeFinds = 0; private set          // frames where the shape finder had to run
-    var shapeFindNanos = 0L; private set     // time spent in the shape finder
-    var readNanos = 0L; private set          // time spent straightening + reading digits
-
-    fun resetStats() {
-        quickReads = 0; shapeFinds = 0; shapeFindNanos = 0L; readNanos = 0L
-        lastQuad = null; quickReadsSinceFind = 0
-    }
-
-    fun statsText(): String =
-        "readDigits: $quickReads quick reads, $shapeFinds shape-finder runs; " +
-                "shape finder ${shapeFindNanos / 1_000_000} ms total, straighten+read ${readNanos / 1_000_000} ms total"
-
-    /** Quick version of [readFrame]: just the digits (or null), no picture. */
-    fun readDigits(frame: Bitmap): String? {
-        if (!usable) return null
-        val gray = TimerVision.bitmapToGray(frame)
-        try {
-            return readDigitsGray(gray)
-        } finally {
-            gray.release()
-        }
+    /** Start of a new scan: don't trust the position remembered from before. */
+    fun forgetPosition() {
+        lastQuad = null
+        quickReadsSinceFind = 0
     }
 
     /**
-     * Same as [readDigits], from a picture that is already gray (the whole upright frame). The caller releases [gray].
-     * This is what Find solves uses: the decoder hands over the gray picture directly.
+     * Quick version of [readFrame]: just the digits (or null), no picture. [gray] is the whole upright frame as a gray picture
+     * (the caller releases it). This is what Find solves uses.
      */
     fun readDigitsGray(gray: Mat): String? {
         if (!usable) return null
@@ -975,31 +949,22 @@ class TimerEngine(val setup: TimerSetup, private val referenceBitmap: Bitmap) {
         // 1) the position from the previous frame (not in fixed-camera mode: there locate() is already free)
         val cached = lastQuad
         if (finder != null && cached != null && quickReadsSinceFind < REFIND_EVERY) {
-            val t0 = System.nanoTime()
             val digits = reader.read(TimerVision.prep(gray, cached, l.shear, l.invert, l.canvasW, l.canvasH), l)
-            readNanos += System.nanoTime() - t0
             if (digits != null) {
-                quickReads++
                 quickReadsSinceFind++
                 return digits
             }
         }
 
         // 2) the normal way: find the display by its shape
-        val t1 = System.nanoTime()
         val q = locate(gray)
-        shapeFindNanos += System.nanoTime() - t1
-        shapeFinds++
         if (q == null) {
             lastQuad = null
             return null
         }
         lastQuad = q
         quickReadsSinceFind = 0
-        val t2 = System.nanoTime()
-        val digits = reader.read(TimerVision.prep(gray, q, l.shear, l.invert, l.canvasW, l.canvasH), l)
-        readNanos += System.nanoTime() - t2
-        return digits
+        return reader.read(TimerVision.prep(gray, q, l.shear, l.invert, l.canvasW, l.canvasH), l)
     }
 
     fun readFrame(frame: Bitmap): ReadResult {
