@@ -354,9 +354,16 @@ object SolveAnalyzer {
     // ---------------------------------------------------------------------------------------
 
     /** Reads the display on the frame closest to second [t]. Frames are given back right away (a 1080p frame is ~8 MB). */
+    private var decodeNanos = 0L    // time spent getting frames out of the video (for the log)
+    private var decodeCount = 0
+
     private fun readFrame(retriever: MediaMetadataRetriever, t: Double, durationMs: Long, engine: TimerEngine): String? {
         if (t < 0.0 || t * 1000.0 > durationMs) return null
-        val frame = retriever.getFrameAtTime((t * 1_000_000.0).toLong(), MediaMetadataRetriever.OPTION_CLOSEST) ?: return null
+        val t0 = System.nanoTime()
+        val frame = retriever.getFrameAtTime((t * 1_000_000.0).toLong(), MediaMetadataRetriever.OPTION_CLOSEST)
+        decodeNanos += System.nanoTime() - t0
+        decodeCount++
+        if (frame == null) return null
         return try {
             engine.readDigits(frame)
         } finally {
@@ -392,7 +399,19 @@ object SolveAnalyzer {
         try {
             retriever.setDataSource(context, uri)
             val read = memoReader(retriever, durationMs, engine)
-            return scan(read, durationMs / 1000.0, engine.decimals, onProgress, isCancelled)
+            decodeNanos = 0L
+            decodeCount = 0
+            engine.resetStats()
+            val startNs = System.nanoTime()
+            try {
+                return scan(read, durationMs / 1000.0, engine.decimals, onProgress, isCancelled)
+            } finally {
+                android.util.Log.d(
+                    "CubeCut",
+                    "Find solves took ${(System.nanoTime() - startNs) / 1_000_000} ms; " +
+                            "$decodeCount frames decoded in ${decodeNanos / 1_000_000} ms; " + engine.statsText()
+                )
+            }
         } finally {
             retriever.release()
         }

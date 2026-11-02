@@ -924,15 +924,64 @@ class TimerEngine(val setup: TimerSetup, referenceBitmap: Bitmap) {
 
     private fun locate(gray: Mat): DoubleArray? = if (finder == null) setup.readCorners else finder.locate(gray)
 
+    // ---- "last position first": the slow shape finder (ORB) only runs when it is really needed ----
+    // While the camera stays put, the display is in the same place as on the previous frame, so we try reading with
+    // that position first. Only if that read comes back empty (hand in the way, camera moved...) do we run the shape finder.
+    // To stay safe against slow drift, the shape finder also re-checks the position every REFIND_EVERY quick reads.
+    private val REFIND_EVERY = 20
+    private var lastQuad: DoubleArray? = null
+    private var quickReadsSinceFind = 0
+
+    // numbers for the log (how much work the shortcut saved)
+    var quickReads = 0; private set          // frames read with the remembered position (no shape finder)
+    var shapeFinds = 0; private set          // frames where the shape finder had to run
+    var shapeFindNanos = 0L; private set     // time spent in the shape finder
+    var readNanos = 0L; private set          // time spent straightening + reading digits
+
+    fun resetStats() {
+        quickReads = 0; shapeFinds = 0; shapeFindNanos = 0L; readNanos = 0L
+        lastQuad = null; quickReadsSinceFind = 0
+    }
+
+    fun statsText(): String =
+        "readDigits: $quickReads quick reads, $shapeFinds shape-finder runs; " +
+                "shape finder ${shapeFindNanos / 1_000_000} ms total, straighten+read ${readNanos / 1_000_000} ms total"
+
     /** Quick version of [readFrame]: just the digits (or null), no picture. Used when scanning many frames. */
     fun readDigits(frame: Bitmap): String? {
         if (!usable) return null
         val gray = TimerVision.bitmapToGray(frame)
         try {
-            val q = locate(gray) ?: return null
             val l = setup.layout
-            val th = TimerVision.prep(gray, q, l.shear, l.invert, l.canvasW, l.canvasH)
-            return reader.read(th, l)
+
+            // 1) the position from the previous frame (not in fixed-camera mode: there locate() is already free)
+            val cached = lastQuad
+            if (finder != null && cached != null && quickReadsSinceFind < REFIND_EVERY) {
+                val t0 = System.nanoTime()
+                val digits = reader.read(TimerVision.prep(gray, cached, l.shear, l.invert, l.canvasW, l.canvasH), l)
+                readNanos += System.nanoTime() - t0
+                if (digits != null) {
+                    quickReads++
+                    quickReadsSinceFind++
+                    return digits
+                }
+            }
+
+            // 2) the normal way: find the display by its shape
+            val t1 = System.nanoTime()
+            val q = locate(gray)
+            shapeFindNanos += System.nanoTime() - t1
+            shapeFinds++
+            if (q == null) {
+                lastQuad = null
+                return null
+            }
+            lastQuad = q
+            quickReadsSinceFind = 0
+            val t2 = System.nanoTime()
+            val digits = reader.read(TimerVision.prep(gray, q, l.shear, l.invert, l.canvasW, l.canvasH), l)
+            readNanos += System.nanoTime() - t2
+            return digits
         } finally {
             gray.release()
         }
