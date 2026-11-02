@@ -911,7 +911,7 @@ class ShapeFinder(refBitmap: Bitmap, cropX: Int, cropY: Int, corners: DoubleArra
 // ---------------------------------------------------------------------------------------
 // Ties it together: find the timer in a frame, then read it
 // ---------------------------------------------------------------------------------------
-class TimerEngine(val setup: TimerSetup, referenceBitmap: Bitmap) {
+class TimerEngine(val setup: TimerSetup, private val referenceBitmap: Bitmap) {
     // in fixed-camera mode there is no shape finder: the saved corners are used as they are
     private val finder: ShapeFinder? =
         if (setup.fixedPosition) null else ShapeFinder(referenceBitmap, setup.cropX, setup.cropY, setup.corners, setup.readCorners)
@@ -919,6 +919,12 @@ class TimerEngine(val setup: TimerSetup, referenceBitmap: Bitmap) {
 
     /** How many digits come after the decimal point on this timer. */
     val decimals: Int get() = setup.layout.decimals
+
+    /**
+     * A second engine with the same setup, for another worker thread. The shape finder and the "last position" memory
+     * are not meant to be shared between threads, so every worker gets its own.
+     */
+    fun duplicate(): TimerEngine = TimerEngine(setup, referenceBitmap)
 
     private val usable: Boolean get() = finder == null || finder.ok
 

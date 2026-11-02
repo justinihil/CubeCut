@@ -3,6 +3,10 @@ package com.example.cubecut
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 
@@ -55,7 +59,7 @@ class ScanCancelled : Exception("cancelled")
 object SolveAnalyzer {
     // ---- scanning ----
     const val SCAN_STEP = 0.5           // seconds between reads while looking for a stop
-    const val ZERO_STEP = 1.0           // wider step while the display shows 0.000 (a stop is at least ~3 s away)
+    const val ZERO_STEP = 2.0           // wider step while the display shows 0.000 (a stop is at least ~3 s away; a running time is then seen on the next read)
     const val HOLD_STEP = 2.0           // wider step while the display still shows a time we already found
     const val MIN_AGREE = 2             // the same time on this many reads = a stopped timer
     const val RECENT_N = 6              // ...looking at the last 6 readable reads
@@ -74,6 +78,12 @@ object SolveAnalyzer {
     const val FINE_WINDOW = 0.12        // the one-frame search never goes further back than this
     const val BACK_MAX_SEC = 4.0        // automatic scan: look back at most this far for the first frame
     const val MANUAL_BACK_MAX_SEC = 30.0 // "+ Cut at playhead": the playhead may sit anywhere in the hold
+
+    // ---- parallel scan ----
+    const val MAX_WORKERS = 3           // at most this many pieces of the video are scanned at the same time
+    const val MIN_CHUNK_SEC = 60.0      // a piece is never shorter than this (short videos are scanned in one go)
+    const val CHUNK_OVERLAP_SEC = 10.0  // each piece keeps scanning this far into the next one, so a solve on the border is not missed
+    const val DUPLICATE_SEC = 6.0       // two equal-looking solves closer than this (from neighbouring pieces) are the same solve
 
     // ---------------------------------------------------------------------------------------
     // small helpers on the digit strings
@@ -163,6 +173,23 @@ object SolveAnalyzer {
     }
 
     /**
+     * Binary search for the first frame that shows [w], between [falseT] (a frame that was read and shows something else)
+     * and [trueT] (a frame that shows [w]). Returns the earliest frame that shows [w] (to one frame, 1/60 s),
+     * or null if a frame in the middle couldn't be read (the caller then walks step by step instead).
+     */
+    private fun bisect(read: (Double) -> String?, w: String, falseT: Double, trueT: Double): Double? {
+        var lo = falseT
+        var hi = trueT
+        while (true) {
+            val frames = Math.round((hi - lo) / FINE_STEP).toInt()
+            if (frames <= 1) return hi
+            val mid = lo + (frames / 2) * FINE_STEP
+            val v = read(mid) ?: return null
+            if (similar(v, w)) hi = mid else lo = mid
+        }
+    }
+
+    /**
      * The earliest frame (to 1/60 s) from which the display shows [w], searching back from [startT] (a frame that shows it),
      * but not before [lower]. Returns (time, certain). certain = a frame that clearly shows something else was found before
      * it, so the start of the time really is where we say.
@@ -170,6 +197,13 @@ object SolveAnalyzer {
     private fun firstAppearance(read: (Double) -> String?, w: String, startT: Double, lower: Double): Pair<Double, Boolean> {
         val low0 = lower - 1e-6
         val r1 = walkBack(read, w, startT, COARSE_BACK_STEP, low0)
+        if (r1.foundOther) {
+            // we know a frame that shows something else (boundary) and one that shows the time (earliest):
+            // halve the gap until the two are one frame apart (about 5 reads instead of about 12)
+            val first = bisect(read, w, r1.boundary, r1.earliest)
+            if (first != null) return Pair(first, true)
+            // a frame in the middle couldn't be read: fall back to the slower step-by-step walk below
+        }
         val r2 = walkBack(read, w, r1.earliest, BACK_STEP, max(low0, r1.boundary))
         val r3 = walkBack(read, w, r2.earliest, FINE_STEP, max(low0, max(r2.boundary, r2.earliest - FINE_WINDOW)))
         return Pair(r3.earliest, r1.foundOther || r2.foundOther || r3.foundOther)
@@ -182,28 +216,33 @@ object SolveAnalyzer {
     /**
      * [read] returns the digits the timer shows at a given second (or null if it can't be read).
      * [onProgress] is told (percent, 100). [isCancelled] is checked before every read; when it says true, [ScanCancelled] is thrown.
+     * [fromSec]..[toSec] is the part of the video to scan (the whole video by default). [durationSec] is always the real length.
+     * A time that is already showing at [fromSec] and started before it is reported as "left over" (switched off).
      */
     fun scan(
         read: (Double) -> String?,
         durationSec: Double,
         decimals: Int,
         onProgress: (Int, Int) -> Unit,
-        isCancelled: () -> Boolean
+        isCancelled: () -> Boolean,
+        fromSec: Double = 0.0,
+        toSec: Double = durationSec
     ): ScanResult {
         val solves = mutableListOf<FoundSolve>()
         val unreadable = mutableListOf<UnreadableSpan>()
         var total = 0
         var readable = 0
-        var t = 0.0
+        var t = fromSec
         var confirmed: String? = null          // the time of the solve we just found (while the display still shows it)
         var confirmedSeen = -1e9
         val recent = ArrayList<Pair<Double, String>>()   // the last few readable, non-zero reads
         var nullStart = -1.0                   // start of a run of unreadable frames (-1 = not in one)
         var lastPercent = -1
 
-        while (t <= durationSec) {
+        val span = toSec - fromSec
+        while (t <= toSec) {
             if (isCancelled()) throw ScanCancelled()
-            val pct = if (durationSec > 0) (t / durationSec * 100).toInt().coerceIn(0, 100) else 0
+            val pct = if (span > 0) ((t - fromSec) / span * 100).toInt().coerceIn(0, 100) else 0
             if (pct != lastPercent) {
                 lastPercent = pct
                 onProgress(pct, 100)
@@ -290,7 +329,7 @@ object SolveAnalyzer {
                 val text = TimerVision.formatDigits(w, decimals)
                 var note = ""
                 var include = true
-                if (!certain && earliest < 1.0) {
+                if (!certain && earliest < fromSec + 1.0) {
                     note = "$LEFTOVER_NOTE_START when the video began - probably left over from an earlier solve"
                     include = false
                 } else if (votes < reads * 0.6) {
@@ -306,8 +345,8 @@ object SolveAnalyzer {
             }
             t += SCAN_STEP
         }
-        if (nullStart >= 0 && durationSec - nullStart >= UNREADABLE_MIN_SEC) {
-            unreadable.add(UnreadableSpan(nullStart, durationSec))
+        if (nullStart >= 0 && toSec - nullStart >= UNREADABLE_MIN_SEC) {
+            unreadable.add(UnreadableSpan(nullStart, toSec))
         }
         onProgress(100, 100)
         return ScanResult(
@@ -354,15 +393,18 @@ object SolveAnalyzer {
     // ---------------------------------------------------------------------------------------
 
     /** Reads the display on the frame closest to second [t]. Frames are given back right away (a 1080p frame is ~8 MB). */
-    private var decodeNanos = 0L    // time spent getting frames out of the video (for the log)
-    private var decodeCount = 0
+    /** How long one worker spent getting frames out of the video (for the log). */
+    private class DecodeStats {
+        var nanos = 0L
+        var count = 0
+    }
 
-    private fun readFrame(retriever: MediaMetadataRetriever, t: Double, durationMs: Long, engine: TimerEngine): String? {
+    private fun readFrame(retriever: MediaMetadataRetriever, t: Double, durationMs: Long, engine: TimerEngine, stats: DecodeStats): String? {
         if (t < 0.0 || t * 1000.0 > durationMs) return null
         val t0 = System.nanoTime()
         val frame = retriever.getFrameAtTime((t * 1_000_000.0).toLong(), MediaMetadataRetriever.OPTION_CLOSEST)
-        decodeNanos += System.nanoTime() - t0
-        decodeCount++
+        stats.nanos += System.nanoTime() - t0
+        stats.count++
         if (frame == null) return null
         return try {
             engine.readDigits(frame)
@@ -372,21 +414,93 @@ object SolveAnalyzer {
     }
 
     /** A reading function that remembers what it already read (the refining steps revisit frames the scan has seen). */
-    private fun memoReader(retriever: MediaMetadataRetriever, durationMs: Long, engine: TimerEngine): (Double) -> String? {
+    private fun memoReader(retriever: MediaMetadataRetriever, durationMs: Long, engine: TimerEngine, stats: DecodeStats): (Double) -> String? {
         val memo = HashMap<Long, String?>()
         return { t ->
             val key = Math.round(t * 1000.0)
             if (memo.containsKey(key)) {
                 memo[key]
             } else {
-                val r = readFrame(retriever, t, durationMs, engine)
+                val r = readFrame(retriever, t, durationMs, engine, stats)
                 memo[key] = r
                 r
             }
         }
     }
 
-    /** Scans the whole video. [onProgress] gets (percent, 100). [isCancelled] is polled; true stops the scan with [ScanCancelled]. */
+    /** How many pieces the video is split into (each scanned by its own worker). */
+    private fun workerCount(durationSec: Double): Int {
+        val byLength = (durationSec / MIN_CHUNK_SEC).toInt()
+        val byCpu = Runtime.getRuntime().availableProcessors() / 2
+        return max(1, min(MAX_WORKERS, min(byLength, byCpu)))
+    }
+
+    /** Scans [fromSec]..[toSec] of the video with its own video reader. */
+    private fun scanRange(
+        context: Context, uri: Uri, durationMs: Long, engine: TimerEngine,
+        fromSec: Double, toSec: Double,
+        onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean, stats: DecodeStats
+    ): ScanResult {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            val read = memoReader(retriever, durationMs, engine, stats)
+            return scan(read, durationMs / 1000.0, engine.decimals, onProgress, isCancelled, fromSec, toSec)
+        } finally {
+            retriever.release()
+        }
+    }
+
+    /**
+     * Puts the results of the pieces together. A solve belongs to the piece its cut lies in (the overlap only exists so
+     * that a solve on the border is seen completely); a "left over" note on a later piece just means its scan started
+     * in the middle of a time that the previous piece has already reported. Equal-looking solves that still end up
+     * next to each other (the two pieces disagreed by a frame) are kept once.
+     */
+    private fun merge(parts: List<ScanResult>, bounds: List<Pair<Double, Double>>): ScanResult {
+        val owned = ArrayList<FoundSolve>()
+        for ((k, part) in parts.withIndex()) {
+            val (from, to) = bounds[k]
+            for (s in part.solves) {
+                if (s.stopSec < from || s.stopSec >= to) continue
+                if (k > 0 && s.note.startsWith(LEFTOVER_NOTE_START)) continue
+                owned.add(s)
+            }
+        }
+        owned.sortBy { it.stopSec }
+        val solves = ArrayList<FoundSolve>()
+        for (s in owned) {
+            val prev = solves.lastOrNull()
+            if (prev != null && s.stopSec - prev.stopSec < DUPLICATE_SEC && similar(prev.digits, s.digits)) {
+                if (s.votes > prev.votes) solves[solves.size - 1] = s
+                continue
+            }
+            solves.add(s)
+        }
+
+        val spans = parts.flatMap { it.unreadable }.sortedBy { it.startSec }
+        val unreadable = ArrayList<UnreadableSpan>()
+        for (sp in spans) {
+            val last = unreadable.lastOrNull()
+            if (last != null && sp.startSec <= last.endSec + 1.0) {
+                unreadable[unreadable.size - 1] = UnreadableSpan(last.startSec, max(last.endSec, sp.endSec))
+            } else {
+                unreadable.add(sp)
+            }
+        }
+
+        val frames = parts.sumOf { it.framesRead }
+        val readable = parts.sumOf { it.readableFraction * it.framesRead }
+        return ScanResult(solves, unreadable, if (frames > 0) readable / frames else 0.0, frames)
+    }
+
+    /**
+     * Scans the whole video. [onProgress] gets (percent, 100). [isCancelled] is polled; true stops the scan with [ScanCancelled].
+     *
+     * Getting frames out of the video is by far the slowest part, so a long video is cut into up to [MAX_WORKERS] equal
+     * pieces that are scanned at the same time (each with its own video reader and its own [TimerEngine]).
+     * Every piece keeps scanning [CHUNK_OVERLAP_SEC] into the next one, and the results are put together by [merge].
+     */
     fun analyze(
         context: Context,
         uri: Uri,
@@ -395,25 +509,83 @@ object SolveAnalyzer {
         onProgress: (Int, Int) -> Unit,
         isCancelled: () -> Boolean
     ): ScanResult {
-        val retriever = MediaMetadataRetriever()
+        val durationSec = durationMs / 1000.0
+        val n = workerCount(durationSec)
+        val stats = List(n) { DecodeStats() }
+        val engines = arrayOfNulls<TimerEngine>(n)
+        engines[0] = engine
+        engine.resetStats()
+        val startNs = System.nanoTime()
         try {
-            retriever.setDataSource(context, uri)
-            val read = memoReader(retriever, durationMs, engine)
-            decodeNanos = 0L
-            decodeCount = 0
-            engine.resetStats()
-            val startNs = System.nanoTime()
+            if (n == 1) {
+                return scanRange(context, uri, durationMs, engine, 0.0, durationSec, onProgress, isCancelled, stats[0])
+            }
+
+            val abort = AtomicBoolean(false)                  // set when one piece fails: the others stop too
+            val stopNow = { abort.get() || isCancelled() }
+            val progress = IntArray(n)
+            val progressLock = Any()
+            var lastReported = -1
+            fun report(k: Int, pct: Int) {
+                synchronized(progressLock) {
+                    progress[k] = pct
+                    val overall = progress.sum() / n
+                    if (overall > lastReported) {             // never goes backwards, and one thread at a time
+                        lastReported = overall
+                        onProgress(overall, 100)
+                    }
+                }
+            }
+
+            val len = durationSec / n
+            val bounds = List(n) { k ->
+                Pair(if (k == 0) -Double.MAX_VALUE else k * len, if (k == n - 1) Double.MAX_VALUE else (k + 1) * len)
+            }
+            val pool = Executors.newFixedThreadPool(n)
             try {
-                return scan(read, durationMs / 1000.0, engine.decimals, onProgress, isCancelled)
+                val futures = (0 until n).map { k ->
+                    pool.submit(Callable {
+                        try {
+                            val eng = if (k == 0) engine else engine.duplicate()
+                            engines[k] = eng
+                            val from = k * len
+                            val to = if (k == n - 1) durationSec else min(durationSec, (k + 1) * len + CHUNK_OVERLAP_SEC)
+                            scanRange(context, uri, durationMs, eng, from, to, { pct, _ -> report(k, pct) }, stopNow, stats[k])
+                        } catch (e: Throwable) {
+                            abort.set(true)
+                            throw e
+                        }
+                    })
+                }
+                val parts = ArrayList<ScanResult>()
+                var failure: Throwable? = null
+                var cancelled = false
+                for (f in futures) {
+                    try {
+                        parts.add(f.get())
+                    } catch (e: ExecutionException) {
+                        val cause = e.cause
+                        if (cause is ScanCancelled) cancelled = true else if (failure == null) failure = cause ?: e
+                    } catch (e: InterruptedException) {
+                        abort.set(true)
+                        cancelled = true
+                    }
+                }
+                failure?.let { throw it }
+                if (cancelled) throw ScanCancelled()
+                onProgress(100, 100)
+                return merge(parts, bounds)
             } finally {
-                android.util.Log.d(
-                    "CubeCut",
-                    "Find solves took ${(System.nanoTime() - startNs) / 1_000_000} ms; " +
-                            "$decodeCount frames decoded in ${decodeNanos / 1_000_000} ms; " + engine.statsText()
-                )
+                abort.set(true)
+                pool.shutdownNow()
             }
         } finally {
-            retriever.release()
+            val sb = StringBuilder("Find solves took ${(System.nanoTime() - startNs) / 1_000_000} ms with $n worker(s)")
+            for (k in 0 until n) {
+                sb.append("\n  worker $k: ${stats[k].count} frames decoded in ${stats[k].nanos / 1_000_000} ms; ")
+                sb.append(engines[k]?.statsText() ?: "not started")
+            }
+            android.util.Log.d("CubeCut", sb.toString())
         }
     }
 
@@ -422,7 +594,7 @@ object SolveAnalyzer {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, uri)
-            val read = memoReader(retriever, durationMs, engine)
+            val read = memoReader(retriever, durationMs, engine, DecodeStats())
             return locate(read, atSec, durationMs / 1000.0, engine.decimals)
         } finally {
             retriever.release()
