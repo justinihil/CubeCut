@@ -1,0 +1,44 @@
+# =====================================================================
+# CubeCut .gitignore  (goes in the project root, next to settings.gradle.kts)
+# =====================================================================
+
+# ---- Gradle / Kotlin build output and caches ----
+.gradle/
+build/
+/captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+*.iml
+*.hprof
+*.log
+
+# ---- Machine-specific files (your own SDK path etc.) ----
+local.properties
+
+# ---- Android Studio settings ----
+.idea/
+.DS_Store
+
+# ---- Built apps: attach these to a GitHub Release instead of committing them ----
+*.apk
+*.aab
+app/release/
+app/debug/
+
+# ---- SECRETS: signing keys and passwords. NEVER commit these ----
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# ---- Your own videos and test footage (huge; GitHub rejects files over 100 MB) ----
+*.mp4
+*.mov
+*.mkv
+*.avi
+test_footage/
+results/
+pc_prototype/results/
+
+# NOTE: do NOT ignore gradle/wrapper/gradle-wrapper.jar - the project needs it to build.
