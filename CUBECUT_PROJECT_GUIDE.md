@@ -1,0 +1,563 @@
+# CubeCut – Project Guide and Hand-over (v2.0.0, in development)
+
+*Updated for version 2.0.0 ("first-frame cuts", developed on the `dev` branch): the app no longer analyses sound; cuts now come from reading the timer along the whole video, clips can leave the scramble out, and the screen was reorganised around that. It builds on 1.1.0 (the 1.0.0 UI-polish milestone plus the timer-reading expansion), whose digit-reading code is unchanged. Supersedes the 1.1.0 guide. It also records the Find solves speed-up (one running MediaCodec decoder instead of a seek per frame, a binary search for the first frame, a wider step while the timer shows zero), which took a scan of the test session from about 107 s to about 27 s. Read this first if you are a person or an AI picking the project up again.*
+
+**Related files:** `README.md` (front page), `CHANGELOG.md` (what changed per version), `docs/GIT_WORKFLOW.md` (how to use Git and GitHub for this project), `docs/TIMER_READING_CHANGES.md` (detailed record and reasoning of the timer-reading changes), `docs/FIRST_FRAME_CUTS_CHANGES.md` (record of the 2.0.0 first-frame-cuts change), `pc_prototype/first_frame_scan_prototype.py` (the 2.0.0 logic in Python, with simulator and tests).
+
+---
+
+## 0. TL;DR
+
+**CubeCut** is an Android app (plus a PC prototype) that takes one long video of a speedcubing practice session and automatically cuts it into one clip per solve. Each clip is named with the time the timer showed, e.g. `Solve_03_11.263s.mp4`.
+
+* Everything runs **on the phone, offline, with no AI / machine learning** – only classic image processing (OpenCV shape matching, 7-segment digit reading) and simple counting and voting. Since 2.0.0 the app does **not analyse sound at all**. The app has **no internet permission**.
+* **How it decides (2.0.0):** the app **reads the timer display along the whole video**. When a non-zero time stays on the display (the same time on at least two frames, with nothing clearly different in between), that is a finished solve, and the **first frame that shows that time** is the cut: the moment the timer stopped. Because of this, **setting up the timer is essential** and comes first. (Before 2.0.0 a loud sound marked a candidate stop and the timer was only used to confirm it.)
+* **What a clip contains:** per solve the user chooses *solve only* (starts at the first frame minus the time on the timer minus a **before buffer**, default 2.5 s) or *with scramble* (starts where the previous cut ended). Every clip ends an **after buffer** (default 2.5 s) after the first frame. Both buffers are adjustable. One switch sets the scramble choice for all clips; each row can still differ.
+* Because no automatic system is perfect, the app has a **review screen**: every cut can be switched on/off, its time edited, its cut point nudged, deleted, or a missed cut added by hand with **+ Cut at playhead** (which snaps to the first frame showing the time). It is never a dead end: setup saves with a warning when unsure, and if the timer can't be read the user can still cut by hand. After a scan the app reminds the user to check that every solve was captured.
+* **Status at 2.0.0 (dev):** the first-frame logic was prototyped in Python on simulated, noisy timer readings and then written in Kotlin; the user compiled it and tested it on the phone ("the logic works perfect"), then asked for the interface changes described in section 2.7. See section 9. The 1.1.0 features remain: logo, collapsible Setup box, confirmation and progress windows, background running with a notification, pinch zoom on the video, keyword highlighting, an export-finished window, QiYi/Stackmat-style LCDs **and** csTimer-style screens (seven-segment look). **The timer must still be set up again at every app start and every video import** (not saved).
+* **Speed (2.0.0 dev):** Find solves takes its pictures from **one running `MediaCodec` decoder** (`FrameSource.kt`) instead of asking `MediaMetadataRetriever` for every frame, and quietly falls back to the old way if the fast path doesn't match or fails (section 2.1b). On the user's test footage the scan went from **about 107 s to about 27 s**.
+* Package / application ID: **`com.example.cubecut`** (the earlier `com.example.hellotest` name is gone; if a source file still has a `hellotest` package line, change it).
+
+---
+
+## 1. Who and what
+
+| Item | Detail |
+|---|---|
+| User | Justin. Not a software developer, but technical and logical. Wants step-by-step instructions, complete files, honest statements of uncertainty. |
+| PC | Windows (used Command Prompt, `winget`). Python, ffmpeg, Android Studio installed. |
+| Phone | Android (modern; exact model not recorded). Used for testing via USB / wireless debugging. A virtual phone ("Medium Phone API 37.0") exists in Android Studio but is too slow for video work. The project builds with `compileSdk`/`targetSdk` 37 and `minSdk` 24. |
+| Timer | **QiYi Smart Timer** (Bluetooth), LCD with 7-segment digits, 3 decimals (e.g. `11.108`). The digits lean (italic) and the display is seen at an angle. Since 1.1.0 also **csTimer on a PC/phone/tablet screen** (seven-segment font, "smaller decimals" option off), seen at an angle by the camera. |
+| Footage | Phone video, **1080×1920 portrait, 60 fps, HEVC**, fixed camera on a stand. A full session is ~1.5 GB and has ~22 solves. The user records everything: scrambling, inspection, solve, timer stop. |
+| The cut signal | When the timer stops its display freezes on the final time. The **first video frame that shows that time** is the cut (2.0.0). Before 2.0.0 the user's slap on the timer after the stop made a sharp sound that the app listened for; the app no longer uses sound. |
+| Hard requirements | Runs locally; **no AI**; exports one file per solve; file name includes the solve time; should work for other 7-segment timers and screens (not hard-coded to QiYi). |
+| Intended UI | Like a normal video editor: film strip + a strip showing what each clip will contain, markers where cuts are, the user can review/add cuts, choose per cut whether to export it and whether to keep the scramble. |
+
+---
+
+## 2. How it works (the algorithms)
+
+### 2.1 Finding the stops by reading the timer (2.0.0; replaces sound detection)
+Sound plays no part any more. The logic is `SolveAnalyzer.scan` (plus `firstAppearance` and `locate`). It only needs a function `read(t)` that returns the digits the timer shows at second `t` (for example `"12412"`), an all-zero string for 0.000, or `null` when the display can't be read. In the app that function gets the gray picture closest to `t` from a `GraySource` (section 2.1b) and calls `TimerEngine.readDigitsGray` (results are remembered per millisecond by `memoReader`). The same functions were tested in Python (`pc_prototype/first_frame_scan_prototype.py`).
+
+1. **Coarse scan.** Read the display from 0:00 onwards every **0.5 s** (`SCAN_STEP`). While the display shows zero the step is **2 s** (`ZERO_STEP`; the next stop is at least ~3 s away and a running time is seen on the next read; it was 1 s before the speed-up, and a solve shorter than ~2 s right after a zero read could be missed) and while it still shows a time that was already found it is **2 s** (`HOLD_STEP`; nothing new can have stopped). An unreadable frame counts toward the "unreadable" total and the step stays 0.5 s.
+2. **A stopped timer** is the **same non-zero time on at least 2 reads** (`MIN_AGREE`) among the last 6 readable reads (`RECENT_N`), within 6 s of each other (`AGREE_WINDOW_SEC`), **with no clearly different reading in between**. A running timer changes on every read, so it never agrees with itself; a stopped one is stable. Two readings are *look-alikes* (and do not break the run) if they have the same length and differ in exactly one digit that is a 1↔4 or 1↔7 confusion (the reader's two known errors).
+3. **Vote on the digits.** After a stop is spotted, read **3 s more** (`LOCK_SEC`) every 0.5 s and count how often each number was read. The most votes wins, but a version with a 4 or 7 counts **double** against its "1" look-alike (`pickWinner`), because the reader mistakes 4 and 7 for 1 and never the other way round. The winner is the solve's time; `votes` out of `reads` are kept.
+4. **First frame** (`firstAppearance`). From the earliest read of the winner, walk backwards in **0.5 s** steps (`COARSE_BACK_STEP`) until the nearest frame that showed something else is found. Then a **binary search** (`bisect`) between that frame and the earliest match halves the gap until the two are one frame (1/60 s, `FINE_STEP`) apart: about 5 reads instead of the 12 or so the old step-by-step walk needed. If a frame in the middle can't be read, it falls back to that older walk (0.1 s steps (`BACK_STEP`), then frame by frame, at most 0.12 s back). Unreadable frames are skipped in the walks; **two readable frames in a row that show something else** end a walk (a single odd reading is forgiven). The automatic scan never walks back more than 4 s (`BACK_MAX_SEC`). The first frame found is `stopSec`: **the cut**.
+5. **Move on.** The found time is remembered while the display still shows it, and look-alikes of it count as the same hold for up to 12 s (`HOLD_MERGE_SEC`), so a misreading of the same hold can never become a second solve. A zero or a clearly different time ends the hold.
+6. **Report.** Besides the solves, the scan returns how much of what it looked at was readable and the long stretches (15 s or more, `UNREADABLE_MIN_SEC`) where nothing was readable. The unreadable-stretch list is still computed but **no longer shown** (see 2.4 and the decision log).
+
+**Cost.** Measured on the user's phone with the MediaCodec frame source, on the test session: **358 frame reads, 26.8 s for the whole scan**: about 15 s getting the pictures (about 42 ms each), about 10 s in the shape finder (ORB, about 34 ms per run) and about 1.3 s reading digits. Before the speed-up (one `MediaMetadataRetriever` seek per read, about 250 ms each) the same scan took about 107 s (368 reads, 92 s of them getting pictures). The confirmation window still shows `0.3 × video length` as its estimate (`estMin` in `MainActivity.kt`, **not updated**), which now overestimates. (The 1.1.0 method read ~27 frames per loud sound.)
+
+**Prototype results** (40 simulated sessions × 22 solves; 12 % of reads unreadable, 20 % of 4/7 misread as 1): **876 of 880 solves found, 0 false, the cut within 0.25 s of the true stop, 875 labels right.** The 4 missed solves had a final time shown for only 1.3–2.4 s. With heavy noise (30 % unreadable, 40 % misreads): 864 found, 13 false (almost all flagged). The simulator makes the digit reads up; it does not replace footage tests.
+
+### 2.1b Where the pictures come from (`FrameSource.kt`; speed, 2.0.0 dev)
+The scan only needs "the whole upright gray picture at second `t`". That is the `GraySource` interface: `gray(t)` returns an OpenCV `Mat` that the caller must release (or null), `close()` frees the source.
+* **`RetrieverSource`** – the original way: `MediaMetadataRetriever.getFrameAtTime(..., OPTION_CLOSEST)` and `TimerVision.bitmapToGray`. It works everywhere but is slow: every call seeks to a keyframe, sets up a decoder, decodes forward and builds an 8 MB Bitmap (measured about 250 ms per read). Still used by `analyzeOne` (+ Cut at playhead needs only a few reads) and as the fallback.
+* **`CodecSource`** – one `MediaCodec` decoder that stays running (configured without a surface, so frames arrive as plain memory). Asking for a time a little after the last one just keeps decoding forward, and the frames that are not wanted are released without being copied. It **jumps** only when the target is behind the decoder or the next keyframe is more than `SEEK_PAYS_OFF_US` (0.3 s) ahead of it: a second `MediaExtractor` (`probe`) finds the keyframe before the target, then the extractor seeks and the decoder is flushed. The wanted frame is the first one whose time is at least the target minus half a frame. The picture is the decoder's **Y (brightness) plane**, read through `getOutputImage` (honouring the crop rectangle and the row stride), so there is no Bitmap and no colour conversion. If the video uses the limited range 16–235 the values are stretched to 0–255 so the picture looks like what the old path produced (`KEY_COLOR_RANGE` says when the video is already full range). The decoder does not apply the video's rotation tag, so the picture is turned upright by `rotation`.
+* **`AutoSource`** (what `openFrameSource` returns). Before the scan it opens a `CodecSource` and **checks it against `RetrieverSource`** (`calibrate`): at 50 %, then 30 %, then 70 % of the video (the first picture with some detail, standard deviation ≥ 10) it resizes both pictures to 96×96, compares them with normalised correlation, tries the four rotations (0/90/180/270), keeps the best and requires a match of at least 0.85. That also settles the rotation without trusting the file's tag. If the check fails, if the decoder throws, or if it stalls (about 4 s without output), the scan **quietly switches to `RetrieverSource`** for every later read. `Frame source:` lines in Logcat (tag `CubeCut`) say which one is used and why.
+* **Last position first** (`TimerEngine.readDigitsGray`). While the camera stays put the display is where it was on the previous frame, so the engine first tries reading at the previous position and only runs the shape finder (ORB) if that read returns nothing. It also re-runs the shape finder every `REFIND_EVERY` (20) quick reads to follow slow drift. It is not used in fixed-camera mode, and `forgetPosition()` is called at the start of every scan. On the test footage only 62 of 358 reads used the shortcut, so it saves little there; it is small and harmless.
+
+**Tried and removed.** Scanning the video in 2–3 pieces in parallel (each with its own decoder and engine, with overlap and a merge step) was built and measured: **2 workers took 105 s against 107 s for one**, because each frame then took about 1.8 times longer; the phone's decoder is the limit. It was removed again for a smaller codebase. A cropped shape-finder search near the last position (to cut the remaining ~10 s in ORB) was proposed and **declined by the user**.
+
+Measured results are in section 6D.
+
+### 2.2 Reading the timer
+Pipeline for one frame. Steps 1–3 are shared by every reader and do not care about fonts; steps 4–6 are done by the active *reader* (see 2.3b).
+
+1. **Find the display.** Two modes:
+   * **Shape tracking (normal):** a saved *reference picture* of the timer's body (logo, buttons, pads; the display itself is masked out because its digits change) is matched against the frame using **ORB features + RANSAC homography** (OpenCV; needs ≥ 14 matches and a reference with ≥ 30 features). Copes with the timer moving, the camera moving a bit, rotation and different lighting. Tested limits: any position/rotation; zoom roughly 0.8×–1.4× of the setup size; mild side-views; fails for big zoom changes and strong side angles. During Find solves the previous position is tried first (section 2.1b).
+   * **Fixed-camera mode:** if the reference has under 30 features (a plain PC/phone screen has almost nothing to track), the saved corners are used as they are, with no tracking. The camera must then stay still, and the setup message says so. Tracking follows the monitor and background, not a window on the screen, so moving or resizing the window mid-video breaks it.
+2. The four corners are **straightened** (perspective warp) into a fixed-size picture (380 px wide; height from the corner shape clamped to 80–260 px; fixed at setup time). The box that is read (`readCorners`) may be a snug box around the digits (see 2.3), while tracking always uses the box the user marked (`corners`).
+3. **Prep** (`TimerVision.prep`): contrast stretch (1st–99th percentile), optional **invert** (light-on-dark digits), **undo the italic lean** with a horizontal shear, blur, **adaptive threshold** → black/white picture, digits white.
+4. **Find the digit columns** (`TimerVision.groups`): for every column it measures how much of it is lit (≥ 11.5 % of the band height) and how tall the lit part is (first to last lit row). A column only counts if its lit height is **≥ 35 % of the tallest qualifying column**; neighbouring qualifying columns (gap ≤ 2 px) form a group; groups narrower than 8 px are dropped. This ignores short shapes: icons, text, the decimal point, a colon. `refineBand` then shrinks the row band to the rows the surviving groups cover (+3 px), and the groups are recomputed.
+5. **Digit cells.** Positions learned at setup, measured from the **rightmost digit's right edge**, are stretched to **8 slots** (`MAX_SLOTS`) using the median digit pitch, so one setup reads `9.87`, `12.34` and `1:02.34`. At least `max(3, decimals + 1)` digits must be read.
+6. **Classify each digit** by which of the 7 segments (a–g) are filled (box fractions, threshold relative to the brightest segment). Narrow cells are a `1`, a `7` (thin top bar to the left of the stroke) or a `4` whose left strokes faded. A missing digit inside the number gets a second, more sensitive look before giving up.
+7. A frame is only accepted if every digit is clear; otherwise it returns "unreadable" (`null`).
+
+### 2.3 Learning a timer ("Set up timer")
+**The setup screen** (`TimerSetupScreen.kt`) shows the whole frame in both steps: tap the display (step 1, it auto-zooms), then drag four orange dots onto the display's corners and type the number it shows (step 2). **Pinch** to zoom, **two-finger drag** to pan, one finger on a dot moves that dot, one finger on empty space pans, a **Fit** button returns to the whole frame. While a dot is dragged a round **magnifier** (3× the current zoom, at least 3×) floats above the finger, so the thumb does not hide the dot. The number box says "Number shown now, e.g. 11.108 (1:02.34 = 102.34)": the keypad has no colon, so for a time with minutes type all digits (`102.34`). With 3 or more digits before the point a colon gap is allowed.
+
+**Which frame to use (2.0.0).** The setup must be done on a frame that shows **an actual time after a solve**: the timer has stopped, the final time (for example 12.412) is showing and nothing is in front of it. **Not a frame that shows 0.000**: zeros give the learner almost nothing to tell digits apart, and the whole scan depends on this reading. The Setup box says this in bold, and saving a setup whose typed number is all zeros appends a warning to the message. The setup is still never blocked: it saves with a warning when unsure.
+
+**What `TimerVision.createSetup` does, in order:**
+1. Cuts a **reference picture** around the display (≈ 5.2 × 2.6 display-widths) and builds a `ShapeFinder`. If the reference is too plain (< 30 features) it switches to **fixed-camera mode** (`fixedPosition = true`).
+2. Tries each *available* reader in the order of `DisplayReaders.all`; the first whose strict `learn()` **reproduces the typed number exactly** wins. For the segment reader this means: try light/dark, several lean values (the best two by "stroke sharpness"), split the stroke groups into as many digits as were typed in every possible way, keep only splits that look like a **real timer** (digits evenly spaced within 22 %, decimal gap 0.95×–1.9× the pitch, colon gap 0.95×–2.4×, digit width ≤ 16 % of the canvas width, digits inside 10.5 %–91.8 % of its width), and require every digit to match; the best-margin layout wins.
+3. **Setup with a warning:** if nothing reproduces the number, `learnUnverified` saves the closest layout (most digits matched among candidates that pass the spacing checks) and the message says "Timer saved WITH A WARNING ... readings may be wrong. Test read: X". Setup fails outright only if no digit-like shapes fit at all ("Couldn't find digit shapes in this box that fit ..."). The test read shows "(nothing readable)" when it can't read, never the typed number.
+4. **Box tightening** (`tightenQuad`, verified layouts only): measures where the digits sit and builds a snug box around them (digits take 78 % of the width, 12 % margin left, 10 % right, vertical margin 18 % of the band height). It re-learns on that box and keeps it only if the typed number is still reproduced (message adds "(box tightened)"). More pixels per digit, less clutter.
+5. A **test read** of the setup frame is shown in the message ("Timer saved. Test read: 12.460").
+
+**The setup is session-only (since 1.1.0).** It is no longer written to disk and is cleared every time a video is imported (`timerEngine = null`), so the user sets the timer up on every app start and every video import. The green/orange indicator is just `timerEngine != null`. The `TimerStore.save/load` functions still exist in `TimerReader.kt` but are not called; at start-up the app calls `TimerStore.clear` to delete files an older version left behind. If a learned layout is bad, just run Set up timer again.
+
+### 2.3b Display readers (`DisplayReaders.kt`)
+Only the part that turns a straightened black-and-white picture into digits is font-specific, so it sits behind an interface:
+* `DisplayReader`: `id`, `available`, `learn(gray, q, typed)` → a `DigitLayout` or null, `read(th, layout)` → digits like `"11108"` or null when unsure, and `learnUnverified(...)` (default null).
+* `DisplayReaders.all = [SegmentReader, GlyphReader]` (cheapest/most reliable first); `byId()` falls back to the segment reader. The winning reader's id is stored in `DigitLayout.readerId`, with `readerData` as free space for a future reader.
+* **`SegmentReader`** (id `"segment"`) wraps `TimerVision.learn` / `readBin`: seven-segment style digits.
+* **`GlyphReader`** (id `"glyph"`) is a **disabled placeholder** (`available = false`) for "approach 2" (any font; expected to be a small TFLite digit classifier). Its comments list exactly how to build it.
+* Everything *after* a reader is shared too: the vote over many frames (`SolveAnalyzer`) and the number formatting (`TimerVision.formatDigits`). A reader must return `null` when unsure; the vote relies on that rather than on wrong guesses.
+
+### 2.4 What counts as a solve, and what the user sees ("Find solves")
+Every stopped timer found by 2.1 becomes a row (`FoundSolve` → `CutItem`): switched on, `includeScramble` taken from the current "all clips" switch. Notes the scan can add:
+* **Time already showing when the video began** (no earlier frame shows anything else, and it starts within the first second): switched **off** with the note "this time was already on the timer when the video began - probably left over from an earlier solve". Such a cut is treated like a deleted one for the clip maths (2.5) as long as it stays off.
+* **"time not steady (read on N of M frames) - check it"** when fewer than 60 % of the reads in the vote agree on the winner. The switch stays on.
+* There are **no sound-based suggestions** any more. Nothing is listed for stretches where the timer could not be read; the user is reminded to check (below).
+* A note "couldn't see exactly when this time appeared - check the cut point" existed in the first 2.0.0 build and was **removed at the user's request**: it meant nothing to a person.
+
+**After a scan:** the status line says `Done in 214s: 22 solves found, 1 to check`. If **no** solve was found, a card explains what to try (set up again on a frame showing a real time after a solve, use *Read timer here* on a few moments after solves, or cut by hand). If the timer was readable on **under 25 %** of the frames looked at, an amber warning says so. Whenever solves were found an amber **disclaimer** says: make sure every solve was captured; if one is missing, put the playhead on the END of that solve (the first frame that shows the final time) and tap **+ Cut at playhead**. (A "check these parts of the video" list with jump buttons was built and then removed at the user's request, in favour of this disclaimer.)
+
+**+ Cut at playhead** (`SolveAnalyzer.locate`, or just the playhead time if no timer is set up): reads 13 frames from the playhead (0.25 s apart); a number read at least twice wins (so the playhead must be on a frame that shows the stopped time, or up to ~3 s before it); then it walks back up to 30 s (`MANUAL_BACK_MAX_SEC`) to the first frame showing it, so the playhead may be anywhere while the time is held. The new row's note is "added by you" or a hint ("couldn't read a time here...", "no steady time here...") with an empty time, to be typed with **Add time**. The new cut takes the current "all clips" scramble setting.
+
+In the list the words that mean "look at this one" are highlighted in bold amber (`CHECK_KEYWORDS` in `MainActivity.kt`; if you change the wording of a note in `SolveAnalyzer.kt`, add the new words there).
+
+### 2.5 Clips
+Settings: **before buffer** `beforePad` and **after buffer** `afterPad`, both 0–8 s in 0.5 s steps, default 2.5 s (sliders in the Setup box). Per cut: `includeScramble` (tick box in the row; the pinned "Include scramble in all clips" switch sets every row, new cuts follow it; the starting value is `DEFAULT_INCLUDE_SCRAMBLE = true`).
+
+`computeClips` (in `ClipExporter.kt`) goes through the cuts in time order:
+* **End** = first frame + after buffer (not beyond the video's end).
+* **Solve only** (scramble off): **start** = first frame − the time on the timer − before buffer (not before 0:00). The time is read from the row's text by `parseTimeSeconds`: `12.112` = 12.112 s, `1:02.345` = 62.345 s, a plain `102.34` = 102.34 s (the setup screen uses a different convention, where `102.34` means 1:02.34).
+* **With scramble**: **start** = where the **previous cut** ended (the first cut starts at 0:00), but never later than the solve-only start, so the solve and its before buffer are always inside.
+* **No time known** (and scramble off): the solve length can't be counted back, so the clip is the full clip as if the scramble were on, flagged "no time yet" until the user types the time. A time typed with *Add time* / *Edit* is used immediately, whoever found it.
+* **The boundary rule (2.0.0).** "The previous cut" means the previous cut **whether or not it is switched on**. Example: 4 solves found, the user keeps 2 and 4 with scramble: clip 2 starts at the end of solve 1 and clip 4 at the end of solve 3, so a solve you left out is never dragged into the next clip. **Switched off** therefore means *a real solve I don't want* and still marks where the next scramble starts. To say *this was not a solve*, use **Delete cut** in the Edit window; a deleted cut does not exist for the clip maths. A cut that the scan itself switched off as "already on the timer when the video began" counts as deleted while it stays off (if the user switches it on it becomes a normal cut).
+* Two cuts whose ends are closer than 1 s: the second is skipped (the row says "too close to the previous cut - will be skipped").
+* The timeline's lower strip draws each exported clip: dim green = scramble part, bright green = the solve part (solve plus buffers).
+* **Export is lossless** (MediaExtractor + MediaMuxer, no re-encode): fast, no quality loss, but a clip must start on a keyframe so it can begin **up to ~1 s earlier** than calculated (this is most visible on solve-only clips). Saved to **Movies/CubeCut** (visible in the gallery). File name: `Solve_NN_<time>s.mp4`; a colon becomes `m` (`1:02.345` → `1m02.345`); unknown time → `unknown`.
+
+### 2.6 Running Find solves in the background
+* Find solves runs inside the app (`runFindSolves()` in `MainActivity.kt`, in the screen's coroutine scope), reading the video with `SolveAnalyzer.analyze`, which reports progress as a percent (`onProgress(percent, 100)`).
+* **Cancel** (new in 2.0.0): the scan can take minutes, so a Cancel button sits under the Find solves button while it runs. It sets `cancelScan`, which `SolveAnalyzer.scan` polls before every frame read; it then throws `ScanCancelled`, the status says "Find solves cancelled." and the old list is kept.
+* To survive the user switching to another app, `AnalysisService.kt` (a **foreground service**) is started just before the work and stopped in a `finally` block after it. The service does no work itself: it shows an ongoing notification with a progress bar ("Reading the timer along the video: N%"), which tells Android the app is busy. A second, normal notification ("Find solves finished") is posted when the work is done.
+* Needs the manifest permissions `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` (service type `dataSync`) and `POST_NOTIFICATIONS` (Android 13+, asked the first time the user presses Continue; the work still runs if it is refused, but the notification may not show).
+* The screen is also kept awake (`view.keepScreenOn`) while Find solves or export is running.
+* **Limits:** swiping the app away from recent apps stops the job; some phone makers' battery savers still kill apps (set CubeCut to "Unrestricted" battery use); rotating the phone recreates the activity and loses all state. Export does not use the service.
+
+### 2.7 The screen, top to bottom (`EditorScreen` in `MainActivity.kt`)
+The design rule since 2.0.0: **the solves list gets as much of the screen as possible.** Only what is needed while scrubbing the video stays pinned; everything else scrolls away with the list.
+
+**Pinned (never scrolls):**
+1. **Header** – logo, "CubeCut" and a status line (`Ready - first, set up the timer`, then `Ready`, or the import/error text) on the left; **Import video** on the right.
+2. **Video** – height = 27 % of the screen height (between 170 and 300 dp). **Pinch** to zoom (1x to 8x), drag with one finger to move when zoomed, **double-tap** to reset. A label shows the zoom while zoomed. Implemented with `graphicsLayer` on a `PlayerView` that is inflated from `res/layout/video_player_view.xml` (TextureView; the default SurfaceView cannot be scaled reliably).
+3. **Play row** – Play/Pause, current/total time, and the **Zoom** slider for the *timeline* (1x–10x).
+4. **Timeline** (`Timeline.kt`, 64 dp: film strip 38 dp + the clip strip). Markers: green = included cut, grey = left-out cut; the selected cut has a white ring; red playhead. The marker sits on the **first frame that shows the time**. The clip strip draws each exported clip: dim green = scramble part, bright green = solve part.
+5. **Review bar** (once there are cuts) – `‹ Prev`, "Solve 3 of 22" with its time, *included/left out*, *with scramble/solve only* (plus "check this one" for notes), `Next ›`, and a switch to include/exclude the selected solve. Prev/Next select the cut, jump 0.5 s before its first frame **and scroll the list to that row if it is not fully in view** (row positions come from `onGloballyPositioned`).
+6. **Find solves** and **+ Cut at playhead** buttons side by side. While Find solves runs: the button shows `Working... 37%` and a thin progress bar with **Cancel** appears under it.
+7. **"Include scramble in all clips"** switch (only when cuts exist), with `(on)`, `(off)` or `(mixed)`. Switching it sets every cut; each row's own tick can then differ.
+
+**Scrolls (one scroll area, `listScroll`):**
+8. **Setup box** (collapsible card). Header: coloured dot (green = timer set up, orange = not); when collapsed a one-line summary (`Timer ready | 2.5 s before | 2.5 s after`); Show/Hide. Open content: **1. Timer** – status, a bold instruction to use a frame that shows an actual time after a solve and **not 0.000** (2.3), the one *Set up timer / Set up again* button, *Read timer here* (with the little black-and-white debug picture) and messages; **2. Buffers around the solve** – the *before* and *after* sliders. Open when the app starts and when a new video is imported; folds shut when Find solves finishes with at least one solve (stays open if none was found). There is only **one** Set up timer button: an extra "Start here" card with a second button was removed as redundant.
+9. While Find solves runs: a highlighted **progress card** (big percentage, thick bar, "you can switch to another app"). Otherwise a one-line status.
+10. Before the first setup, one line of text pointing to the Setup box; after a scan, the warnings and the disclaimer from 2.4 and a short help line.
+11. **Solves list** – one row per cut: a switch (export or not), `n. 11.263 s (time first shows at 0:34.4)`, the clip line (`clip 3: 0:20.1 - 0:37.0 | with scramble` or `solve only`, or the reason it is left out / skipped), an extra amber line for a note, an **Include scramble** tick box, and **Edit** (or **Add time** when the time is unknown). The selected row is tinted. Tapping a row jumps to 0.5 s before its first frame and selects it.
+12. At the **end of the list**: the **Export** button, a line counting clips with no time (they export as `unknown`), and the export status. Export therefore only appears when the user scrolls to the last item.
+
+**Windows:** *Importing video* (modal, real progress bar, blocks touches and the Back button); *Find solves?* (estimate, "you can switch apps", Cancel is available while it runs, replace-edits warning, Continue/Cancel); *Edit solve n* (time text, cut point shown in seconds with **−0.5 / −0.1 / +0.1 / +0.5** buttons that also jump to the frame, *Jump to this frame*, Delete cut); *Export complete / finished with problems* (counts, folder, OK); full-screen *Set up timer*.
+
+**State** lives in `EditorScreen` as `remember`ed values (video uri, durations, thumbnails, `cuts` list, selected cut, `beforePad`, `afterPad`, `scrambleAll`, scan report and cancel flag, dialog flags, timer engine, video zoom, the list's scroll state). There is no audio data any more. Nothing is saved between launches (the timer setup is session-only).
+
+---
+
+## 3. Files in this project
+
+### 3.1 Android source (`app/src/main/java/com/example/cubecut/`, package `com.example.cubecut`)
+
+| File | What it is for |
+|---|---|
+| **MainActivity.kt** (~1190 lines) | The app's front door. Starts OpenCV; builds the whole screen (`EditorScreen`, section 2.7) and all its windows; holds all on-screen state; runs import (with progress), Find solves (`runFindSolves`, with Cancel), add-cut (via `SolveAnalyzer.analyzeOne`), export; `openTimerSetup`; Prev/Next scrolling (`goToCut`); starts/stops the background service; the pinch-zoom gesture code; `highlightCheck` (amber keywords); `DEFAULT_INCLUDE_SCRAMBLE`. **Timer setup is session-only:** the engine is cleared whenever a video is chosen, nothing is saved after setup, and start-up only deletes old saved files. |
+| **AnalysisService.kt** | A foreground service whose only job is the "Find solves" notification (progress bar "Reading the timer along the video: N%", finished message) that keeps Android from putting the app to sleep. Helpers: `start`, `update`, `stop`, `notifyDone`. |
+| **MediaTools.kt** | Reading the video file: duration, film-strip thumbnails (`buildThumbnails`, optional progress callback), `grabFrame` (one exact picture), `formatTime`. **The audio decoding, waveform and sound-spike detector were removed in 2.0.0.** |
+| **Timeline.kt** | Draws the film strip, the clip strip (what each clip contains, from `ClipBar`), coloured markers, the white ring on the selected cut and the red playhead; tap to jump; drag to scrub at zoom 1; scrolls sideways when zoomed. 64 dp tall. |
+| **TimerSetupScreen.kt** (~370 lines) | The full-screen "Set up timer" helper, rewritten in 1.1: shows the **whole frame** in both steps with pinch zoom, two-finger pan, a **Fit** button, a round **magnifier** while a dot is dragged, auto-zoom on the tapped display, and the number box. Needs Compose Foundation 1.4+ (`awaitEachGesture`). Same `onSave(corners, typed)` interface as before. |
+| **TimerReader.kt** (~1060 lines) | **The image-processing core** (OpenCV): the data model (`DigitLayout`, `TimerSetup`), `TimerVision` (straighten/`prep`, column-based digit finding `groups`, `refineBand`, `autoBand`, segment classification, **`learn`**, `readBin`, `tightenQuad`, **`createSetup`**), `ShapeFinder` (find the timer by shape; frees its OpenCV images after every frame), `TimerEngine` (locate + read one frame; fixed-camera mode; picks its reader with `DisplayReaders.byId`; `readDigitsGray` for the scan, with the last-position shortcut and `forgetPosition`), and `TimerStore` (save/load/clear; save and load are no longer used). The riskiest and most tuned file. Changed heavily in 1.1 (see section 2 and `docs/TIMER_READING_CHANGES.md`). |
+| **DisplayReaders.kt** (~90 lines) | New in 1.1. The "reader seam": the `DisplayReader` interface, the list `DisplayReaders.all`, `SegmentReader` (seven-segment digits, wraps `TimerVision.learn/readBin`) and the disabled `GlyphReader` placeholder for any-font reading later (section 2.3b). Add a new reader here. |
+| **SolveAnalyzer.kt** (~430 lines) | **Rewritten in 2.0.0.** The first-frame logic of section 2.1: `scan` (whole video), `firstAppearance` (backwards search to the first frame, ending in the binary search `bisect`), `locate` / `analyzeOne` (manual cut), `pickWinner` (vote with the 4/7-over-1 bias), `memoReader`, `analyze` (opens a `GraySource` with `openFrameSource`, runs `scan`). Result classes `FoundSolve`, `ScanResult`, `UnreadableSpan`, `ManualCut`, `ScanCancelled`. All tuning constants are at the top. The decision logic needs only a `read(t)` function, so it can be tested without a phone. |
+| **FrameSource.kt** (~420 lines) | New in the 2.0.0 speed-up. Where Find solves gets its pictures (section 2.1b): the `GraySource` interface, `RetrieverSource` (the slow, original way, also the fallback), `CodecSource` (one running `MediaCodec` decoder that reads the brightness plane directly), `calibrate` (checks the fast picture against the old one and finds the rotation) and `AutoSource` / `openFrameSource` (fast path with automatic fallback). Logs which source is used (`Frame source:`, tag `CubeCut`). |
+| **ClipExporter.kt** | The cut model (`CutItem`: `stopSec`, `timeText`, `included`, `note`, `manual`, `includeScramble`), `Clip`, `parseTimeSeconds`, `computeClips` (section 2.5: buffers, solve only / with scramble, previous-cut boundary), and the lossless exporter to `Movies/CubeCut`. File names: `Solve_NN_<time>s.mp4`, or `Solve_NN_unknown.mp4`. The export code itself is unchanged since 1.0. |
+
+> `TimerReader.kt`, `TimerSetupScreen.kt` and `DisplayReaders.kt` come from the timer-reading expansion (1.1); `docs/TIMER_READING_CHANGES.md` is the detailed record. **The digit reading in them was not touched by the 2.0.0 change** (for the speed-up only `TimerEngine` gained `readDigitsGray` and the last-position shortcut). 2.0.0 changed `SolveAnalyzer.kt`, `ClipExporter.kt`, `MediaTools.kt`, `Timeline.kt`, `MainActivity.kt` and the wording in `AnalysisService.kt` (see `docs/FIRST_FRAME_CUTS_CHANGES.md`), and the speed-up added `FrameSource.kt`.
+
+### 3.2 Android configuration and resources
+
+| File | What it is for |
+|---|---|
+| **app/build.gradle.kts** | Module build file. `namespace`/`applicationId` `com.example.cubecut`, `compileSdk` 37, `minSdk` 24, `targetSdk` 37, `versionCode`/`versionName`. Dependencies: Compose BOM, Material 3, activity-compose, `androidx.media3:media3-exoplayer:1.10.1`, `androidx.media3:media3-ui:1.10.1`, `org.opencv:opencv:4.13.0`. The `release` build type has R8 optimisation switched on (untested, see 4.4). |
+| **app/src/main/AndroidManifest.xml** | Declares the activity, the three permissions (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`) and the `AnalysisService` (`foregroundServiceType="dataSync"`, not exported). |
+| **res/layout/video_player_view.xml** | A `PlayerView` with `surface_type="texture_view"` and no controller. `MainActivity` inflates it so the video can be scaled for pinch zoom. **The build breaks if this file is missing or renamed.** |
+| **res/drawable/cubecut_logo.png** | The logo shown in the app header (transparent background, 512 px). Referenced as `R.drawable.cubecut_logo`. |
+| **res/mipmap-\*/ic_launcher\*, mipmap-anydpi-v26** | The launcher icon, generated with Android Studio's *Image Asset* tool: foreground = `logo_foreground.png` (1024 px, logo inside the safe zone), background colour white `FFFFFF`. |
+| **res/values/strings.xml** | `app_name` = CubeCut. |
+
+### 3.3 Repository and documentation files
+
+| File | What it is for |
+|---|---|
+| `README.md` | GitHub front page. |
+| `CHANGELOG.md` | What changed in each version; keep `[Unreleased]` up to date while working. |
+| `docs/CUBECUT_PROJECT_GUIDE.md` | This file. |
+| `docs/GIT_WORKFLOW.md` | Git/GitHub setup, branching, releases, best practices, undo, troubleshooting. |
+| `docs/TIMER_READING_CHANGES.md` | Detailed record and reasoning of the timer-reading changes in 1.1 (reader seam, digit finding, fixed-camera mode, setup screen, session-only setup, test results). |
+| `docs/FIRST_FRAME_CUTS_CHANGES.md` | Record of the 2.0.0 change: first-frame cuts, scramble handling, buffers, UI, tuning constants, what to test. |
+| `.gitignore` | Keeps build output, keystores, `.apk`, videos and `local.properties` out of Git. |
+
+### 3.4 PC prototype (`pc_prototype/`, optional in the repo)
+| File | What it is for |
+|---|---|
+| **cubecut.py** | The original working prototype (**sound-based**, the 1.x method). `python cubecut.py session.mp4 -o results [--dry-run] [--debug]`. Finds spikes, validates them by reading the timer, cuts with ffmpeg. Uses the QiYi corner numbers and `timer_reference.png`. It is the **reference implementation of the digit reading** and of the old method: when the phone reads digits oddly, run the same video through this and compare. It does not implement first-frame cuts. |
+| **timer_reference.png** | Reference picture of the QiYi timer for `cubecut.py` (not used by the Android app, which makes its own at setup). |
+| **generic_reader_prototype.py** | Python version of the *learning + generic reading* algorithm that `TimerReader.kt` implements. Used to test changes quickly before porting to Kotlin. |
+| **first_frame_scan_prototype.py** | New in 2.0.0. The first-frame logic (`scan`, `first_appearance`, `locate`), the clip maths (`compute_clips`), a noisy-timer **simulator** and tests, in one file with the same names as the Kotlin. `python first_frame_scan_prototype.py` prints detection results on simulated sessions and the clip maths for the "keep solves 2 and 4" example. Change logic here first, then port to Kotlin. |
+
+PC prerequisites: Python (classic installer from python.org, tick "Add python.exe to PATH"), `pip install numpy scipy opencv-python`, ffmpeg (`winget install ffmpeg`).
+
+### 3.5 Repository layout
+```
+CubeCut/
+├─ README.md   CHANGELOG.md   .gitignore
+├─ docs/       CUBECUT_PROJECT_GUIDE.md   GIT_WORKFLOW.md   TIMER_READING_CHANGES.md   FIRST_FRAME_CUTS_CHANGES.md
+├─ pc_prototype/   cubecut.py  generic_reader_prototype.py  first_frame_scan_prototype.py  timer_reference.png
+├─ app/
+│  ├─ build.gradle.kts
+│  └─ src/main/
+│     ├─ AndroidManifest.xml
+│     ├─ java/com/example/cubecut/   (the 10 .kt files)
+│     └─ res/   layout/  drawable/  mipmap-*/  values/
+├─ gradle/  build.gradle.kts  settings.gradle.kts  gradle.properties  (Android Studio's own files)
+```
+(Test videos are deliberately **not** in the repository.)
+
+---
+
+## 4. Android Studio / Gradle / phone setup
+
+### 4.1 First-time project setup (done)
+1. **Android Studio** installed (standard setup, downloads the SDK).
+2. **Project**: New Project → *Empty Activity* (Jetpack Compose), Kotlin. It started life as **HelloTest** (`com.example.hellotest`); it is now **CubeCut**, package and application ID `com.example.cubecut`.
+3. **Dependencies** in *Gradle Scripts → build.gradle.kts (Module :app)* inside `dependencies { ... }` (then **Sync Now**):
+   ```kotlin
+   implementation("androidx.media3:media3-exoplayer:1.10.1")   // video player
+   implementation("androidx.media3:media3-ui:1.10.1")          // the player's picture view
+   implementation("org.opencv:opencv:4.13.0")                  // image processing (OpenCV)
+   ```
+4. **Permissions**: the video comes from the system photo picker and exports go through MediaStore, so no storage permission is needed. The manifest declares only the three notification/service permissions (section 3.2).
+5. **Phone**: Settings → About phone → tap *Build number* 7 times → Developer options → *USB debugging* (or *Wireless debugging* + "Pair devices using Wi-Fi" in Android Studio's Device Manager). Pick the phone in the device dropdown next to the green Run button.
+
+### 4.2 Adding or replacing a source file
+Each source file is a separate Kotlin file in `app/src/main/java/com/example/cubecut/`. To add one: right-click that folder → New → Kotlin Class/File → name it → paste. To replace one: open it, select all, paste. Every file starts with `package com.example.cubecut`.
+
+### 4.3 Adding a resource file (layout / drawable)
+Right-click `res` → New → Android Resource Directory → choose the type (`layout`, `drawable`). Drag the file into that folder and keep the exact name (lowercase letters, digits, underscores). App icon: right-click `res` → New → Image Asset.
+
+### 4.4 Building an APK to share (outside Google Play)
+1. **Quick test build (debug APK):** Build → Build Bundle(s)/APK(s) → Build APK(s). The file is in `app/build/outputs/apk/debug/`. It is slower and unoptimised, fine for a friend to try.
+2. **Proper build (signed release APK):** Build → Generate Signed App Bundle or APK → APK → create a **new keystore** the first time (choose a strong password, note the alias) → choose the **release** build type → Finish. The file is in `app/release/`.
+   * **Back up the keystore file and its passwords** (two places, outside the repo). Every future update must be signed with the same key, otherwise people have to uninstall first.
+   * **Test the release APK on your own phone before sending it.** The release build has R8 optimisation on, and OpenCV (native code) and Media3 can break under it. If it crashes, send the Logcat `FATAL EXCEPTION` block; the fix is either keep-rules or switching `optimization.enable` off.
+3. **Before sharing:** consider a final application ID (`com.example.*` is fine for sideloading but cannot be published on Google Play; changing it installs as a different app next to the old one); raise `versionCode` for every update; OpenCV makes the APK large, and restricting it to phone CPU types (`arm64-v8a`) would shrink it (not yet done).
+4. **Send it:** Google Drive link, USB, or a GitHub Release (see `docs/GIT_WORKFLOW.md`). Some chat apps block `.apk` files.
+5. **Installing on another phone:** open the file, allow "Install unknown apps" for the app used to open it. Google Play Protect may warn about an unknown developer; "More details → Install anyway". Needs Android 7.0+.
+
+---
+
+## 5. Decision log (why things are the way they are)
+
+* **Sound + timer confirmation** instead of sound alone (1.x, **superseded in 2.0.0** by reading the timer along the whole video; kept for history): sounds also occur mid-solve and when the timer starts. The timer's frozen non-zero time is the real proof of a stop.
+* **Timer found by shape (ORB), not colour**: a colour-range finder broke with different lighting; shape matching survived dark/bright/tinted/moved/rotated tests.
+* **Per-timer setup with a typed number** instead of a hard-coded QiYi layout, so other 7-segment timers and screens (csTimer) can work. Fonts that are not seven-segment-like are *not* supported yet (see the reader seam, 2.3b).
+* **A "must be steady for N consecutive frames" rule was tried and reverted** (1.x, voting after a sound): it rejected many real solves in dim, hand-covered footage. Plain voting (≥5 matching frames out of ~27) was used. The 2.0.0 rule is different and milder: the same time on just **2** reads with no clearly different reading in between, followed by a vote.
+* **7 read as 1** (thin top bar) → explicit top-bar check. **4 read as 1** when the 4's left strokes fade → explicit upper-left/middle-bar check. These were the two systematic digit errors.
+* **Learning bug found by the phone test**: from one setup frame the learner chose an unrealistic digit layout that matched the typed number but failed on other numbers. Fixed with the "plausible layout" check, forgiving matching *only while learning*, and lean selection by stroke sharpness.
+* **Sensitivity default 4.0** on the phone (3.5 on PC) (1.x only; the sensitivity slider was removed in 2.0.0 together with the sound analysis).
+* **Lossless export** chosen for speed on long sessions; accepted trade-off: clip may start up to ~1 s early.
+* **No cloud, no ML** – the user's explicit rule. (This is also why the app declares no internet permission.)
+* The assistant **cannot compile or run Android code** in its sandbox. Android code is written carefully and tested by the user; the *logic* is prototyped and tested in Python on the user's footage first.
+
+
+**UI decisions made while polishing 1.0 (all at the user's request unless noted):**
+* **Setup box grouped and collapsible** (1.0: timer + sensitivity + clip length; 2.0.0: timer + the two buffers) because the timer is set up once and the buffers rarely change; folding it after Find solves frees screen space for the review. It reopens on a new import because a new video may need a new setup.
+* **Pinned video + timeline, separately scrolling list** (1.0; refined in 2.0.0, see below): the review job is "tap a solve, look at what the video shows". If the video scrolled away the user could not see what a row jumps to. The Prev/Next bar (the assistant's suggestion) lets the user step through solves without touching the list.
+* **Video height 27 % of screen (30 % before 2.0.0), timeline 64 dp**: a trade-off between a clear picture and room for the list. Both are single numbers (`0.27f` in `MainActivity.kt`, `64.dp` in `Timeline.kt`).
+* **Export at the end of the list** instead of a permanent button: saves screen space and makes the user pass the whole list before exporting.
+* **Warning before Find solves**: it takes minutes and replaces the list. The estimate is `0.3 × video length` (2.0.0; it was 6 s per sound before), worded as an estimate.
+* **Foreground service only keeps the app alive; the work stays in the app.** Simplest design that survives switching apps. Cost: it does not survive swiping the app away or rotating the phone. Moving the work into the service/a ViewModel would fix both but is a bigger change.
+* **Unknown time is allowed to export** (named `unknown`) and can be typed in with *Add time*, instead of blocking the export.
+* **`ServiceCompat.startForeground` avoided**: the project's AndroidX core was too old to have it; the service calls the framework `startForeground` directly (API 29+ with the service type, plain call below).
+* **Video view is a TextureView from an XML layout**, because pinch zoom needs a surface that honours scaling and clipping; creating `PlayerView` in code cannot select that surface type.
+* **Timer reader left alone during the 1.0 UI polish** (user's decision at the time); the timer-reading expansion was done afterwards in a separate effort (next block).
+
+---
+
+
+**Timer-reading decisions (1.1; full reasoning in `docs/TIMER_READING_CHANGES.md`):**
+* **Approach 1 built, approach 2 deferred.** One seven-segment style on any device now; "any font" (probably a small TFLite digit classifier) later, behind `GlyphReader`. The reader seam means the rest of the app does not change when it is added.
+* **Digit finding by column height, not by merging near columns.** A camera icon in the csTimer box 3 columns from the last digit made setup fail depending on a 1–2 px corner error. Short shapes (icon, text, decimal point, colon) are now ignored per column (≥ 35 % of the tallest column).
+* **Row band refined** to the rows the digits actually cover, because icon rows had made it 20 rows too tall and misplaced the segment boxes.
+* **Setup continues with a warning instead of stopping** when the typed number can't be reproduced (user's request). It stops only if no digit-like shapes fit.
+* **Fixed-camera mode** for plain screens that give the shape finder nothing to lock onto; the camera must stay still.
+* **Snug read box** (`tightenQuad`), accepted only if the typed number is still reproduced.
+* **Variable-length numbers** (8 slots, minutes colon via a typed `102.34`) because csTimer shows no leading zeros.
+* **Timer setup is session-only** (user's decision): set up at every app start and every video import; nothing is saved. The user prefers this because the camera and window position change between sessions.
+* **Zoomable setup screen with magnifier** because large screens were cut off by the old fixed 600 × 380 crop, and a thumb covered the dot being dragged.
+* **Lesson from a mistake:** the assistant first blamed an "italic, touching" font; measuring the straightened black-and-white picture showed the digits were upright and separate. Always inspect that picture before blaming the font.
+
+---
+
+**First-frame cuts decisions (2.0.0; the user's request unless noted; record in `docs/FIRST_FRAME_CUTS_CHANGES.md`):**
+* **The cut is the first frame that shows the final time**, not the sound. It is the actual stop, it needs no quiet room or slap, and it makes counting back from it possible.
+* **Sound analysis and the sensitivity slider removed**, so importing a video is only reading the file and building the film strip.
+* **The timer setup is essential but never a dead end.** It comes first on screen; it saves with a warning when unsure; the user is told to use a frame showing a real time after a solve, not 0.000; and if the timer can't be read the user can still cut by hand with **+ Cut at playhead**.
+* **A stop = the same non-zero time on 2 reads with nothing clearly different between them, then a vote** (the assistant's design, prototyped in Python). Look-alikes (1↔4, 1↔7) don't break a run; a 4/7 version beats its 1 look-alike in the vote.
+* **Adaptive stepping** (0.5 s normally, wider while the display shows zero or an already-found time) to cut the scan time by roughly a quarter without losing solves (tested in the simulator).
+* **First frame by a multi-resolution walk back** (0.5 s, 0.1 s, one frame), tolerant of unreadable frames and single odd readings. The first version walked back 0.5 s only from where the coarse walk stopped and was late by up to ~1.4 s when reads just before the stop were unreadable; found by simulation, fixed by searching back to the nearest contradicting frame.
+* **Solve only = count back the time on the timer from the first frame**, plus a before buffer; every clip ends an after buffer after the first frame. Both buffers default to 2.5 s and are adjustable.
+* **Two scramble controls**: a tick per row and one pinned switch for all clips (it sets every row; rows can differ afterwards).
+* **Boundary = previous cut, switched on or not** (user's catch of a flaw in the first version, which used the previous *exported* clip and dragged a left-out solve into the next clip). Off = a real solve I don't want; **Delete cut** = not a solve. The auto-switched-off "already on the timer when the video began" cut counts as deleted (the user agreed).
+* **"Check these parts of the video" removed** (it listed stretches where the timer was unreadable, with jump buttons) in favour of one disclaimer after the scan: check that every solve was captured and use + Cut at playhead on the END of a missed one. The note "couldn't see exactly when this time appeared" was removed as meaningless to a person.
+* **One Set up timer button** (inside the Setup box) instead of two; the instruction about the frame is shown there.
+* **Screen layout:** only the header, video, timeline, review bar, the two buttons and the all-clips switch are pinned; the Setup box, progress, status and the list scroll together, and Prev/Next scroll the list to the selected row when it is out of view.
+* **Cancel button** for Find solves, because the scan now covers the whole video.
+* **The digit reader was not touched** (the user's explicit worry; it works well). The new code only calls `TimerEngine.readDigits` (since the speed-up: `readDigitsGray`).
+
+**Find solves speed decisions (2.0.0 dev; measured on the user's phone):**
+* **Measure first.** Timing logs showed the first scan took 107 s: 92 s getting frames (368 reads at about 250 ms each), 11.6 s in the shape finder, 1.3 s reading digits. Decoding, not the image processing, was the problem.
+* **"Last position first" in the engine** (try the previous display position before ORB) made no visible difference at first (still about 2 minutes), because the shape finder was only about 11 % of the time. Kept: it is small and harmless.
+* **Parallel scan in 2–3 pieces:** tried, **no gain** (105 s with 2 workers; each frame took 1.8× longer), **removed**.
+* **One running MediaCodec decoder** (`FrameSource.kt`) instead of one `MediaMetadataRetriever` seek per read: **107 s → 26.8 s**. Built with a **safety net** (startup comparison with the old picture, rotation found by comparison, fallback on any decoder failure) because the assistant cannot compile Android code or test decoders on other phones.
+* **`ZERO_STEP` 1 s → 2 s** and a **binary search for the first frame** (about 5 reads instead of about 12 per solve): fewer reads, same result.
+* **Cropped shape-finder search near the last position** (would cut the remaining ~10 s of ORB): proposed, **declined by the user** ("I like this how it is"; it works great on different footage).
+* **Smaller codebase on request:** the parallel code, the timing counters and log line, and the unused `readDigits(Bitmap)` were removed; the `Frame source:` log lines were kept.
+
+---
+
+## 6. Test footage and expected results ("known good")
+
+Keep these as regression tests – after any change, results should still match. **The two videos below were set up for the sound-based 1.x method.** Their *final times* (the timer text) are still the right answers for 2.0.0; the *sound times* are no longer cut points. With 2.0.0 each real solve should give one cut at the **first frame that shows the final time** (a little before the old sound time, because the slap came after the stop), and the extra sounds that used to appear as "check this one" simply no longer exist.
+
+**A. `20261005_131422_1.mp4`** (69 s, 2 solves, used for the PC prototype)
+* Final times: **11.108** and **14.338**. (1.x sound times for reference: 34.43 s and 65.46 s.)
+
+**B. `My_movie_7.mp4`** (212 s, 6 solves cut from a longer session; dim, hand/watch often covers the display)
+* Set-up frame: about **0:35**, the display shows **12.412** (a frame showing a real time after a solve, as required).
+* Final times in order: `12.412`, `11.435`, `11.263`, `12.151`, `20.343`, `19.316`. (1.x sound times: 28.7, 56.45, 87.54, 116.62, 155.49, 206.83 s.) Expected in 2.0.0: exactly these six cuts and no others.
+* Known weak spot: the 12.412 solve can read `12.112` on some frames (4 read as 1); the vote with the 4/7 bias should settle on 12.412.
+* **To record after the first real run (not yet written down):** the first-frame time of each of the six cuts, the `Done in …s` line and the scan duration on the phone. Add them here as the new known-good numbers.
+* 1.x history: the old sound method needed ~50 s for 8 sounds (ratio 4.0 on the phone found 8 sounds, 6 real + 2 extra).
+
+**C. Python simulation** (`pc_prototype/first_frame_scan_prototype.py`; 40 sessions × 22 solves): default noise 876/880 found, 0 false, error ≤ 0.25 s, 875 labels right; heavy noise 864 found, 13 false; low noise 880/880. Run it after any change to the scan logic. The clip-maths example (4 solves, keep 2 and 4) must give clips 42.5–92.5 s and 142.5–192.5 s with scramble, and 76.5–92.5 s and 175.5–192.5 s solve only.
+
+**D. Speed measurements (Find solves, the user's phone, the same test session each time).** The solves list should be identical in every row.
+
+| Version | Whole scan | Getting pictures | Shape finder | Digit reading |
+|---|---|---|---|---|
+| `MediaMetadataRetriever`, with the last-position shortcut | 107.2 s | 92.0 s (368 reads) | 11.6 s | 1.3 s |
+| Two parallel workers (removed again) | 105.2 s | 87.4 s + 95.6 s (194 + 223 reads, run side by side) | 6.3 s + 7.3 s | 0.7 s + 0.8 s |
+| `MediaCodec` frame source (current) | 26.8 s | 15.0 s (358 reads) | 10.2 s | 1.3 s |
+
+The timing log line was removed again to keep the code small; the status line `Done in …s` still shows the total. Add temporary timing code if you need the split.
+
+---
+
+## 7. Known limitations / ideas for later
+
+**Behaviour**
+* **Only seven-segment-style fonts.** Other fonts need the "approach 2" reader (`GlyphReader`, not built). csTimer's option "smaller font after the decimal point" must stay **off**: with it on, the digits and decimals have different heights/spacing, which the reader does not support. A penalty mark (+2) or "DNF" after the time can shift the digit slots. Tall junk inside the box (for example a vertical window edge) can still break digit finding. Hours / very long times are not covered by the 8-slot stretching.
+* **A final time shown for less than about 1.5 s can be missed** (the scan reads every 0.5 s and wants two agreeing reads). If a timer is reset immediately, lower `SCAN_STEP` (slower) or add the solve with + Cut at playhead.
+* **The timer must hold the final time.** Timers that blank or reset the display at once are not covered. A very short scramble (a next solve stopping within seconds of the previous hold) is not a concern: the scan steps widely only while the display shows zero or an already-found time, and a solve needs at least ~3 s.
+* **Timers that update the running time slowly** (a display that stays on the same value for more than ~0.5 s while running) could look like a stopped timer; the 1.x sound check no longer exists to reject it. Not seen so far.
+* **Digit misreads can still win the vote** when most frames of a short hold are misread; the 4/7-over-1 bias handles the known case. A "time not steady" note shows when under 60 % of the vote agrees.
+* Speed: see 2.1b and section 6D. What remains of the scan is about 15 s getting pictures and about 10 s in the shape finder (ORB) on the test session. Possible further speed-ups: a cropped ORB search near the last position (proposed, declined for now), fewer ORB features, fewer reads while the timer is running.
+* **Frame source caveats (tested on one phone only):** HDR / 10-bit footage may leave the decoder in a layout the fast path does not accept; the scan then uses the slow path (about 4× slower). A decoder that returns wrong pictures after a seek **without failing** would not be caught by the fallback (the startup check compares only one picture). Another app can take the hardware decoder during a scan (the slow path takes over). Cut positions can differ by a frame from the old path. The startup check adds about a second per scan. Test on a second phone before sharing the APK widely.
+* Hands/watch covering the display, glare and very dim footage lower the read rate; the review screen and the "check every solve was captured" reminder are the safety net. Long stretches where the timer was unreadable are no longer pointed out (`ScanResult.unreadable` is still computed and could be shown again).
+* Lossless cuts can start ~1 s early (most visible on solve-only clips); an exact re-encode option (Media3 Transformer) could be added.
+* Camera changes: big zoom/viewpoint changes need a fresh "Set up timer". **The timer setup is not saved**, so it must be redone at every app start and every video import (by design). In fixed-camera mode (plain screens) the camera must stay still and the window must not move or resize during the video. If tracking fails on a frame, that frame is skipped; there is no per-frame fallback to the saved corners yet.
+* Re-running **Find solves** replaces the list, so manual edits are lost (the confirmation window says so).
+* The "estimated minutes" in the Find solves window is a rough `0.3 × video length` from before the speed-up (`estMin`); it now overestimates and could be lowered.
+* `parseTimeSeconds` reads a plain `102.34` as 102.34 s, while the setup screen reads `102.34` as 1:02.34; use a colon (`1:02.34`) when typing a time of a minute or more in the Edit window.
+
+**App structure**
+* **Rotating the phone** recreates the screen and loses the loaded video, cuts and settings (the timer setup is lost too, because it is session-only). Staying in portrait avoids it. Fix: a ViewModel or `configChanges`/portrait lock.
+* **Swiping the app out of recent apps** stops Find solves.
+* Some phone makers' battery savers stop background work even with the service.
+* **Export does not use the background service** (it is fast, but a very large session could be interrupted if the user leaves the app).
+* The sliders (before/after buffers) and the "all clips" scramble switch do not persist between launches.
+* The solves list scrolls to the selected row on Prev/Next, but not when a row is merely tapped, and not after + Cut at playhead adds a row (the new row is selected; its status text is at the top of the scrolling area).
+* Landscape layout is not designed.
+* Timeline shows ≤ 12 thumbnails; very long videos at high zoom look coarse.
+* The **release build (R8)** is untested; the application ID is still `com.example.cubecut`; no settings screen, no ABI splitting.
+
+---
+
+## 8. Debugging playbook
+
+### 8.1 What to send when something goes wrong
+1. **Exact error text** (copy the red lines from Android Studio's *Build* tab, or the `FATAL EXCEPTION` block from Logcat) – not a description of it.
+2. A **screenshot** of the phone screen (the small black-and-white picture under *Read timer here* is very informative).
+3. For wrong/missing times: **expected vs actual**, the **timestamp** in the video, and the `Done in …s: N solves found, M to check` line.
+4. If possible: run the same video through the PC script and send its printed lines:
+   `python cubecut.py video.mp4 --dry-run --debug` (writes pictures of what the reader saw into `results\debug`).
+5. A short **video excerpt** (60–90 s) containing the problem. Cut one without re-encoding:
+   `ffmpeg -ss 00:12:00 -i session.mp4 -t 90 -c copy excerpt.mp4`
+6. For a slow scan or odd results: the `Frame source:` lines from Logcat (filter `CubeCut`). They say whether the fast decoder or the old way was used, and why.
+
+### 8.2 Build problems
+| Symptom | Likely cause / fix |
+|---|---|
+| Red "Unresolved reference: R.layout.video_player_view" or "R.drawable.cubecut_logo" | The resource file is missing, misnamed or in the wrong folder (section 3.2 and 4.3). |
+| Red "Unresolved reference: startForeground" (or another AndroidX function) | The project's AndroidX library is older than the function; use the plain Android call (see decision log) or update the library version in the version catalog. |
+| Red "Unresolved reference: X" | A source file is missing, or an old `MainActivity.kt` still contains functions now living in `MediaTools.kt` (duplicates). Make sure all ten `.kt` files are present (including `AnalysisService.kt`, `DisplayReaders.kt` and `FrameSource.kt`) and `MainActivity.kt` is the newest. |
+| "Redeclaration" / "Conflicting declarations" | The same function exists in two files – an old copy of a file was not replaced. |
+| `package` line mismatch / "Unresolved reference" to other files | The first line of every file must be `package com.example.cubecut`. |
+| Gradle sync failed / "Could not resolve org.opencv…" | No internet during sync, or the dependency line has a typo. Check the three lines in section 4.1, press *Sync Now*. |
+| Build slow/stuck the first time | Normal after adding OpenCV (large). Wait for the bottom progress bar. |
+| Phone not listed in the device dropdown | See section 4.1 step 5; try another cable/port, accept the USB-debugging prompt, or use wireless debugging. |
+
+### 8.3 Crashes
+* In Android Studio: *View → Tool Windows → Logcat*, choose the phone, set the filter to *Error*, reproduce the crash, copy the block that starts with `FATAL EXCEPTION`.
+* "OpenCV failed to load" message under the timer buttons: the `org.opencv:opencv` dependency is missing or the sync failed.
+* A decoder error during Find solves (`FrameSource.kt`) is normally caught and the scan carries on with the old, slower path; look for `Frame source:` lines in Logcat.
+* Crash right after choosing a video: look at the exception – usually a codec or file-format problem when the film strip is built (`MediaTools.kt`) or when frames are read (`SolveAnalyzer.kt`).
+
+### 8.4 Behaviour problems
+| Symptom | Likely cause | What to try |
+|---|---|---|
+| *Set up timer* says it couldn't match the digits to the typed number | Number typed doesn't exactly match the display; dots not near the display corners; frame blurry or hand over the display | Pause on a sharp frame with hands away; type exactly what the display shows (including the decimal point); place dots carefully on the 4 corners in order |
+| Set up succeeded but reads fail on other numbers | A bad layout was learned from a poor frame | Run *Set up timer* again on a clearer frame (this replaces the current setup) |
+| "Couldn't find the timer in this frame" | Hand in the way, or the camera moved/zoomed a lot compared with setup | Try a frame a second later; if the camera setup changed, set up again |
+| "Found the timer, but the digits weren't clear" | Glare, finger over the display, or a stroke too faint | Look at the black-and-white picture; try neighbouring frames |
+| A solve reads one digit wrong (e.g. `12.112` for `12.412`) | 4/1 confusion on faint strokes | Use **Edit** to correct; if it happens a lot, re-run setup on a clearer frame |
+| Rows with a "check" note | A "time not steady" note means the vote was split; "already on the timer" means the display showed a time at the very start of the video | Open the row, look at the frames after "time first shows at", fix with **Edit** or switch it off / delete it |
+| A real solve is missing | Its final time was on the display for under ~1.5 s, or the timer was unreadable (hand, glare) around it | Put the playhead on the first frame that shows its final time and tap **+ Cut at playhead** (it snaps to the first frame and reads the time); the disclaimer after Find solves reminds you to check |
+| No solves found at all | The timer setup doesn't match the footage (wrong frame, setup done on a 0.000 frame, camera moved) | Set up again on a frame that shows a real time after a solve; test with *Read timer here* on moments after solves; or cut by hand |
+| *Find solves* very slow | In Logcat (filter `CubeCut`) look at the `Frame source:` line: `MediaMetadataRetriever` means the fast decoder was rejected or failed, which is about 4× slower (the reason is on the same line); otherwise it is just a long video | Leave it running (a notification shows progress); use Cancel if needed; send the `Frame source:` lines if the fast path keeps failing |
+| Solves or times differ from an older run after the speed-up | The fast path's brightness stretch or rotation is off, or the decoder returns odd frames | Compare the solves list with an older run; the `Frame source:` lines show the rotation and match score; to force the old path make `openFrameSource` return `RetrieverSource(context, uri, durationMs)` (section 2.1b) |
+| Export finishes but clip starts early | Lossless export starts on a keyframe | Expected; mention if exact cuts are needed |
+| A cut is a little early or late | The first frame is found to about one frame (1/60 s) but display refresh and misreads can shift it | Use **Edit** −0.1 / +0.1 (it jumps to the frame each time); the buffers hide small errors |
+| A clip contains a solve I switched off | You are on a version before the boundary rule, or the left-out solve was never a cut (the scan missed it) | In 2.0.0 a switched-off cut still ends the previous scramble; if the solve is missing from the list add it with + Cut at playhead |
+| A switched-off cut still chops the next scramble | Switch off means "a real solve I don't want" | If it was not a solve, use **Delete cut** in the Edit window |
+| Solve-only clip is the full clip | The cut has no time yet | Use **Add time** and type the time (e.g. 12.412, or 1:02.34) |
+| Export "problems: …" | MediaMuxer/storage issue | Send the full message; check free storage |
+| Exported clips missing in the gallery | Gallery not refreshed | Look in *Files → Movies → CubeCut* |
+| Setup message "Timer saved WITH A WARNING ..." | The typed number could not be reproduced exactly; the closest layout was saved | Use *Read timer here* on a few frames; if it reads wrong, check the typed number (type `102.34` for 1:02.34), move the four dots onto the display's corners, or set up again on a sharper frame |
+| Setup message "Couldn't find digit shapes in this box that fit ..." | Wrong number of digits typed, or the box holds other things (icon, window edge) | Check the number, drag the dots tighter around the digits only |
+| Setup message "Couldn't recognise the timer's shape in this frame" | The shape finder found too little detail on this frame | Pick a sharper frame with the whole timer body visible and no hand in front |
+| Setup says "(fixed-camera mode: keep the camera still)" and later readings fail | The display is a plain screen; the saved corners are used as they are, so the camera or window moved | Keep the camera still and the window in place, or set up again |
+| The green "Timer set up" dot disappears after importing a new video or restarting the app | By design: the timer setup is session-only | Run *Set up timer* again |
+| csTimer reads wrong digits / odd spacing | The option "smaller font after the decimal point" is on | Turn that option off in csTimer |
+| Video area is black (but sound plays / timeline works) | The TextureView layout is not being used, or the video is zoomed | Double-tap the video to reset zoom; check `res/layout/video_player_view.xml` exists and has `app:surface_type="texture_view"` |
+| Pinch zoom does nothing | Gesture handled by something else, or the layout file is missing | Test on a real phone (emulator pinch is awkward); send a screenshot and any Logcat errors |
+| The importing window never closes | The import threw an error or is stuck on a very long file | Wait a few minutes first; if it stays, copy the Logcat block; the status line in the header shows "Couldn't import this video: ..." when an error was caught |
+| No notification during Find solves | Notification permission refused on Android 13+ | Settings → Apps → CubeCut → Notifications → allow; Find solves still works without it |
+| Find solves stops when leaving the app | Phone's battery saver, or the app was swiped away | Settings → Apps → CubeCut → Battery → Unrestricted; do not swipe the app out of recent apps until it finishes |
+| Crash when pressing Continue on Find solves | Foreground-service permission/type problem | Send the Logcat `FATAL EXCEPTION` block |
+| Release APK crashes but debug works | R8 optimisation removed something OpenCV/Media3 needs | Send the crash block; options are keep-rules or turning `optimization.enable` off |
+
+### 8.5 Where to tune things
+* Scan: top of `SolveAnalyzer.kt`: `SCAN_STEP`, `ZERO_STEP`, `HOLD_STEP` (speed against catching very short holds), `MIN_AGREE`, `RECENT_N`, `AGREE_WINDOW_SEC`, `LOCK_SEC`, `HOLD_MERGE_SEC`; first frame: `COARSE_BACK_STEP`, `BACK_STEP`, `FINE_STEP`, `FINE_WINDOW`, `BACK_MAX_SEC`, `MANUAL_BACK_MAX_SEC`; the "not steady" limit (60 %) is inline in `scan`. Change them in `first_frame_scan_prototype.py` first and run it.
+* Frame source: `SEEK_PAYS_OFF_US` (when the decoder jumps instead of decoding through) and the 0.85 match limit in `calibrate`, both in `FrameSource.kt`; `REFIND_EVERY` (how often the shape finder re-checks the display position) in `TimerEngine`.
+* The 4/7-over-1 vote bias: `beats` / `pickWinner` in `SolveAnalyzer.kt` (delete the bias there for a plain majority vote). Look-alike digits: `confusable`.
+* Digit reading: `TimerVision` in `TimerReader.kt` (thresholds are inline numbers such as `0.4`, `0.18`, `0.115`, the 7-bar test `0.40`, the 4-check `0.25/0.20`).
+* Learning: `SHEARS`, `plausibleLayout` (22 % spacing tolerance) in `TimerReader.kt`.
+* Timer finding: `ShapeFinder` (`minMatches = 14`, ORB 2500 features, scale 0.5).
+* Buffers: sliders in the app (default 2.5 s each); the scramble default for new cuts: `DEFAULT_INCLUDE_SCRAMBLE` at the top of `MainActivity.kt`; clip maths: `computeClips` in `ClipExporter.kt`.
+* Layout sizes: video height factor `0.27f` in `MainActivity.kt`; timeline `64.dp` and film strip `38.dp` in `Timeline.kt`; zoom limits (1x–8x) in the `detectTransformGestures` block.
+* Highlighted words: `CHECK_KEYWORDS` at the top of `MainActivity.kt`.
+* Find solves time estimate: `durationMs / 1000.0 * 0.3 / 60.0` (`estMin`) in `MainActivity.kt`.
+
+
+---
+
+## 9. State at 2.0.0 (in development on the `dev` branch)
+
+* **2.0.0 (first-frame cuts):** the scan, first-frame search and manual-cut logic were prototyped and tested in Python on simulated noisy timer readings (section 6C), then written in Kotlin (**without a compiler**). The user compiled them on the phone and reported that **the logic works perfectly**; the later interface changes (one Set up timer button with the explicit frame instruction, the "check every solve was captured" disclaimer instead of the unreadable-parts list, Prev/Next scrolling the list, the pinned all-clips switch, the reorganised scrolling area, the note removal, the previous-cut boundary rule) were requested after that test. **Not yet reported:** whether those later interface changes compile and behave on the phone; the first-frame times for the known-good videos (record them in section 6); solve-only clips on a full session; the release APK.
+* **Find solves speed-up (2.0.0 dev):** written without a compiler and tested by the user on the phone: the scan went from about 107 s to about 26.8 s, and the user reports that it works great on different footage. **Not yet checked:** a second phone, HDR / 10-bit footage, the fallback paths (they exist but have not been seen to trigger), the release (R8) build with the new file.
+* **Digit reading:** unchanged since 1.1.0. The 1.1.0 timer-reading expansion was also written without a compiler (Python port tested on two csTimer screenshots) and the user has since built it into the project; the user said the digit detection already works well in their builds.
+* **Not specifically verified overall:** a signed **release** APK (R8 on); the Android 13+ notification-permission prompt on other phones; background running on other phone brands; the pre-Android-10 export folder path text; installing on a second phone.
+* No automated tests exist for the app. Testing = the checklist in `docs/GIT_WORKFLOW.md` (section 5), the known-good footage in section 6, and the Python prototype's own tests.
+* The version number in `app/build.gradle.kts` (`versionCode`/`versionName`) and `CHANGELOG.md` still need to be raised/updated for 2.0.0 when it is released.
+* Next steps mentioned so far: share an APK with other people outside Google Play; per-frame fallback to the saved corners when tracking fails; +2 / DNF handling; the any-font glyph reader (approach 2); a cropped shape-finder search to speed up the scan further (declined for now); lowering the Find solves time estimate; showing the unreadable stretches again if the user changes their mind.
+
+---
+
+## 10. How to restart with a fresh AI (copy-paste kit)
+
+### 10.1 Attach these files
+1. `docs/CUBECUT_PROJECT_GUIDE.md` (this file), `docs/FIRST_FRAME_CUTS_CHANGES.md` for anything about cuts/clips/the scan, and, for anything about timer reading, `docs/TIMER_READING_CHANGES.md`
+2. All ten Android files: `MainActivity.kt`, `AnalysisService.kt`, `MediaTools.kt`, `Timeline.kt`, `TimerSetupScreen.kt`, `TimerReader.kt`, `DisplayReaders.kt`, `SolveAnalyzer.kt`, `ClipExporter.kt`, `FrameSource.kt` (or a zip).
+3. `AndroidManifest.xml`, `res/layout/video_player_view.xml`, and `app/build.gradle.kts` (shows the exact dependencies and SDK versions).
+4. `CHANGELOG.md`.
+5. `first_frame_scan_prototype.py` (the 2.0.0 scan, clip maths and simulator), and `cubecut.py`, `timer_reference.png`, `generic_reader_prototype.py` (only needed if the AI should run/compare Python tests on the digit reader).
+6. For a specific problem: the **error text / screenshot**, and – for reading problems – a **60–90 s video excerpt** containing the issue, or a **screenshot of the setup screen** with the dots and the typed number.
+
+### 10.2 Prompt to paste
+
+```
+I'm Justin. I'm building an Android app called CubeCut with your help (in earlier chats that you no longer
+remember). It cuts a long speedcubing session video into one clip per solve and names each clip with the solve
+time read from the timer on the video. It runs offline on my phone with NO AI/machine learning – only
+OpenCV image processing and simple counting: it reads the timer along the whole video and cuts at the first
+frame that shows each final time (no sound analysis). It is at version 2.0.0 (in development on a dev branch)
+and lives in a Git repository.
+
+I'm not a software developer but I'm technical and I follow logic. Please give me step-by-step instructions,
+complete files (not partial snippets) when code changes, and tell me honestly what you are unsure about.
+You cannot compile or run Android code, so I test on my phone and paste you exact error text or screenshots;
+you can run Python/OpenCV/ffmpeg if I attach a video, so prove algorithm changes in Python first.
+
+First read the attached CUBECUT_PROJECT_GUIDE.md fully, then skim the attached source files. Then reply with:
+(1) a 5-line summary of what the project does and its current state, (2) anything in the files that looks
+inconsistent or risky, and (3) what you need from me. Do not change any code until I describe what I want.
+
+What I want help with now: <DESCRIBE YOUR ISSUE / NEXT FEATURE HERE>
+```
+
+### 10.3 Things the next AI should know (hard-won)
+* A new reader (any font) goes behind `DisplayReader`/`GlyphReader` in `DisplayReaders.kt`; do not scatter font logic through the other files.
+* **The digit reader works well for the user; do not change it unless asked.** The 2.0.0 scan only calls `TimerEngine.readDigitsGray`.
+* **The pictures for Find solves come through `GraySource` (`FrameSource.kt`).** Keep the automatic fallback to `RetrieverSource`: it is the only protection on phones and decoders nobody has tested. Do not go back to scanning pieces of the video in parallel (measured: no gain, the decoder is the limit).
+* The cut logic is in `SolveAnalyzer.scan/firstAppearance/locate` and `computeClips`; prototype any change in `pc_prototype/first_frame_scan_prototype.py` first and run it. Keep the Kotlin and Python names in step.
+* **Scramble boundary rule:** with scramble on, a clip starts at the end of the previous *cut* whether or not it is switched on; *Delete cut* removes a cut from the maths. Do not go back to "previous exported clip".
+* Messages the user said were meaningless (e.g. "couldn't see exactly when this time appeared") were removed on purpose; don't add notes a person can't act on.
+* Before blaming a font, look at the straightened black-and-white picture (the little debug image from *Read timer here*).
+* Do **not** change behaviour the user hasn't asked for ("don't change anything" has been said before). Explain first, change only on request. The user said the timer reader stays as it is unless asked.
+* The user accepts imperfect auto-detection; the answer to hard cases is the **review UI**, not endless tuning.
+* Reproduce problems in Python on the user's footage before editing Kotlin. `generic_reader_prototype.py` mirrors the Kotlin reader.
+* Give **complete files**, say which files change and which do not, and tell the user which new resource files to create and where.
+* Keep to the layout rules of section 2.7 (only the header, video, timeline, review bar, the two buttons and the all-clips switch pinned; everything else in one scrolling area; Export at the end of the list) unless the user asks otherwise.
+* Libraries in the project may be older than the newest API (this already caused the `ServiceCompat.startForeground` build error). Prefer the plain, long-standing API when unsure.
+* The user works in Git branches; remind them to commit a clean state before pasting new files and to update `CHANGELOG.md`.
+* Never pkill by a pattern that matches your own command line, and keep single sandbox commands under ~300 s.
+* The sandbox has Python, OpenCV 4.13, scipy, ffmpeg, Java; **no Kotlin compiler, no Android SDK, no internet**.
+
+---
+
+## 11. Glossary
+
+* **Kotlin** – the programming language the app is written in. **Jetpack Compose** – the toolkit for drawing the screen in code.
+* **Gradle** – the build tool; `build.gradle.kts` lists libraries the app uses. *Sync* downloads them.
+* **Android Studio** – the program used to edit, build and install the app.
+* **ExoPlayer / Media3** – Google's video player library. **OpenCV** – a large library for image processing.
+* **ORB / homography / RANSAC** – ORB finds distinctive points in a picture; matching them against the reference picture and fitting a homography (a perspective transform) with RANSAC (robust fitting) tells where the timer is.
+* **RMS** – a way of measuring loudness over a short time window (used by the 1.x sound detection, removed in 2.0.0).
+* **Keyframe** – a video frame that can be decoded on its own; lossless cutting must start on one.
+* **MediaStore** – Android's gallery database; exports are inserted into it so they show up in the gallery.
+* **Logcat** – Android Studio's live log of what the app/phone is doing; where crash details appear.
+* **Foreground service** – an Android service that shows a notification while it runs, which tells the phone "this app is busy, don't put it to sleep". Used by `AnalysisService`.
+* **Composable / state** – Compose draws the screen from functions; `remember { mutableStateOf(...) }` values trigger a redraw when they change.
+* **TextureView / SurfaceView** – two ways Android shows video. A TextureView can be scaled and clipped like a normal view (needed for pinch zoom); a SurfaceView cannot reliably.
+* **R8** – the tool that shrinks and optimises release builds. Can break code that is called by name from native libraries.
+* **APK** – the installable app file. **Keystore** – the file holding the key that signs the APK; losing it means nobody can update the app without uninstalling it.
+* **Git / repository / commit / branch / tag / pull request** – see `docs/GIT_WORKFLOW.md`, section 1.
+* **versionCode / versionName** – the whole number Android uses to decide which APK is newer, and the version text people see.
+* **Reader (DisplayReader)** – the part that turns a straightened black-and-white picture of the display into digits. Seven-segment digits use `SegmentReader`; `GlyphReader` (any font) is a placeholder.
+* **Fixed-camera mode** – setup mode for plain screens: the timer is read at the saved corners with no shape tracking, so the camera must stay still.
+* **Verified / unverified setup** – verified: the learned layout reproduces the typed number exactly. Unverified: closest layout saved with a warning.
+* **Session-only setup** – the timer setup lives only in memory until the app closes or another video is imported.
+* **Stop / first frame** – the first video frame on which the timer shows the final time of a solve; the cut point in 2.0.0 (`stopSec`).
+* **Hold** – the stretch during which the stopped timer keeps showing the final time.
+* **Look-alike (digits)** – two readings of the same length that differ in one digit by a 1↔4 or 1↔7 confusion; treated as the same number when deciding whether a hold continues.
+* **Solve only / with scramble** – the two clip modes. Solve only = from (time on the timer + before buffer) before the first frame; with scramble = from the end of the previous cut.
+* **Buffer (before / after)** – the extra seconds kept before the solve starts (solve-only clips) and after the first frame (all clips); default 2.5 s each.
+* **Boundary (previous cut)** – where the scramble of the next clip begins: the end of the previous cut, switched on or not. *Delete cut* removes a cut from the maths; switching it off does not.
+* **Leftover cut** – a cut whose time was already on the timer when the video began; switched off by the scan and ignored like a deleted cut while it stays off.
+* **Frame source (`GraySource`)** – where Find solves gets its pictures: `CodecSource` (one running decoder, fast) with `RetrieverSource` (one seek per picture, slow) as the automatic fallback.
+* **MediaCodec** – Android's low-level video decoder interface. `CodecSource` keeps one running and reads the brightness plane directly.
+* **Y plane** – the brightness part of a decoded video frame (a gray picture). The colour is stored separately and is not needed to read the timer.
+* **Quick read** – reading the display at the position where it was on the previous frame, which skips the shape finder.
