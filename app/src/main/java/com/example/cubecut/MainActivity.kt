@@ -626,6 +626,30 @@ fun EditorScreen() {
                 }
             }
 
+            // ===== one switch for the scramble of ALL clips - pinned, so it stays visible while the list scrolls =====
+            // (each clip also has its own tick box in its row and can differ afterwards)
+            val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
+            val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
+            if (cuts.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Include scramble in all clips" + if (mixedScramble) " (mixed)" else if (allScrambleOn) " (on)" else " (off)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = allScrambleOn,
+                        onCheckedChange = { on ->
+                            scrambleAll = on
+                            for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
+                        }
+                    )
+                }
+            }
+
             // ################ EVERYTHING BELOW SCROLLS TOGETHER: setup box, status, scramble switch, the list ################
             // (only the video, timeline, Prev/Next bar and the two buttons above stay put, so the list gets the rest of the screen)
             Column(
@@ -639,8 +663,6 @@ fun EditorScreen() {
 
                 // ===== Setup box: the timer (the heart of the app now) and the clip buffers; folds away =====
                 val engineNow = timerEngine
-                val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
-                val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
                         // the header row is always visible; tap it to open or close the box
@@ -795,35 +817,6 @@ fun EditorScreen() {
                     }
                 }
                 if (analysisStatus.isNotEmpty() && !analyzing) Text(analysisStatus, style = MaterialTheme.typography.bodySmall, maxLines = 2)
-
-                // ===== one switch for the scramble of ALL clips (each clip also has its own box below) =====
-                if (cuts.isNotEmpty()) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Include the scramble in all clips", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                when {
-                                    mixedScramble -> "mixed - some clips are set one by one below"
-                                    allScrambleOn -> "on: each clip starts where the previous one ended"
-                                    else -> "off: each clip is only the solve plus the buffers"
-                                },
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        Switch(
-                            checked = allScrambleOn,
-                            onCheckedChange = { on ->
-                                scrambleAll = on
-                                for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
-                            }
-                        )
-                    }
-                }
 
 
                 if (videoUri == null) {
