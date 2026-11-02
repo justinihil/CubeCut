@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -28,18 +29,24 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 
+/** What one exported clip covers, for drawing: [startSec]..[solveStartSec] is the scramble part, [solveStartSec]..[endSec] the solve part. */
+class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Double)
+
 /**
- * The editor timeline: film strip on top, audio waveform below, markers for the cuts and a red playhead.
+ * The editor timeline: film strip on top, a strip below it showing what each clip will contain, markers for the cuts
+ * and a red playhead.
  * At zoom 1 the whole video fits the screen; above that you scroll sideways. Tap to jump; at zoom 1 you can also drag to scrub.
- * markerStates: 0 = just a loud sound (orange), 1 = a cut that will be exported (green), 2 = a cut left out (grey).
+ * markerStates: 1 = a cut that will be exported (green), 2 = a cut left out (grey), anything else = orange.
+ * A cut marker sits on the FIRST frame that shows the final time (the moment the timer stopped).
+ * clipBars: dim green = scramble part of a clip, bright green = the solve part (solve with its buffers).
  */
 @Composable
 fun Timeline(
-    sounds: List<Double>,
+    stops: List<Double>,
     markerStates: List<Int>,
     selectedIndex: Int = -1,        // the cut being looked at (drawn bigger, in white); -1 = none
+    clipBars: List<ClipBar> = emptyList(),
     thumbs: List<ImageBitmap>,
-    waveform: FloatArray?,
     positionMs: Long,
     durationMs: Long,
     zoom: Float,
@@ -52,7 +59,7 @@ fun Timeline(
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .height(76.dp)
+            .height(64.dp)
             .background(Color(0xFF1B1B1F))
     ) {
         val viewportWidth = maxWidth
@@ -116,33 +123,33 @@ fun Timeline(
                             )
                         }
                     }
-                    // audio waveform
+                    // what each clip contains: dim = scramble, bright = the solve with its buffers
                     Canvas(
                         Modifier
                             .fillMaxWidth()
                             .weight(1f)
                     ) {
-                        val wave = waveform
-                        if (wave != null && wave.isNotEmpty()) {
-                            val barWidth = size.width / wave.size
-                            val mid = size.height / 2f
-                            for (i in wave.indices) {
-                                val barHeight = max(wave[i] * size.height, 1f)
-                                val x = i * barWidth + barWidth / 2f
-                                drawLine(
-                                    color = Color(0xFF4FC3F7),
-                                    start = Offset(x, mid - barHeight / 2f),
-                                    end = Offset(x, mid + barHeight / 2f),
-                                    strokeWidth = max(barWidth, 1f)
-                                )
+                        if (durationMs > 0) {
+                            val top = 4f
+                            val barHeight = (size.height - 8f).coerceAtLeast(2f)
+                            for (bar in clipBars) {
+                                val x0 = (size.width * (bar.startSec * 1000.0 / durationMs)).toFloat()
+                                val xs = (size.width * (bar.solveStartSec * 1000.0 / durationMs)).toFloat()
+                                val x1 = (size.width * (bar.endSec * 1000.0 / durationMs)).toFloat()
+                                if (xs > x0) {
+                                    drawRect(Color(0x552E7D32), Offset(x0, top), Size(xs - x0, barHeight))
+                                }
+                                if (x1 > xs) {
+                                    drawRect(Color(0xFF43A047), Offset(xs, top), Size(x1 - xs, barHeight))
+                                }
                             }
                         }
                     }
                 }
-                // markers: one per detected sound / cut
+                // markers: one per cut
                 Canvas(Modifier.fillMaxSize()) {
                     if (durationMs > 0) {
-                        for ((i, t) in sounds.withIndex()) {
+                        for ((i, t) in stops.withIndex()) {
                             val x = (size.width * (t * 1000.0 / durationMs)).toFloat()
                             val markerColor = when (markerStates.getOrElse(i) { 0 }) {
                                 1 -> Color(0xFF66BB6A)
