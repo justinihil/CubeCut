@@ -1,4 +1,4 @@
-# CubeCut – Project Guide and Hand-over (v2.0.0, in development)
+# CubeCut – Project Guide and Hand-over (v2.0.0)
 
 *Updated for version 2.0.0 ("first-frame cuts", developed on the `dev` branch): the app no longer analyses sound; cuts now come from reading the timer along the whole video, clips can leave the scramble out, and the screen was reorganised around that. It builds on 1.1.0 (the 1.0.0 UI-polish milestone plus the timer-reading expansion), whose digit-reading code is unchanged. Supersedes the 1.1.0 guide. It also records the Find solves speed-up (one running MediaCodec decoder instead of a seek per frame, a binary search for the first frame, a wider step while the timer shows zero), which took a scan of the test session from about 107 s to about 27 s. Read this first if you are a person or an AI picking the project up again.*
 
