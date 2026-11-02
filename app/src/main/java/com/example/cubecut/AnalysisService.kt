@@ -14,7 +14,7 @@ import androidx.core.content.ContextCompat
 
 /**
  * A "foreground service": it does no work itself. Its only job is to show a notification while
- * Find solves is running, which tells Android "this app is busy, please don't put it to sleep"
+ * Find solves is running (update() is given percent, 100), which tells Android "this app is busy, please don't put it to sleep"
  * - so the work keeps going when you switch to another app.
  * The actual work still happens in MainActivity (runFindSolves).
  */
@@ -76,7 +76,7 @@ class AnalysisService : Service() {
             NotificationCompat.Builder(context, PROGRESS_CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle("CubeCut is finding solves")
-                .setContentText(if (total > 0) "Checking sound ${minOf(done + 1, total)} of $total" else "Starting...")
+                .setContentText(if (total > 0) "Reading the timer along the video: ${done * 100 / total}%" else "Starting...")
                 .setProgress(total, done, total == 0)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
