@@ -290,8 +290,6 @@ object SolveAnalyzer {
                 if (!certain && earliest < 1.0) {
                     note = "this time was already on the timer when the video began - probably left over from an earlier solve"
                     include = false
-                } else if (!certain) {
-                    note = "couldn't see exactly when this time appeared - check the cut point"
                 } else if (votes < reads * 0.6) {
                     note = "time not steady (read on $votes of $reads frames) - check it"
                 }
@@ -343,10 +341,9 @@ object SolveAnalyzer {
         var startT = Double.MAX_VALUE
         for (r in reads) if (similar(r.second, w) && r.first < startT) startT = r.first
         val lower = max(0.0, startT - MANUAL_BACK_MAX_SEC)
-        val (earliest, certain) = firstAppearance(read, w, startT, lower)
+        val (earliest, _) = firstAppearance(read, w, startT, lower)
         val text = TimerVision.formatDigits(w, decimals)
-        return if (certain) ManualCut(earliest, text, "added by you")
-        else ManualCut(earliest, text, "added by you - check the cut point (couldn't see exactly when this time appeared)")
+        return ManualCut(earliest, text, "added by you")
     }
 
     // ---------------------------------------------------------------------------------------
