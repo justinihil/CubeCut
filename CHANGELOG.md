@@ -8,6 +8,16 @@ All notable changes to CubeCut are listed here, newest first. The format follows
 
 Nothing yet.
 
+## [2.0.2] - 2026-11-03
+
+A clean-up and bug-fix release on top of 2.0.0. How solves are found, how digits are read and how clips are calculated did **not** change.
+
+### Changed
+- Limited OpenCV to only arm64 devices resulting in lower storage requirement.
+
+### Fixed
+- Fixing a bug with exported videos where audio is not synced when using some video editors.
+
 ## [2.0.1] - 2026-11-03
 
 A clean-up and bug-fix release on top of 2.0.0. How solves are found, how digits are read and how clips are calculated did **not** change.

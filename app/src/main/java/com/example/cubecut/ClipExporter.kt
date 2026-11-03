@@ -111,6 +111,7 @@ object ClipExporter {
     private const val FOLDER = "CubeCut"
     private const val START_BUFFER = 4 * 1024 * 1024
     private const val MAX_BUFFER = 64 * 1024 * 1024
+    private const val AUDIO_SLACK_US = 25_000L   // one audio frame is about 21 ms; keep the one that starts just before the keyframe
 
     // one buffer for all clips (clips are exported one after another); it only grows if a sample doesn't fit
     private var sampleBuffer: ByteBuffer = ByteBuffer.allocate(START_BUFFER)
@@ -197,27 +198,50 @@ object ClipExporter {
 
             // copy the video track and the audio track
             val trackMap = HashMap<Int, Int>()
+            var videoTrack = -1
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(android.media.MediaFormat.KEY_MIME) ?: continue
                 if (mime.startsWith("video/") || mime.startsWith("audio/")) {
                     extractor.selectTrack(i)
                     trackMap[i] = m.addTrack(format)
+                    if (mime.startsWith("video/") && videoTrack < 0) videoTrack = i
                 }
             }
             if (trackMap.isEmpty()) return "no video or audio found"
             m.start()
             started = true
 
-            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-            val info = MediaCodec.BufferInfo()
+            // The picture can only start on a keyframe, which may be up to a second BEFORE the time asked for,
+            // while the audio starts right at the time asked for. Left like that, the audio would begin late in the
+            // clip's own timeline (editors such as TikTok's then show it out of sync). So: find the keyframe the
+            // picture really starts on, then seek again to exactly that moment so the audio starts there too.
             var baseUs = -1L
+            if (videoTrack >= 0) {
+                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                while (true) {
+                    val t = extractor.sampleTrackIndex
+                    if (t < 0) break
+                    if (t == videoTrack) {
+                        baseUs = extractor.sampleTime
+                        break
+                    }
+                    extractor.advance()
+                }
+                if (baseUs >= 0) extractor.seekTo(baseUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            }
+            if (baseUs < 0) extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)   // no video track: plain seek
+            val info = MediaCodec.BufferInfo()
             while (true) {
                 val track = extractor.sampleTrackIndex
                 if (track < 0) break
                 val timeUs = extractor.sampleTime
                 if (timeUs < 0 || timeUs > endUs) break
                 val outTrack = trackMap[track]
+                if (outTrack != null && baseUs >= 0 && track != videoTrack && timeUs < baseUs - AUDIO_SLACK_US) {
+                    extractor.advance()      // audio from before the picture starts: leave it out
+                    continue
+                }
                 if (outTrack != null) {
                     var size = -1
                     while (true) {
