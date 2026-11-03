@@ -21,10 +21,8 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
-            }
+            ndk { abiFilters += "arm64-v8a" }
+            optimization { enable = false }
         }
     }
     compileOptions {
