@@ -143,6 +143,9 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
      */
     private fun moveTo(targetUs: Long) {
         val c = codec ?: throw IllegalStateException("closed")
+        // the usual case: the next picture is just ahead of the decoder. Then no keyframe lookup is needed (a keyframe at or before
+        // the target is never more than SEEK_PAYS_OFF_US ahead of the decoder), so skip the probe seek.
+        if (posUs >= 0 && targetUs >= posUs - frameDurUs / 2 && targetUs - posUs <= SEEK_PAYS_OFF_US) return
         probe.seekTo(targetUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         val keyUs = max0(probe.sampleTime)
         val mustSeek = posUs < 0 || targetUs < posUs - frameDurUs / 2 || keyUs - posUs > SEEK_PAYS_OFF_US

@@ -10,13 +10,13 @@ CubeCut reads the timer display along the whole video. When a solve ends the tim
 * Exports are **lossless** (no re-encoding), so they are fast and keep full quality.
 * **Fast scan:** Find solves decodes the video with one running hardware decoder instead of seeking for every frame. On the developer's test session this took the scan from about 107 s to about 27 s. If the fast path can't be used on a phone or a video, it quietly falls back to the slower way.
 
-Current version: **2.0.0, in development** on the `dev` branch (first-frame cuts); the last released version is 1.1.0. See [CHANGELOG.md](CHANGELOG.md).
+Current version: **2.0.1** on the `dev` branch (first-frame cuts, plus clean-up and bug fixes); the last released version is 1.1.0. See [CHANGELOG.md](CHANGELOG.md).
 
 ## How it works, in short
 
 1. **Import** the session video.
 2. **Set up the timer** (this comes first, the app depends on it): pause on a frame that shows **an actual time after a solve** (the timer has stopped and shows its final time, **not 0.000**), tap the display, drag four dots onto its corners (a magnifier helps), type the number it shows. Do this again at every app start and every video import (the setup is not saved).
-3. **Find solves**: the app reads the timer along the whole video (about half a minute for the developer's test session on a recent phone, longer on slower phones or longer videos; it can be cancelled). A non-zero time that stays on the display is a finished solve, and the first frame showing it is the cut. A few solves may need a look; the app lists them with a note.
+3. **Find solves**: the app reads the timer along the whole video (about half a minute for the developer's test session on a recent phone, longer on slower phones or longer videos; it can be cancelled). One progress card shows how far it is and has the **Cancel** button, and the Setup box folds away while it runs; importing a video and changing the timer are blocked until it is done. A non-zero time that stays on the display is a finished solve, and the first frame showing it is the cut. A few solves may need a look; the app lists them with a note.
 4. **Review** the list, step through with Prev / Next (the list scrolls to the solve), fix anything. Check that every solve was captured: if one is missing, put the playhead on the first frame that shows its final time and tap **+ Cut at playhead**.
 5. **Choose what each clip contains**: tick *Include scramble* per solve, or use the switch for all clips. Without the scramble the clip is the solve only, plus a **before buffer** and an **after buffer** (2.5 s each by default, adjustable in the Setup box).
 6. **Export** to `Movies/CubeCut`.
@@ -51,7 +51,7 @@ Download the `.apk` from the **Releases** page of this repository, open it on th
 | [docs/TIMER_READING_CHANGES.md](docs/TIMER_READING_CHANGES.md) | Detailed record and reasoning of the timer-reading changes (csTimer / PC screens, reader seam, setup screen) |
 | [docs/FIRST_FRAME_CUTS_CHANGES.md](docs/FIRST_FRAME_CUTS_CHANGES.md) | Record of the 2.0.0 change: cuts from the first frame that shows the time, solve-only clips, buffers, the new screen, tuning constants |
 | [pc_prototype/first_frame_scan_prototype.py](pc_prototype/first_frame_scan_prototype.py) | The 2.0.0 scan and clip logic in Python with a noisy-timer simulator and tests (`python first_frame_scan_prototype.py`) |
-| [CHANGELOG.md](CHANGELOG.md) | What changed in each version |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version (1.0.0 to 2.0.1) |
 
 ## Privacy
 

@@ -36,9 +36,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -97,6 +94,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.opencv.android.OpenCVLoader
@@ -244,11 +242,13 @@ fun EditorScreen() {
     LaunchedEffect(videoUri) {
         val uri = videoUri ?: return@LaunchedEffect
         // the timer setup belongs to one video: a new video needs a new setup
+        timerEngine?.release()
         timerEngine = null
         timerDebug = null
         timerMessage = ""
         thumbs = emptyList()
         cuts.clear()
+        rowBoxes.clear()
         selectedCut = -1
         analysisStatus = ""
         exportStatus = ""
@@ -295,7 +295,11 @@ fun EditorScreen() {
     }
 
     // the clips that would be exported right now
-    val clips = computeClips(cuts, beforePad.toDouble(), afterPad.toDouble(), durationMs / 1000.0)
+    // (remembered: the playhead moves the screen 30 times a second, but the clips only change when the cuts or buffers do)
+    val clips = remember(cuts.toList(), beforePad, afterPad, durationMs) {
+        computeClips(cuts, beforePad.toDouble(), afterPad.toDouble(), durationMs / 1000.0)
+    }
+    val clipByCut = remember(clips) { clips.associateBy { it.cutIndex } }
     // rough time Find solves needs: about 0.3 s of work per second of video (an estimate)
     val estMin = maxOf(1, Math.round(durationMs / 1000.0 * 0.3 / 60.0).toInt())
 
@@ -332,6 +336,7 @@ fun EditorScreen() {
             exoPlayer.pause()
             scope.launch {
                 analyzing = true
+                setupExpanded = false                   // fold the Setup box away as soon as the scan starts
                 cancelScan = false
                 analysisDone = 0
                 analysisTotal = 100
@@ -349,13 +354,14 @@ fun EditorScreen() {
                                 analysisStatus = "Reading the timer along the video: ${done * 100 / maxOf(total, 1)}%"
                                 AnalysisService.update(context, done, total)
                             },
-                            isCancelled = { cancelScan }
+                            isCancelled = { cancelScan || !isActive }
                         )
                     }
                     cuts.clear()
+                    rowBoxes.clear()
                     selectedCut = -1
                     for (r in report.solves) {
-                        cuts.add(CutItem(r.stopSec, r.timeText, r.include, r.note, false, scrambleAll))
+                        cuts.add(CutItem(r.stopSec, r.timeText, r.include, r.note, scrambleAll))
                     }
                     scanReport = report
                     val seconds = (System.currentTimeMillis() - started) / 1000
@@ -426,7 +432,7 @@ fun EditorScreen() {
                 Spacer(Modifier.width(8.dp))
                 Button(onClick = {
                     picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
-                }) { Text("Import video") }
+                }, enabled = !analyzing && !exporting) { Text("Import video") }
             }
             Spacer(Modifier.height(6.dp))
 
@@ -602,7 +608,7 @@ fun EditorScreen() {
                                 }
                                 var position = cuts.indexOfFirst { it.stopSec > stop }
                                 if (position < 0) position = cuts.size
-                                cuts.add(position, CutItem(stop, text, true, note, true, scrambleAll))
+                                cuts.add(position, CutItem(stop, text, true, note, scrambleAll))
                                 selectedCut = position
                                 analysisStatus = if (text.isNotEmpty()) "Cut added at the first frame that shows $text. Use Edit to adjust it."
                                 else "Cut added. Use Edit to fix its time or move it."
@@ -612,18 +618,6 @@ fun EditorScreen() {
                     enabled = videoUri != null && !analyzing,
                     modifier = Modifier.weight(1f)
                 ) { Text("+ Cut at playhead") }
-            }
-            if (analyzing) {
-                val pinnedFraction = if (analysisTotal > 0) analysisDone.toFloat() / analysisTotal else 0f
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    LinearProgressIndicator(
-                        progress = { pinnedFraction },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(6.dp)
-                    )
-                    TextButton(onClick = { cancelScan = true }) { Text("Cancel") }
-                }
             }
 
             // ===== one switch for the scramble of ALL clips - pinned, so it stays visible while the list scrolls =====
@@ -716,12 +710,12 @@ fun EditorScreen() {
                                     if (engineNow == null) {
                                         Button(
                                             onClick = { openTimerSetup() },
-                                            enabled = videoUri != null && openCvReady
+                                            enabled = videoUri != null && openCvReady && !analyzing
                                         ) { Text("Set up timer") }
                                     } else {
                                         OutlinedButton(
                                             onClick = { openTimerSetup() },
-                                            enabled = videoUri != null && openCvReady
+                                            enabled = videoUri != null && openCvReady && !analyzing
                                         ) { Text("Set up again") }
                                     }
                                     OutlinedButton(
@@ -743,7 +737,7 @@ fun EditorScreen() {
                                                 }
                                             }
                                         },
-                                        enabled = videoUri != null && timerEngine != null
+                                        enabled = videoUri != null && timerEngine != null && !analyzing
                                     ) { Text("Read timer here") }
                                 }
                                 if (timerMessage.isNotEmpty()) {
@@ -812,6 +806,7 @@ fun EditorScreen() {
                                     style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.weight(1f)
                                 )
+                                TextButton(onClick = { cancelScan = true }) { Text("Cancel") }
                             }
                         }
                     }
@@ -890,7 +885,7 @@ fun EditorScreen() {
                     )
                     // one row per cut: switch = include in the export, box = include the scramble, tap the row to jump there, Edit to fix it
                     cuts.forEachIndexed { index, item ->
-                        val clip = clips.firstOrNull { it.cutIndex == index }
+                        val clip = clipByCut[index]
                         val isSelected = index == selectedCut
                         Row(
                             Modifier
@@ -1137,6 +1132,7 @@ fun EditorScreen() {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         TextButton(onClick = {
                             cuts.removeAt(editIndex)
+                            rowBoxes.clear()
                             selectedCut = -1
                             editIndex = -1
                         }) { Text("Delete cut") }
@@ -1162,7 +1158,9 @@ fun EditorScreen() {
                         val setup = res.setup
                         val ref = res.reference
                         if (setup != null && ref != null) {
-                            timerEngine = withContext(Dispatchers.Default) { TimerEngine(setup, ref) }
+                            val newEngine = withContext(Dispatchers.Default) { TimerEngine(setup, ref) }
+                            timerEngine?.release()
+                            timerEngine = newEngine
                             val zeroWarning = if (typed.any { it.isDigit() } && typed.all { !it.isDigit() || it == '0' })
                                 "\nWarning: a zero doesn't teach the timer much. For best results use Set up again on a frame right after a solve, when the stopped time is showing."
                             else ""
