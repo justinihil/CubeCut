@@ -8,23 +8,15 @@ import kotlin.math.min
 /** One solve found by the scan. */
 class FoundSolve(
     val stopSec: Double,        // the FIRST frame on which the final time is showing = the moment the timer stopped
-    val digits: String,         // the final time as digits, e.g. "12412"
     val timeText: String,       // the same, written nicely, e.g. "12.412"
-    val votes: Int,             // on how many frames that exact number was read
-    val reads: Int,             // how many frames were read to decide (votes out of reads)
     val note: String,           // "" = looks fine, otherwise why it needs a look
     val include: Boolean        // false = listed but switched off (needs a look first)
 )
 
-/** A stretch of the video where the timer could not be read at all (hand in the way, camera moved...). */
-class UnreadableSpan(val startSec: Double, val endSec: Double)
-
 /** Everything the scan learned. */
 class ScanResult(
     val solves: List<FoundSolve>,
-    val unreadable: List<UnreadableSpan>,   // long stretches where the timer was unreadable - "check these parts"
-    val readableFraction: Double,           // 0..1: how many of the sampled frames had a readable timer
-    val framesRead: Int
+    val readableFraction: Double            // 0..1: how many of the sampled frames had a readable timer
 )
 
 /** A cut added by hand ("+ Cut at playhead"), moved to the first frame that shows the time. */
@@ -61,7 +53,6 @@ object SolveAnalyzer {
     const val AGREE_WINDOW_SEC = 6.0    // ...which must lie within this many seconds of each other
     const val LOCK_SEC = 3.0            // after a stop is spotted, keep reading this long to vote on the exact digits
     const val HOLD_MERGE_SEC = 12.0     // look-alike readings of a found time within this long are the same hold, not a new solve
-    const val UNREADABLE_MIN_SEC = 15.0 // an unreadable stretch at least this long is reported as "check this part"
 
     /** Start of the note on a cut whose time was already showing when the video began. Such a cut is switched off and ignored like a deleted one. */
     const val LEFTOVER_NOTE_START = "this time was already on the timer"
@@ -214,14 +205,12 @@ object SolveAnalyzer {
         isCancelled: () -> Boolean
     ): ScanResult {
         val solves = mutableListOf<FoundSolve>()
-        val unreadable = mutableListOf<UnreadableSpan>()
         var total = 0
         var readable = 0
         var t = 0.0
         var confirmed: String? = null          // the time of the solve we just found (while the display still shows it)
         var confirmedSeen = -1e9
         val recent = ArrayList<Pair<Double, String>>()   // the last few readable, non-zero reads
-        var nullStart = -1.0                   // start of a run of unreadable frames (-1 = not in one)
         var lastPercent = -1
 
         while (t <= durationSec) {
@@ -235,15 +224,10 @@ object SolveAnalyzer {
             val v = read(t)
             total++
             if (v == null) {
-                if (nullStart < 0) nullStart = t
                 t += SCAN_STEP
                 continue
             }
             readable++
-            if (nullStart >= 0) {
-                if (t - nullStart >= UNREADABLE_MIN_SEC) unreadable.add(UnreadableSpan(nullStart, t))
-                nullStart = -1.0
-            }
 
             // 0.000: the display was reset, a new solve is about to start
             if (isZero(v)) {
@@ -319,7 +303,7 @@ object SolveAnalyzer {
                 } else if (votes < reads * 0.6) {
                     note = "time not steady (read on $votes of $reads frames) - check it"
                 }
-                solves.add(FoundSolve(earliest, w, text, votes, reads, note, include))
+                solves.add(FoundSolve(earliest, text, note, include))
 
                 confirmed = w
                 confirmedSeen = t + LOCK_SEC
@@ -329,15 +313,10 @@ object SolveAnalyzer {
             }
             t += SCAN_STEP
         }
-        if (nullStart >= 0 && durationSec - nullStart >= UNREADABLE_MIN_SEC) {
-            unreadable.add(UnreadableSpan(nullStart, durationSec))
-        }
         onProgress(100, 100)
         return ScanResult(
             solves.sortedBy { it.stopSec },
-            unreadable,
-            if (total > 0) readable.toDouble() / total else 0.0,
-            total
+            if (total > 0) readable.toDouble() / total else 0.0
         )
     }
 

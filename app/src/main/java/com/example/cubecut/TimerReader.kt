@@ -2,9 +2,6 @@ package com.example.cubecut
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import org.json.JSONArray
-import org.json.JSONObject
 import org.opencv.android.Utils
 import org.opencv.calib3d.Calib3d
 import org.opencv.core.Core
@@ -82,13 +79,18 @@ object TimerVision {
     )
 
     fun bitmapToGray(bmp: Bitmap): Mat {
-        val src = if (bmp.config == Bitmap.Config.ARGB_8888) bmp else bmp.copy(Bitmap.Config.ARGB_8888, false)
+        val copy = if (bmp.config == Bitmap.Config.ARGB_8888) null else bmp.copy(Bitmap.Config.ARGB_8888, false)
+        val src = copy ?: bmp
         val rgba = Mat()
-        Utils.bitmapToMat(src, rgba)
-        val gray = Mat()
-        Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
-        rgba.release()
-        return gray
+        try {
+            Utils.bitmapToMat(src, rgba)
+            val gray = Mat()
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            return gray
+        } finally {
+            rgba.release()
+            copy?.recycle()
+        }
     }
 
     fun dist(q: DoubleArray, a: Int, b: Int): Double {
@@ -110,56 +112,68 @@ object TimerVision {
      * and turns it into pure black-and-white (digits = white).
      */
     fun prep(gray: Mat, q: DoubleArray, shear: Double, invert: Boolean, w: Int, h: Int): Bin {
-        val src = MatOfPoint2f(Point(q[0], q[1]), Point(q[2], q[3]), Point(q[4], q[5]), Point(q[6], q[7]))
-        val dst = MatOfPoint2f(
-            Point(0.0, 0.0), Point(w.toDouble(), 0.0),
-            Point(w.toDouble(), h.toDouble()), Point(0.0, h.toDouble())
-        )
-        val m = Imgproc.getPerspectiveTransform(src, dst)
-        val warped = Mat()
-        Imgproc.warpPerspective(gray, warped, m, Size(w.toDouble(), h.toDouble()), Imgproc.INTER_CUBIC)
-        if (invert) Core.bitwise_not(warped, warped)
+        val mats = ArrayList<Mat>()      // everything created below is released at the end, even if something fails
+        try {
+            val src = MatOfPoint2f(Point(q[0], q[1]), Point(q[2], q[3]), Point(q[4], q[5]), Point(q[6], q[7]))
+            val dst = MatOfPoint2f(
+                Point(0.0, 0.0), Point(w.toDouble(), 0.0),
+                Point(w.toDouble(), h.toDouble()), Point(0.0, h.toDouble())
+            )
+            mats.add(src); mats.add(dst)
+            val m = Imgproc.getPerspectiveTransform(src, dst)
+            mats.add(m)
+            val warped = Mat()
+            mats.add(warped)
+            Imgproc.warpPerspective(gray, warped, m, Size(w.toDouble(), h.toDouble()), Imgproc.INTER_CUBIC)
+            if (invert) Core.bitwise_not(warped, warped)
 
-        // stretch the contrast so dark / dim footage looks like bright footage
-        val px = ByteArray(w * h)
-        warped.get(0, 0, px)
-        val hist = IntArray(256)
-        for (b in px) hist[b.toInt() and 0xFF]++
-        val total = w * h
-        var acc = 0
-        var lo = 0
-        var hi = 255
-        var gotLo = false
-        for (v in 0..255) {
-            acc += hist[v]
-            if (!gotLo && acc >= 0.01 * total) {
-                lo = v
-                gotLo = true
+            // stretch the contrast so dark / dim footage looks like bright footage
+            val px = ByteArray(w * h)
+            warped.get(0, 0, px)
+            val hist = IntArray(256)
+            for (b in px) hist[b.toInt() and 0xFF]++
+            val total = w * h
+            var acc = 0
+            var lo = 0
+            var hi = 255
+            var gotLo = false
+            for (v in 0..255) {
+                acc += hist[v]
+                if (!gotLo && acc >= 0.01 * total) {
+                    lo = v
+                    gotLo = true
+                }
+                if (acc >= 0.99 * total) {
+                    hi = v
+                    break
+                }
             }
-            if (acc >= 0.99 * total) {
-                hi = v
-                break
-            }
+            val alpha = 255.0 / max((hi - lo).toDouble(), 20.0)
+            val stretched = Mat()
+            mats.add(stretched)
+            warped.convertTo(stretched, CvType.CV_8U, alpha, -lo * alpha)
+
+            val cy = h * 0.37
+            val aff = Mat(2, 3, CvType.CV_64F)
+            mats.add(aff)
+            aff.put(0, 0, 1.0, shear, -shear * cy, 0.0, 1.0, 0.0)
+            val sheared = Mat()
+            mats.add(sheared)
+            Imgproc.warpAffine(stretched, sheared, aff, Size(w.toDouble(), h.toDouble()), Imgproc.INTER_CUBIC, Core.BORDER_REPLICATE)
+
+            val blurred = Mat()
+            mats.add(blurred)
+            Imgproc.GaussianBlur(sheared, blurred, Size(0.0, 0.0), 1.0)
+            val th = Mat()
+            mats.add(th)
+            Imgproc.adaptiveThreshold(blurred, th, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 41, 12.0)
+
+            val out = ByteArray(w * h)
+            th.get(0, 0, out)
+            return Bin(w, h, out)
+        } finally {
+            for (mat in mats) mat.release()
         }
-        val alpha = 255.0 / max((hi - lo).toDouble(), 20.0)
-        val stretched = Mat()
-        warped.convertTo(stretched, CvType.CV_8U, alpha, -lo * alpha)
-
-        val cy = h * 0.37
-        val aff = Mat(2, 3, CvType.CV_64F)
-        aff.put(0, 0, 1.0, shear, -shear * cy, 0.0, 1.0, 0.0)
-        val sheared = Mat()
-        Imgproc.warpAffine(stretched, sheared, aff, Size(w.toDouble(), h.toDouble()), Imgproc.INTER_CUBIC, Core.BORDER_REPLICATE)
-
-        val blurred = Mat()
-        Imgproc.GaussianBlur(sheared, blurred, Size(0.0, 0.0), 1.0)
-        val th = Mat()
-        Imgproc.adaptiveThreshold(blurred, th, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 41, 12.0)
-
-        val out = ByteArray(w * h)
-        th.get(0, 0, out)
-        for (mat in listOf(m, warped, stretched, aff, sheared, blurred, th, src, dst)) mat.release()
-        return Bin(w, h, out)
     }
 
     /** Finds runs of columns that contain digit strokes. Returns [startX, endX] pairs, left to right. */
@@ -715,11 +729,15 @@ object TimerVision {
             // A plain screen (PC / phone timer) can have too little detail around it to find by shape.
             // Then the timer is read at the saved position, so the camera must stay still.
             val fixed = !finder.ok
-            val q = if (fixed) {
-                corners
-            } else {
-                finder.locate(gray)
-                    ?: return SetupResult(null, null, "Couldn't recognise the timer's shape in this frame. Try a sharper frame.")
+            val q = try {
+                if (fixed) {
+                    corners
+                } else {
+                    finder.locate(gray)
+                        ?: return SetupResult(null, null, "Couldn't recognise the timer's shape in this frame. Try a sharper frame.")
+                }
+            } finally {
+                finder.release()      // only needed to find the display once; the TimerEngine builds its own
             }
             // try each reader in order (see DisplayReaders.kt); the first one that reproduces your number wins
             var layout: DigitLayout? = null
@@ -821,6 +839,11 @@ class ShapeFinder(refBitmap: Bitmap, cropX: Int, cropY: Int, corners: DoubleArra
         mask.release()
     }
 
+    /** Frees the native memory this finder holds. Call when the finder is no longer needed (it can't be used afterwards). */
+    fun release() {
+        refDes.release()
+    }
+
     private fun prepForMatching(gray: Mat): Mat {
         val small = Mat()
         Imgproc.resize(gray, small, Size(), scale, scale, Imgproc.INTER_AREA)
@@ -920,6 +943,11 @@ class TimerEngine(val setup: TimerSetup, referenceBitmap: Bitmap) {
     /** How many digits come after the decimal point on this timer. */
     val decimals: Int get() = setup.layout.decimals
 
+    /** Frees the native memory of the shape finder. Call when this timer setup is replaced; don't use the engine afterwards. */
+    fun release() {
+        finder?.release()
+    }
+
     private val usable: Boolean get() = finder == null || finder.ok
 
     private fun locate(gray: Mat): DoubleArray? = if (finder == null) setup.readCorners else finder.locate(gray)
@@ -990,69 +1018,19 @@ class TimerEngine(val setup: TimerSetup, referenceBitmap: Bitmap) {
 }
 
 // ---------------------------------------------------------------------------------------
-// Saving / loading the setup on the phone
+// Leftovers from versions that saved the timer setup on the phone
 // ---------------------------------------------------------------------------------------
 object TimerStore {
     private const val JSON_FILE = "timer_setup.json"
     private const val PNG_FILE = "timer_reference.png"
 
-    fun save(context: Context, setup: TimerSetup, reference: Bitmap) {
-        val l = setup.layout
-        val json = JSONObject()
-        json.put("corners", JSONArray(setup.corners.toList()))
-        json.put("cropX", setup.cropX)
-        json.put("cropY", setup.cropY)
-        json.put("invert", l.invert)
-        json.put("shear", l.shear)
-        json.put("bandTop", l.bandTop)
-        json.put("bandBottom", l.bandBottom)
-        json.put("digitW", l.digitW)
-        json.put("offsets", JSONArray(l.offsets.toList()))
-        json.put("canvasW", l.canvasW)
-        json.put("canvasH", l.canvasH)
-        json.put("decimals", l.decimals)
-        json.put("readerId", l.readerId)
-        json.put("readerData", l.readerData)
-        json.put("fixedPosition", setup.fixedPosition)
-        json.put("readCorners", JSONArray(setup.readCorners.toList()))
-        File(context.filesDir, JSON_FILE).writeText(json.toString())
-        File(context.filesDir, PNG_FILE).outputStream().use { reference.compress(Bitmap.CompressFormat.PNG, 100, it) }
-    }
-
-    /** Deletes any timer setup saved by an older version of the app (setups are no longer kept between runs). */
+    /** Deletes any timer setup saved by an older version of the app (setups are no longer kept between runs). Can go once nobody runs 1.x any more. */
     fun clear(context: Context) {
         try {
             File(context.filesDir, JSON_FILE).delete()
             File(context.filesDir, PNG_FILE).delete()
         } catch (e: Exception) {
             // nothing to clean up
-        }
-    }
-
-    fun load(context: Context): Pair<TimerSetup, Bitmap>? {
-        return try {
-            val jf = File(context.filesDir, JSON_FILE)
-            val pf = File(context.filesDir, PNG_FILE)
-            if (!jf.exists() || !pf.exists()) return null
-            val json = JSONObject(jf.readText())
-            val ca = json.getJSONArray("corners")
-            val corners = DoubleArray(8) { ca.getDouble(it) }
-            val oa = json.getJSONArray("offsets")
-            val offsets = IntArray(oa.length()) { oa.getInt(it) }
-            val layout = DigitLayout(
-                json.getBoolean("invert"), json.getDouble("shear"),
-                json.getInt("bandTop"), json.getInt("bandBottom"),
-                json.getInt("digitW"), offsets,
-                json.getInt("canvasW"), json.getInt("canvasH"), json.getInt("decimals"),
-                json.optString("readerId", "segment"), json.optString("readerData", "")
-            )
-            val bmp = BitmapFactory.decodeFile(pf.absolutePath) ?: return null
-            val fixed = json.optBoolean("fixedPosition", false)     // older saves don't have it: false
-            val rc = json.optJSONArray("readCorners")                // older saves don't have it: read from the marked box
-            val readCorners = if (rc != null && rc.length() == 8) DoubleArray(8) { rc.getDouble(it) } else corners
-            Pair(TimerSetup(corners, json.getInt("cropX"), json.getInt("cropY"), layout, fixed, readCorners), bmp)
-        } catch (e: Exception) {
-            null
         }
     }
 }

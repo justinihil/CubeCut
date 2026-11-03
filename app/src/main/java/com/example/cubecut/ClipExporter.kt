@@ -26,7 +26,6 @@ data class CutItem(
     val timeText: String,                 // what the timer showed, e.g. "11.263" ("" = unknown)
     val included: Boolean,                // true = this cut is exported as a clip
     val note: String,                     // why it needs a look, or "added by you"
-    val manual: Boolean,                  // true if the user added it
     val includeScramble: Boolean = true   // true = clip runs from the end of the previous clip (scramble included); false = the solve only
 )
 
@@ -110,6 +109,11 @@ class ExportResult(val done: Int, val failed: List<String>, val message: String)
 
 object ClipExporter {
     private const val FOLDER = "CubeCut"
+    private const val START_BUFFER = 4 * 1024 * 1024
+    private const val MAX_BUFFER = 64 * 1024 * 1024
+
+    // one buffer for all clips (clips are exported one after another); it only grows if a sample doesn't fit
+    private var sampleBuffer: ByteBuffer = ByteBuffer.allocate(START_BUFFER)
 
     /** "1:02.345" -> "1m02.345", "" -> "unknown" (colons are not allowed in file names). */
     fun safeTime(timeText: String): String {
@@ -206,7 +210,6 @@ object ClipExporter {
             started = true
 
             extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-            val buffer = ByteBuffer.allocate(4 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
             var baseUs = -1L
             while (true) {
@@ -216,9 +219,21 @@ object ClipExporter {
                 if (timeUs < 0 || timeUs > endUs) break
                 val outTrack = trackMap[track]
                 if (outTrack != null) {
-                    buffer.clear()
-                    val size = extractor.readSampleData(buffer, 0)
+                    var size = -1
+                    while (true) {
+                        sampleBuffer.clear()
+                        try {
+                            size = extractor.readSampleData(sampleBuffer, 0)
+                            break
+                        } catch (e: IllegalArgumentException) {
+                            // this sample (a big keyframe) is larger than the buffer: make it bigger and read it again
+                            val bigger = sampleBuffer.capacity() * 2
+                            if (bigger > MAX_BUFFER) throw IOException("a video frame is too large to copy")
+                            sampleBuffer = ByteBuffer.allocate(bigger)
+                        }
+                    }
                     if (size < 0) break
+                    val buffer = sampleBuffer
                     if (baseUs < 0) baseUs = timeUs
                     val flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                     info.set(0, size, max(0L, timeUs - baseUs), flags)
