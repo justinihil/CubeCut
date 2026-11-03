@@ -21,9 +21,8 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            ndk { abiFilters += "arm64-v8a" }
+            optimization { enable = false }
         }
     }
     compileOptions {
