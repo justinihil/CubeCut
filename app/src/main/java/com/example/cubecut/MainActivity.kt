@@ -1,3 +1,19 @@
+/*
+ * CubeCut - cuts a speedcubing session video into one clip per solve.
+ * Copyright (C) 2026 DadCuber
+ *
+ * This program is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU General Public License as published by the Free Software Foundation, version 3 of the License,
+ * with the additional terms in NOTICE.md (GPL section 7): the author credit must stay in the app's
+ * About window, and changed versions must be marked as changed.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+ * even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
+ * Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with this program (the
+ * LICENSE file). If not, see <https://www.gnu.org/licenses/>.
+ */
 package com.example.cubecut
 
 import android.Manifest
@@ -83,6 +99,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -101,6 +118,13 @@ import org.opencv.android.OpenCVLoader
 
 // should a new cut include the part before the solve (the scramble)? true = clip runs from the previous clip's end
 const val DEFAULT_INCLUDE_SCRAMBLE = true
+
+// The author credit: a small line at the bottom of the main screen, and the About window it opens. The licence (NOTICE.md)
+// requires the credit to stay in the app, so anyone who shares a version of CubeCut has to keep it (changed versions
+// add their own name next to it). AUTHOR_FIND_ME is only shown in the About window; change it freely when more
+// platforms are added, it is not part of the licence terms.
+const val AUTHOR_NAME = "DadCuber"
+const val AUTHOR_FIND_ME = "Find me on TikTok and Facebook: DadCuber"
 
 // true once the image library (OpenCV) has loaded
 var openCvReady = false
@@ -184,6 +208,7 @@ fun EditorScreen() {
     // ---- "export finished" window ----
     var exportDialogTitle by remember { mutableStateOf("") }
     var exportDialogText by remember { mutableStateOf<String?>(null) }
+    var showAbout by remember { mutableStateOf(false) }          // the About window (author credit and licence notice)
     var showFindConfirm by remember { mutableStateOf(false) }    // the "this may take a couple of minutes" window
     var analysisDone by remember { mutableStateOf(0) }           // progress of Find solves
     var analysisTotal by remember { mutableStateOf(0) }
@@ -991,6 +1016,17 @@ fun EditorScreen() {
                 }
             }
 
+            // ===== the author credit: one small line at the very bottom; tap it to open the About window =====
+            Text(
+                "CubeCut by $AUTHOR_NAME",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showAbout = true }
+                    .padding(top = 4.dp)
+            )
         }
 
         // ===== the import progress window: blocks all touches until the video is fully loaded =====
@@ -1037,6 +1073,41 @@ fun EditorScreen() {
                 },
                 confirmButton = {
                     Button(onClick = { exportDialogText = null }) { Text("OK") }
+                }
+            )
+        }
+
+        // ===== the About window: author credit and licence notice (the licence needs this to stay in the app, see NOTICE.md) =====
+        if (showAbout) {
+            AlertDialog(
+                onDismissRequest = { showAbout = false },
+                title = { Text("CubeCut") },
+                text = {
+                    Column(
+                        Modifier
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text("Created by $AUTHOR_NAME", style = MaterialTheme.typography.bodyLarge)
+                        Text(AUTHOR_FIND_ME, style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Cuts a speedcubing session video into one clip per solve by reading the timer. " +
+                                    "Everything runs on this phone and nothing is uploaded.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Free software under the GNU General Public License, version 3, with no warranty. " +
+                                    "Anyone who shares CubeCut or a changed version of it must also share the source code under the same licence, " +
+                                    "keep this credit in the app, and say clearly that a changed version is changed. " +
+                                    "See the LICENSE and NOTICE.md files in the source code.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { showAbout = false }) { Text("OK") }
                 }
             )
         }
