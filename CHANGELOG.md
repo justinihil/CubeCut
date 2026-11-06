@@ -18,6 +18,19 @@ A clean-up and bug-fix release on top of 2.0.0. How solves are found, how digits
 ### Fixed
 - Fixing a bug with exported videos where audio is not synced when using some video editors.
 
+### Licence, author credit and documentation (2026-11-06)
+Added later the same version, with no version bump. How solves are found, how digits are read and how clips are calculated did **not** change.
+
+**Added**
+- **GPL-3.0 licence** (`LICENSE`): anyone may use and modify CubeCut, but shared versions must stay open source under the same licence and keep the copyright notice.
+- **Additional licence terms** (`NOTICE.md`, GPL section 7): the author credit must stay in the app's About window, and changed versions must be marked as changed. Using the app and the exported clips is not restricted.
+- **Author credit in the app:** a small line "CubeCut by DadCuber" at the bottom of the main screen. Tapping it opens an **About window** with the credit, where to find the author, a one-line description and the licence notice (`AUTHOR_NAME`, `AUTHOR_FIND_ME` and the `showAbout` dialog in `MainActivity.kt`).
+- `add_license_headers.py`: adds the licence header to every `.kt` file (run once from the project root).
+
+**Documentation**
+- **README:** new "Tested setup" section listing what has actually been tried (Samsung Galaxy S25 Ultra only; 1080p at 30 and 60 fps; fixed tripod; QiYi Bluetooth Timer LCD and csTimer's "Digital 2" font with the small-decimals option off) and what has not (other phones, head-mounted or moving cameras, other fonts, 4K / HDR). Also: the arm64-only requirement from 2.0.2, a "Things to know" list (heat, storage, originals untouched), a "Support" section (shared as-is, no tech support), and the licence section. Version line brought up to 2.0.2.
+- **Project guide:** version, tested phone / footage / timer font (sections 0, 1, 7), the repository file list (3.3, 3.5), installation needs (4.4), the status section (9) and the restart prompt (10.2) updated to 2.0.2.
+
 ## [2.0.1] - 2026-11-03
 
 A clean-up and bug-fix release on top of 2.0.0. How solves are found, how digits are read and how clips are calculated did **not** change.
@@ -45,7 +58,7 @@ A clean-up and bug-fix release on top of 2.0.0. How solves are found, how digits
 - Unused code: the `LazyColumn`, `LazyRow` and `itemsIndexed` imports; `TimerStore.save()` and `TimerStore.load()` (the timer setup has not been saved since 1.1.0; `TimerStore.clear()` stays to delete files left by 1.x); the unreadable-stretch tracking in the scan (`UnreadableSpan`, `UNREADABLE_MIN_SEC`, `ScanResult.unreadable`, `ScanResult.framesRead`), which only fed the "check these parts" list removed in 2.0.0; `CutItem.manual` and `FoundSolve.digits`, `votes` and `reads`, which were never read.
 
 ### Notes
-- Written without a compiler and not yet run on a phone at the time of writing; see section 9 of the project guide for what still needs to be checked.
+- Written without a compiler and not yet run on a phone at the time of writing (the app has since been built and run on the developer's phone); see section 9 of the project guide for what is still unconfirmed.
 - Documentation updated: project guide (sections 0, 2.1, 2.1b, 2.3, 2.5, 2.6, 2.7, 3, 5, 7, 8, 9, 10, 11), README.
 - Version bump still to do in `app/build.gradle.kts`: `versionName "2.0.1"` and a higher `versionCode`.
 
