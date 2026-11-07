@@ -72,7 +72,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 1
+    private const val DB_VERSION = 2
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -103,13 +103,34 @@ object SessionStore {
                         "time_text TEXT NOT NULL, " +
                         "included INTEGER NOT NULL, " +
                         "note TEXT NOT NULL, " +
-                        "include_scramble INTEGER NOT NULL)"
+                        "include_scramble INTEGER NOT NULL, " +
+                        "user_note TEXT NOT NULL DEFAULT '')"
             )
             db.execSQL("CREATE INDEX cuts_by_footage ON cuts(footage_id)")
+            createExportsTable(db)
+        }
+
+        private fun createExportsTable(db: SQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE exports (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                        "footage_id INTEGER NOT NULL REFERENCES footage(id) ON DELETE CASCADE, " +
+                        "stop_sec REAL NOT NULL, " +
+                        "time_text TEXT NOT NULL, " +
+                        "uri TEXT NOT NULL, " +
+                        "file_name TEXT NOT NULL, " +
+                        "offset_sec REAL NOT NULL, " +
+                        "exported_ms INTEGER NOT NULL)"
+            )
+            db.execSQL("CREATE INDEX exports_by_footage ON exports(footage_id)")
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            // nothing to upgrade yet. Later versions: add "ALTER TABLE ... ADD COLUMN ..." steps here, one per version.
+            if (oldVersion < 2) {
+                // version 2: your own note per cut, and a record of every exported clip
+                db.execSQL("ALTER TABLE cuts ADD COLUMN user_note TEXT NOT NULL DEFAULT ''")
+                createExportsTable(db)
+            }
         }
     }
 
@@ -208,15 +229,30 @@ object SessionStore {
     ): OpenedSession {
         val (name, size) = nameAndSize(context, uri)
         val d = db(context)
-        val where = if (name.isNotEmpty()) "display_name = ? AND size_bytes = ? AND duration_ms = ?" else "size_bytes = ? AND duration_ms = ?"
-        val args = if (name.isNotEmpty()) arrayOf(name, size.toString(), durationMs.toString()) else arrayOf(size.toString(), durationMs.toString())
         var id = -1L
-        d.query("footage", arrayOf("id"), where, args, null, null, "added_ms DESC", "1").use { c ->
-            if (c.moveToFirst()) id = c.getLong(0)
+        // 1. the very same link (this also survives renaming the file: the link doesn't change). The length must still fit.
+        d.query("footage", arrayOf("id", "duration_ms"), "uri = ?", arrayOf(uri.toString()), null, null, "added_ms DESC", "1").use { c ->
+            if (c.moveToFirst() && Math.abs(c.getLong(1) - durationMs) <= 1000L) id = c.getLong(0)
+        }
+        // 2. the same file name, size and length (the video was moved or restored and got a new link)
+        if (id < 0 && name.isNotEmpty()) {
+            d.query(
+                "footage", arrayOf("id"), "display_name = ? AND size_bytes = ? AND duration_ms = ?",
+                arrayOf(name, size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
+            ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
+        }
+        // 3. the same exact size and length under another name (the video was renamed AND got a new link)
+        if (id < 0 && size > 0) {
+            d.query(
+                "footage", arrayOf("id"), "size_bytes = ? AND duration_ms = ?",
+                arrayOf(size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
+            ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
         }
         if (id >= 0) {
             val values = ContentValues()
             values.put("uri", uri.toString())
+            if (name.isNotEmpty()) values.put("display_name", name)
+            if (size > 0) values.put("size_bytes", size)
             d.update("footage", values, "id = ?", arrayOf(id.toString()))
             return OpenedSession(getFootage(context, id)!!, loadCuts(context, id), false)
         }
@@ -269,12 +305,12 @@ object SessionStore {
 
     fun loadCuts(context: Context, footageId: Long): List<CutItem> =
         db(context).query(
-            "cuts", arrayOf("stop_sec", "time_text", "included", "note", "include_scramble"),
+            "cuts", arrayOf("stop_sec", "time_text", "included", "note", "include_scramble", "user_note"),
             "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
         ).use { c ->
             val out = ArrayList<CutItem>()
             while (c.moveToNext()) {
-                out.add(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1))
+                out.add(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5)))
             }
             out
         }
@@ -300,6 +336,7 @@ object SessionStore {
                 v.put("included", if (cut.included) 1 else 0)
                 v.put("note", cut.note)
                 v.put("include_scramble", if (cut.includeScramble) 1 else 0)
+                v.put("user_note", cut.userNote)
                 d.insert("cuts", null, v)
             }
             d.setTransactionSuccessful()
@@ -308,17 +345,84 @@ object SessionStore {
         }
     }
 
-    /** Everything the Gallery shows: every session, every cut of every session, and whether each video can still be opened. */
+    /**
+     * Everything the Gallery shows. The rules:
+     *  - the video can still be opened: every cut of the session is shown, each tagged exported or not;
+     *  - the video is gone: only the clips that were exported (and whose exported file still exists) are shown.
+     */
     fun loadGallery(context: Context): GalleryData {
         val footage = listFootage(context)
         val clips = ArrayList<GalleryClip>()
         val openable = HashMap<Long, Boolean>()
         for (f in footage) {
-            openable[f.id] = canOpen(context, Uri.parse(f.uri))
+            val sourceOk = canOpen(context, Uri.parse(f.uri))
+            openable[f.id] = sourceOk
             val cuts = loadCuts(context, f.id)
-            for ((i, c) in cuts.withIndex()) clips.add(GalleryClip(f, i, cuts.size, c))
+            val exports = loadExports(context, f.id).filter { canOpen(context, Uri.parse(it.uri)) }
+            if (sourceOk) {
+                for ((i, c) in cuts.withIndex()) {
+                    val e = exports.filter { Math.abs(it.stopSec - c.stopSec) < 0.05 }.maxByOrNull { it.exportedMs }
+                    clips.add(GalleryClip(f, i, cuts.size, c, e, false))
+                }
+            } else {
+                val latestPerStop = exports.sortedBy { it.stopSec }.groupBy { Math.round(it.stopSec * 20.0) }.map { entry -> entry.value.maxByOrNull { it.exportedMs }!! }
+                for (e in latestPerStop) {
+                    var idx = -1
+                    var bestGap = 0.5
+                    for ((i, c) in cuts.withIndex()) {
+                        val gap = Math.abs(c.stopSec - e.stopSec)
+                        if (gap < bestGap) { bestGap = gap; idx = i }
+                    }
+                    val base = if (idx >= 0) cuts[idx] else CutItem(e.stopSec, e.timeText, true, "", true)
+                    clips.add(GalleryClip(f, idx, cuts.size, base, e, true))
+                }
+            }
         }
         return GalleryData(footage, clips, openable)
+    }
+
+    // ---------------------------------------------------------------- exported clips
+
+    fun loadExports(context: Context, footageId: Long): List<ExportedClip> =
+        db(context).query(
+            "exports", arrayOf("id", "stop_sec", "time_text", "uri", "file_name", "offset_sec", "exported_ms"),
+            "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
+        ).use { c ->
+            val out = ArrayList<ExportedClip>()
+            while (c.moveToNext()) {
+                out.add(ExportedClip(c.getLong(0), footageId, c.getDouble(1), c.getString(2), c.getString(3), c.getString(4), c.getDouble(5), c.getLong(6)))
+            }
+            out
+        }
+
+    /** Remembers the clips an export has just written. A clip exported again replaces the earlier record for the same solve. */
+    fun recordExports(context: Context, footageId: Long, items: List<ExportedClip>) {
+        val d = db(context)
+        d.beginTransaction()
+        try {
+            for (e in items) {
+                d.delete("exports", "footage_id = ? AND ABS(stop_sec - ?) < 0.05", arrayOf(footageId.toString(), e.stopSec.toString()))
+                val v = ContentValues()
+                v.put("footage_id", footageId)
+                v.put("stop_sec", e.stopSec)
+                v.put("time_text", e.timeText)
+                v.put("uri", e.uri)
+                v.put("file_name", e.fileName)
+                v.put("offset_sec", e.offsetSec)
+                v.put("exported_ms", e.exportedMs)
+                d.insert("exports", null, v)
+            }
+            d.setTransactionSuccessful()
+        } finally {
+            d.endTransaction()
+        }
+    }
+
+    /** Saves your note for one cut (found by its stop time). */
+    fun updateCutNote(context: Context, footageId: Long, stopSec: Double, userNote: String) {
+        val v = ContentValues()
+        v.put("user_note", userNote)
+        db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
     /** Gives a session a new title (an empty title is ignored). */
@@ -339,7 +443,17 @@ object SessionStore {
 
     /** Forgets a session and its cuts. The video file itself is never touched. */
     fun delete(context: Context, footage: Footage) {
-        db(context).delete("footage", "id = ?", arrayOf(footage.id.toString()))
+        val d = db(context)
+        d.beginTransaction()
+        try {
+            val id = arrayOf(footage.id.toString())
+            d.delete("exports", "footage_id = ?", id)
+            d.delete("cuts", "footage_id = ?", id)
+            d.delete("footage", "id = ?", id)
+            d.setTransactionSuccessful()
+        } finally {
+            d.endTransaction()
+        }
         releaseAccess(context, footage.uri)
     }
 }
@@ -348,23 +462,63 @@ object SessionStore {
 // What the Gallery works with
 // ---------------------------------------------------------------------------------------
 
+/** One clip that was exported to a file (Movies/CubeCut): which solve it was, where the file is, and where in it the final time first shows. */
+class ExportedClip(
+    val id: Long, val footageId: Long, val stopSec: Double, val timeText: String,
+    val uri: String, val fileName: String, val offsetSec: Double, val exportedMs: Long
+)
+
 /**
- * One cut as the Gallery shows it, with the session it comes from. [index] is the cut's position in its session (0-based), the same
- * numbering as "Solve n of N" in the editor. A cut has no number of its own in the database (the cuts of a session are saved as one
- * list), so a picture is identified by its session and the moment the clip stops: [key].
+ * One clip as the Gallery shows it, with the session it comes from. [index] is the cut's position in its session (0-based, the same
+ * numbering as "Solve n of N" in the editor; -1 = the cut was removed or moved since the export). [exported] is the file it was exported
+ * to, if any. [exportOnly] = the session's video is gone and only this exported file is left.
+ * A cut has no number of its own in the database (the cuts of a session are saved as one list), so a picture is identified by its
+ * session and the moment the clip stops: [key].
  */
-class GalleryClip(val footage: Footage, val index: Int, val total: Int, val cut: CutItem) {
+class GalleryClip(val footage: Footage, val index: Int, val total: Int, val cut: CutItem, val exported: ExportedClip?, val exportOnly: Boolean) {
     val key: String get() = "${footage.id}_${Math.round(cut.stopSec * 1000.0)}"
-    val listKey: String get() = "${footage.id}:$index"        // unique in a list, even if two cuts sit on the same frame
+    val listKey: String get() = if (exportOnly && exported != null) "x${exported.id}" else "${footage.id}:$index"
     val seconds: Double? get() = parseTimeSeconds(cut.timeText)
     val needsCheck: Boolean get() = cut.note.isNotEmpty() && cut.note != "added by you"
     val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
+    val sharedList: List<String> get() = platformsIn(cut.userNote)
 }
 
-/** "Sunday practice \u00B7 Solve 03 \u00B7 11.263s" */
-fun clipTitle(footageTitle: String, number: Int, timeText: String): String =
-    "$footageTitle \u00B7 Solve ${"%02d".format(number)} \u00B7 " + (if (timeText.isBlank()) "time unknown" else "${timeText}s")
+/** "Sunday practice \u00B7 Solve 03 \u00B7 11.263s" ([number] 0 or less = the solve's place in the session is unknown) */
+fun clipTitle(footageTitle: String, number: Int, timeText: String): String {
+    val time = if (timeText.isBlank()) "time unknown" else "${timeText}s"
+    return if (number > 0) "$footageTitle \u00B7 Solve ${"%02d".format(number)} \u00B7 $time" else "$footageTitle \u00B7 $time"
+}
 
 class GalleryData(val footage: List<Footage>, val clips: List<GalleryClip>, val openable: Map<Long, Boolean>) {
     fun clipsOf(footageId: Long): List<GalleryClip> = clips.filter { it.footage.id == footageId }
+}
+
+// ---------------------------------------------------------------------------------------
+// Social media buttons for notes: pressing one adds (or removes) the platform's name in the note, so the note itself says "TikTok".
+// ---------------------------------------------------------------------------------------
+
+val SOCIAL_PLATFORMS = listOf("TikTok", "Instagram", "YouTube", "Facebook", "X", "Reddit")
+
+private fun platformRegex(p: String): Regex =
+    Regex("(?<![A-Za-z0-9])" + Regex.escape(p) + "(?![A-Za-z0-9])", if (p == "X") emptySet() else setOf(RegexOption.IGNORE_CASE))
+
+fun noteMentions(note: String, platform: String): Boolean = platformRegex(platform).containsMatchIn(note)
+
+/** The platforms a note mentions, in the order of [SOCIAL_PLATFORMS]. */
+fun platformsIn(note: String): List<String> = SOCIAL_PLATFORMS.filter { noteMentions(note, it) }
+
+/** Adds the platform's name to the end of the note, or takes it out again if it is already there. */
+fun togglePlatform(note: String, platform: String): String {
+    val rx = platformRegex(platform)
+    if (rx.containsMatchIn(note)) {
+        return note.replaceFirst(rx, "")
+            .replace(Regex("\\s*,\\s*,"), ",")
+            .replace(Regex("^\\s*,\\s*"), "")
+            .replace(Regex("\\s*,\\s*$"), "")
+            .replace(Regex("[ \\t]{2,}"), " ")
+            .trim()
+    }
+    val base = note.trimEnd().trimEnd(',').trimEnd()
+    return if (base.isEmpty()) platform else "$base, $platform"
 }

@@ -42,7 +42,8 @@ data class CutItem(
     val timeText: String,                 // what the timer showed, e.g. "11.263" ("" = unknown)
     val included: Boolean,                // true = this cut is exported as a clip
     val note: String,                     // why it needs a look, or "added by you"
-    val includeScramble: Boolean = true   // true = clip runs from the end of the previous clip (scramble included); false = the solve only
+    val includeScramble: Boolean = true,  // true = clip runs from the end of the previous clip (scramble included); false = the solve only
+    val userNote: String = ""             // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
 )
 
 /** One video file that will be exported. */
@@ -121,7 +122,10 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
     return clips
 }
 
-class ExportResult(val done: Int, val failed: List<String>, val message: String)
+/** One exported file: the clip it came from, where the file is, and where in that file the final time first shows. */
+class ExportedFile(val clip: Clip, val uri: String, val fileName: String, val startSec: Double)
+
+class ExportResult(val done: Int, val failed: List<String>, val message: String, val files: List<ExportedFile> = emptyList())
 
 object ClipExporter {
     private const val FOLDER = "CubeCut"
@@ -148,19 +152,30 @@ object ClipExporter {
     /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. */
     fun export(context: Context, source: Uri, clips: List<Clip>, onProgress: (Int, Int) -> Unit): ExportResult {
         val failed = mutableListOf<String>()
+        val files = mutableListOf<ExportedFile>()
         var done = 0
         for ((i, clip) in clips.withIndex()) {
             onProgress(i, clips.size)
-            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip))
-            if (error == null) done++ else failed.add("${fileName(clip)}: $error")
+            val made = Made()
+            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip), made)
+            if (error == null) {
+                done++
+                val uri = made.uri
+                if (uri != null) files.add(ExportedFile(clip, uri, fileName(clip), if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
+            } else {
+                failed.add("${fileName(clip)}: $error")
+            }
         }
         onProgress(clips.size, clips.size)
         val where = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "Movies/$FOLDER" else "the app's Movies/$FOLDER folder"
         val message = if (failed.isEmpty()) "Exported $done clips to $where" else "Exported $done of ${clips.size} clips to $where. Problems: " + failed.joinToString("; ")
-        return ExportResult(done, failed, message)
+        return ExportResult(done, failed, message, files)
     }
 
     private class Output(val pfd: ParcelFileDescriptor?, val uri: Uri?, val path: String?)
+
+    /** What one finished export reports back: where the new file is and where its first picture comes from in the source video. */
+    private class Made(var uri: String? = null, var startUs: Long = -1L)
 
     private fun openOutput(context: Context, name: String): Output {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -186,7 +201,7 @@ object ClipExporter {
      * Because of that, a clip can start a little earlier than asked: it must begin on a "keyframe" (usually within a second).
      * Returns null on success, or a short error message.
      */
-    private fun exportOne(context: Context, source: Uri, startUs: Long, endUs: Long, name: String): String? {
+    private fun exportOne(context: Context, source: Uri, startUs: Long, endUs: Long, name: String, made: Made): String? {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
         var output: Output? = null
@@ -284,6 +299,8 @@ object ClipExporter {
             m.stop()
             started = false
             success = true
+            made.uri = out.uri?.toString() ?: out.path?.let { Uri.fromFile(File(it)).toString() }
+            made.startUs = if (baseUs >= 0) baseUs else startUs
             return null
         } catch (e: Exception) {
             return e.message ?: e.javaClass.simpleName

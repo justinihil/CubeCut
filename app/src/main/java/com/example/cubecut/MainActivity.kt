@@ -202,7 +202,8 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
 
     // ---- saved sessions (version 3) ----
     var footageId by remember { mutableStateOf<Long?>(null) }    // this video's saved record (null = none yet, or still loading it)
-    var pendingSeek by remember { mutableStateOf(request.seekSec) }     // a solve to jump to once the video has loaded (from a Gallery clip)
+    var pendingSeek by remember { mutableStateOf(request.seekSec) }
+    var scrollToSelected by remember { mutableStateOf(false) }          // after opening from a Gallery clip: bring its row into view     // a solve to jump to once the video has loaded (from a Gallery clip)
 
     // ---- settings ----
     var beforePad by remember { mutableStateOf(2.5f) }           // seconds kept BEFORE the solve starts (used when the scramble is left out)
@@ -329,6 +330,7 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
             importProgress = 0.05f
 
             // is this a video the app has seen before? If so, bring back its saved cuts and settings
+            var openedNote: String? = null
             val opened = try {
                 withContext(Dispatchers.IO) { SessionStore.openOrCreate(context, uri, dur, beforePad, afterPad, scrambleAll) }
             } catch (e: CancellationException) {
@@ -344,9 +346,10 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
                     cuts.addAll(opened.cuts)
                     if (opened.cuts.isNotEmpty()) {
                         setupExpanded = false
-                        analysisStatus = "Opened your saved session: ${opened.cuts.size} cuts" +
+                        openedNote = "Opened your saved session: ${opened.cuts.size} cuts" +
                                 (if (opened.footage.lastScanMs > 0) ", found on ${formatDate(opened.footage.lastScanMs)}" else "") +
-                                ". Set up the timer again only if you want to run Find solves again."
+                                ". Set up the timer only to run Find solves again."
+                        analysisStatus = openedNote
                     }
                 }
                 footageId = opened.footage.id       // set last: from now on every change is saved
@@ -359,7 +362,7 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
             }
             importProgress = 1f
 
-            status = "Ready"
+            status = openedNote ?: "Ready"
 
             // opened from a Gallery clip: select that solve and put the playhead just before it
             val seekTo = pendingSeek
@@ -370,6 +373,7 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
                 val ms = ((seekTo - 0.5).coerceAtLeast(0.0) * 1000.0).toLong().coerceIn(0L, maxOf(0L, dur))
                 exoPlayer.seekTo(ms)
                 positionMs = ms
+                scrollToSelected = true
             }
         } catch (e: CancellationException) {
             throw e
@@ -513,6 +517,26 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
                 scope.launch { listScroll.animateScrollTo(maxOf(0, target)) }
             }
         }
+    }
+
+    // opened from a Gallery clip: once the list has been laid out, scroll so the selected row is in view
+    LaunchedEffect(scrollToSelected) {
+        if (!scrollToSelected) return@LaunchedEffect
+        delay(250)                                  // let the screen settle (the Setup box folds away)
+        var tries = 0
+        while (tries < 30) {
+            val i = selectedCut
+            val rowBox = rowBoxes[i]
+            val areaBox = listBox[0]
+            if (i >= 0 && rowBox != null && areaBox != null && rowBox.isAttached && areaBox.isAttached) {
+                val rowTop = rowBox.positionInRoot().y - areaBox.positionInRoot().y
+                listScroll.animateScrollTo(maxOf(0, listScroll.value + rowTop.toInt() - 4))
+                break
+            }
+            delay(100)
+            tries++
+        }
+        scrollToSelected = false
     }
 
     // back to the Gallery: save the latest edits first (the autosave waits a moment), then close the editor
@@ -1095,6 +1119,8 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
                             val uri = videoUri
                             if (uri != null && clips.isNotEmpty() && !exporting) {
                                 val toExport = clips.toList()
+                                val cutsAtExport = cuts.toList()
+                                val footageAtExport = footageId
                                 exoPlayer.pause()
                                 scope.launch {
                                     exporting = true
@@ -1106,6 +1132,18 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
                                     }
                                     exportStatus = result.message
                                     exporting = false
+                                    // remember which solves were exported and where the files are (the Gallery shows them as Exported)
+                                    if (footageAtExport != null && result.files.isNotEmpty()) {
+                                        val now = System.currentTimeMillis()
+                                        val records = result.files.mapNotNull { f ->
+                                            val cut = cutsAtExport.getOrNull(f.clip.cutIndex)
+                                            if (cut == null) null
+                                            else ExportedClip(0L, footageAtExport, cut.stopSec, cut.timeText, f.uri, f.fileName, Math.max(0.0, cut.stopSec - f.startSec), now)
+                                        }
+                                        withContext(Dispatchers.IO) {
+                                            try { SessionStore.recordExports(context, footageAtExport, records) } catch (e: Exception) { }
+                                        }
+                                    }
                                     val folder = if (Build.VERSION.SDK_INT >= 29) "Movies/CubeCut"
                                     else "Android/data/${context.packageName}/files/Movies/CubeCut"
                                     exportDialogTitle = if (result.failed.isEmpty()) "Export complete" else "Export finished with problems"
