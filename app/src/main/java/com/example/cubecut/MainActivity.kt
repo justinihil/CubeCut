@@ -17,9 +17,7 @@
 package com.example.cubecut
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
-import android.provider.DocumentsContract
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.view.LayoutInflater
@@ -146,18 +144,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * The system file picker, asked to open on its "Videos" view (a grid of thumbnails, like a gallery) instead of the plain
- * file browser. It is only a hint: if a phone ignores it, the normal file picker opens and everything else works the same.
- * (The file picker is used, not the photo picker, because it lets CubeCut keep its permission to read the video for good.)
- */
-class OpenVideoDocument : ActivityResultContracts.OpenDocument() {
-    override fun createIntent(context: Context, input: Array<String>): Intent =
-        super.createIntent(context, input).apply {
-            putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.providers.media.documents/root/videos_root"))
-        }
-}
-
 // words that mean "look at this one" - they are shown in bold amber in the solves list
 private val CHECK_COLOR = Color(0xFFFFB74D)
 private val CHECK_KEYWORDS = listOf(
@@ -280,7 +266,7 @@ fun EditorScreen() {
 
     // the system file picker (needs no storage permission). It is used instead of the photo picker because Android lets the app
     // keep its permission to read the chosen video, so a saved session can be opened again after the app or the phone restarted.
-    val picker = rememberLauncherForActivityResult(OpenVideoDocument()) { uri ->
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             SessionStore.keepAccess(context, uri)
             videoUri = uri
