@@ -157,8 +157,9 @@ fun AppRoot() {
     var editor by remember { mutableStateOf<EditorRequest?>(null) }
     val request = editor
     if (request != null) {
-        EditorScreen(request = request, onClose = {
+        EditorScreen(request = request, onClose = { footageId, solveSec ->
             editor = null
+            if (footageId != null && solveSec != null) ui.openClip = Pair(footageId, solveSec)    // "show in Gallery" on a solve
             ui.refresh++
         })
     } else {
@@ -188,7 +189,7 @@ fun highlightCheck(text: String): AnnotatedString = buildAnnotatedString {
 }
 
 @Composable
-fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
+fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -540,11 +541,12 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
     }
 
     // back to the Gallery: save the latest edits first (the autosave waits a moment), then close the editor
-    fun leaveToGallery() {
+    fun leaveToGallery(showSolve: Int? = null) {
         if (analyzing || exporting) {
             status = if (analyzing) "Find solves is still running: let it finish or press Cancel first" else "An export is running: wait until it finishes"
             return
         }
+        val openSec = if (showSolve != null) cuts.getOrNull(showSolve)?.stopSec else null     // the solve to show in the Gallery
         scope.launch {
             val id = footageId
             if (id != null) {
@@ -560,7 +562,7 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
                 }
             }
             exoPlayer.pause()
-            onClose()
+            onClose(id, openSec)
         }
     }
     BackHandler { leaveToGallery() }
@@ -1104,11 +1106,17 @@ fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
                                     Text("Include scramble", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-                            TextButton(onClick = {
-                                selectedCut = index
-                                editIndex = index
-                            }) {
-                                Text(if (item.timeText.isEmpty()) "Add time" else "Edit")
+                            Column(horizontalAlignment = Alignment.End) {
+                                TextButton(onClick = {
+                                    selectedCut = index
+                                    editIndex = index
+                                }) {
+                                    Text(if (item.timeText.isEmpty()) "Add time" else "Edit")
+                                }
+                                // go straight to this solve's page in the Gallery (your edits are saved first)
+                                TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && !exporting && footageId != null) {
+                                    Text("Gallery")
+                                }
                             }
                         }
                     }

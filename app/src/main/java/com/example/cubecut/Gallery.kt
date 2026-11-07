@@ -16,9 +16,12 @@
  */
 package com.example.cubecut
 
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
 import android.view.LayoutInflater
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -91,7 +94,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items as listItems
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CancellationException
@@ -232,6 +238,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var tab by mutableStateOf(0)                                  // 0 = Clips, 1 = Footage
     var refresh by mutableStateOf(0)                              // add 1 to load the data again
     var detail by mutableStateOf<GalleryClip?>(null)              // the clip whose detail screen is open
+    var openClip by mutableStateOf<Pair<Long, Double>?>(null)     // (session id, stop time) of a clip to open as soon as the data has loaded
     var clipsGrid by mutableStateOf(prefs.getBoolean("clips_grid", true))
     var footageGrid by mutableStateOf(prefs.getBoolean("footage_grid", true))
     var clipsColumns by mutableStateOf(prefs.getInt("clips_columns", 3).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
@@ -259,6 +266,16 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("hidden", hidden.joinToString(","))
             .apply()
     }
+}
+
+/** The activity a composable runs in (the screen is wrapped in other contexts on some phones). */
+private fun Context.findActivity(): ComponentActivity? {
+    var c: Context = this
+    while (c is ContextWrapper) {
+        if (c is ComponentActivity) return c
+        c = c.baseContext
+    }
+    return null
 }
 
 /**
@@ -595,6 +612,21 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var footageMenu by remember { mutableStateOf<Footage?>(null) }      // the session whose options window is open
     var renaming by remember { mutableStateOf<Footage?>(null) }
     var forgetting by remember { mutableStateOf<Footage?>(null) }
+    var relinkFor by remember { mutableStateOf<Footage?>(null) }        // the session whose video is being picked again
+
+    // Android can't tell CubeCut when a video is deleted or restored while the app is open, so everything is checked again each time you
+    // come back to the app (and the Refresh button does it on demand)
+    val activity = remember(context) { context.findActivity() }
+    DisposableEffect(activity) {
+        var firstEvent = true
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (firstEvent) firstEvent = false else ui.refresh++
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
 
     // scroll positions of the four lists (they jump back to the top whenever the order or the filter changes)
     val clipsGridState = rememberLazyGridState()
@@ -616,6 +648,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val loaded = withContext(Dispatchers.IO) { SessionStore.loadGallery(context) }
             data = loaded
             loadError = ""
+            // coming back from the editor with a solve to show: open its detail screen
+            val request = ui.openClip
+            if (request != null) {
+                ui.openClip = null
+                val found = loaded.clips.firstOrNull { it.footage.id == request.first && Math.abs(it.cut.stopSec - request.second) < 0.05 }
+                if (found != null) {
+                    ui.tab = 0
+                    ui.detail = found
+                }
+            }
             // forget filter choices about sessions that no longer exist
             val known = loaded.footage.map { it.id }.toSet()
             if (ui.hidden.any { it !in known }) {
@@ -629,12 +671,23 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
 
-    // Import video: pick a video, then open it in the editor (a video seen before gets its saved cuts back; this also
-    // reconnects a session whose video was moved)
+    // Import video: pick a video, then open it in the editor (a video seen before gets its saved cuts back).
+    // Reconnect video: the same picker, but the chosen video is attached to the session that lost its video, and you stay in the Gallery.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = relinkFor
+        relinkFor = null
         if (uri != null) {
             SessionStore.keepAccess(context, uri)
-            onOpenEditor(EditorRequest(uri, null))
+            if (target == null) {
+                onOpenEditor(EditorRequest(uri, null))
+            } else {
+                scope.launch {
+                    message = withContext(Dispatchers.IO) {
+                        try { SessionStore.relink(context, target, uri) } catch (e: Exception) { "Couldn't reconnect: ${e.message ?: e.javaClass.simpleName}" }
+                    }
+                    ui.refresh++
+                }
+            }
         }
     }
 
@@ -665,7 +718,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                Button(onClick = { picker.launch(arrayOf("video/*")) }) { Text("Import video") }
+                TextButton(onClick = { ui.refresh++ }) { Text("Refresh") }
+                Button(onClick = { relinkFor = null; picker.launch(arrayOf("video/*")) }) { Text("Import video") }
             }
 
             // ===== the two tabs =====
@@ -817,6 +871,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ui.detail = null
                     onOpenEditor(EditorRequest(Uri.parse(detail.footage.uri), detail.cut.stopSec))
                 },
+                onReconnect = {
+                    relinkFor = detail.footage
+                    picker.launch(arrayOf("video/*"))
+                },
                 onShowSession = {
                     ui.detail = null
                     ui.refresh++
@@ -939,9 +997,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         if (!canOpenIt) {
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "The video can't be opened right now (moved or deleted), so only the clips you exported are shown. " +
-                                        "Your saved cuts are safe: if you still have the video, tap Import video and pick it again, " +
-                                        "and CubeCut reconnects it and shows every clip again.",
+                                "The video can't be opened right now (moved, renamed, deleted, or restored under a new link), so only the clips you exported are shown. " +
+                                        "Your saved cuts are safe: if you still have the video, tap Reconnect video below and pick it, " +
+                                        "and every clip is back.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -957,6 +1015,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             ui.save()
                             footageMenu = null
                         }) { Text(if (isHidden) "Show its clips in the Clips tab" else "Hide its clips in the Clips tab") }
+                        if (!canOpenIt) {
+                            TextButton(onClick = {
+                                relinkFor = menuFootage
+                                footageMenu = null
+                                picker.launch(arrayOf("video/*"))
+                            }) { Text("Reconnect video") }
+                        }
                         TextButton(enabled = canOpenIt, onClick = {
                             footageMenu = null
                             onOpenEditor(EditorRequest(Uri.parse(menuFootage.uri), null))
@@ -1071,6 +1136,7 @@ fun ClipDetailScreen(
     stats: FootageStats?,
     onBack: () -> Unit,
     onOpenEditor: () -> Unit,
+    onReconnect: () -> Unit,
     onShowSession: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1149,10 +1215,17 @@ fun ClipDetailScreen(
                 if (openable || playsExport) {
                     AndroidView(
                         factory = { ctx ->
-                            (LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView).apply {
-                                this.player = clipPlayer
-                                useController = true
-                            }
+                            val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
+                            pv.player = clipPlayer
+                            pv.useController = true
+                            pv.controllerShowTimeoutMs = 2000        // after a tap the controls show for 2 seconds
+                            pv.hideController()                      // hidden from the start: tap the picture to show them
+                            clipPlayer.addListener(object : Player.Listener {
+                                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                                    if (isPlaying) pv.hideController()   // as soon as it plays, the controls go away
+                                }
+                            })
+                            pv
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -1205,7 +1278,12 @@ fun ClipDetailScreen(
 
                 // ===== note and social media buttons =====
                 Spacer(Modifier.height(10.dp))
-                Text("Note", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Note", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                    if (canSaveNote) {
+                        TextButton(onClick = { note = "" }, enabled = note.isNotEmpty()) { Text("Clear") }
+                    }
+                }
                 if (canSaveNote) {
                     OutlinedTextField(
                         value = note,
@@ -1265,8 +1343,12 @@ fun ClipDetailScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Open in editor at this solve") }
                 if (!openable) {
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(onClick = { scope.launch { saveNote(); onReconnect() } }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Reconnect video")
+                    }
                     Text(
-                        "Your saved cuts are safe. If you still have the video, tap Import video in the Gallery and pick it again: CubeCut recognises it and reconnects it.",
+                        "Your saved cuts are safe. Pick the original session video and every clip of it is back.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp)
                     )

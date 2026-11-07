@@ -425,6 +425,28 @@ object SessionStore {
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
+    /**
+     * Points a saved session at a video again (after the file was deleted and restored, moved or renamed: Android then gives it a new
+     * link). The length must match. Returns a message to show.
+     */
+    fun relink(context: Context, footage: Footage, uri: Uri): String {
+        val dur = try {
+            readDurationMs(context, uri)
+        } catch (e: Exception) {
+            return "Couldn't open that video: ${e.message ?: e.javaClass.simpleName}"
+        }
+        if (Math.abs(dur - footage.durationMs) > 1500L) {
+            return "That video is ${formatTime(dur)} long but \"${footage.title}\" is ${formatTime(footage.durationMs)}. Pick the original session video."
+        }
+        val (name, size) = nameAndSize(context, uri)
+        val v = ContentValues()
+        v.put("uri", uri.toString())
+        if (name.isNotEmpty()) v.put("display_name", name)
+        if (size > 0) v.put("size_bytes", size)
+        db(context).update("footage", v, "id = ?", arrayOf(footage.id.toString()))
+        return "Reconnected \"${footage.title}\". All its clips are back."
+    }
+
     /** Gives a session a new title (an empty title is ignored). */
     fun renameFootage(context: Context, footageId: Long, title: String) {
         val t = title.trim()
