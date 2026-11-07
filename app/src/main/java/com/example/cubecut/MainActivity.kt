@@ -17,6 +17,7 @@
 package com.example.cubecut
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -25,6 +26,7 @@ import android.os.Build
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.setContent
@@ -137,10 +139,30 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    EditorScreen()
+                    AppRoot()
                 }
             }
         }
+    }
+}
+
+/**
+ * The first screen is the Gallery (everything the phone remembers). Opening a session, a clip or a new video from there opens the
+ * editor; closing the editor returns to the Gallery and reloads it.
+ */
+@Composable
+fun AppRoot() {
+    val context = LocalContext.current
+    val ui = remember { GalleryUiState(context.getSharedPreferences("cubecut_ui", Context.MODE_PRIVATE)) }
+    var editor by remember { mutableStateOf<EditorRequest?>(null) }
+    val request = editor
+    if (request != null) {
+        EditorScreen(request = request, onClose = {
+            editor = null
+            ui.refresh++
+        })
+    } else {
+        GalleryScreen(ui = ui, onOpenEditor = { editor = it })
     }
 }
 
@@ -166,12 +188,12 @@ fun highlightCheck(text: String): AnnotatedString = buildAnnotatedString {
 }
 
 @Composable
-fun EditorScreen() {
+fun EditorScreen(request: EditorRequest, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     // ---- the video ----
-    var videoUri by remember { mutableStateOf<Uri?>(null) }
+    var videoUri by remember { mutableStateOf<Uri?>(request.uri) }     // the Gallery can hand over the video to open
     var durationMs by remember { mutableStateOf(0L) }
     var thumbs by remember { mutableStateOf<List<ImageBitmap>>(emptyList()) }
     var positionMs by remember { mutableStateOf(0L) }
@@ -180,9 +202,7 @@ fun EditorScreen() {
 
     // ---- saved sessions (version 3) ----
     var footageId by remember { mutableStateOf<Long?>(null) }    // this video's saved record (null = none yet, or still loading it)
-    var showSessions by remember { mutableStateOf(false) }       // the "Saved sessions" window
-    var savedSessions by remember { mutableStateOf<List<Footage>>(emptyList()) }
-    var forgetTarget by remember { mutableStateOf<Footage?>(null) }   // the session the user is about to forget
+    var pendingSeek by remember { mutableStateOf(request.seekSec) }     // a solve to jump to once the video has loaded (from a Gallery clip)
 
     // ---- settings ----
     var beforePad by remember { mutableStateOf(2.5f) }           // seconds kept BEFORE the solve starts (used when the scramble is left out)
@@ -340,6 +360,17 @@ fun EditorScreen() {
             importProgress = 1f
 
             status = "Ready"
+
+            // opened from a Gallery clip: select that solve and put the playhead just before it
+            val seekTo = pendingSeek
+            if (seekTo != null) {
+                pendingSeek = null
+                val nearest = cuts.indices.minByOrNull { Math.abs(cuts[it].stopSec - seekTo) }
+                if (nearest != null && Math.abs(cuts[nearest].stopSec - seekTo) < 0.5) selectedCut = nearest
+                val ms = ((seekTo - 0.5).coerceAtLeast(0.0) * 1000.0).toLong().coerceIn(0L, maxOf(0L, dur))
+                exoPlayer.seekTo(ms)
+                positionMs = ms
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -484,6 +515,32 @@ fun EditorScreen() {
         }
     }
 
+    // back to the Gallery: save the latest edits first (the autosave waits a moment), then close the editor
+    fun leaveToGallery() {
+        if (analyzing || exporting) {
+            status = if (analyzing) "Find solves is still running: let it finish or press Cancel first" else "An export is running: wait until it finishes"
+            return
+        }
+        scope.launch {
+            val id = footageId
+            if (id != null) {
+                val snapshot = cuts.toList()
+                val before = beforePad
+                val after = afterPad
+                val scramble = scrambleAll
+                withContext(Dispatchers.IO) {
+                    try {
+                        SessionStore.saveSession(context, id, snapshot, before, after, scramble)
+                    } catch (e: Exception) {
+                    }
+                }
+            }
+            exoPlayer.pause()
+            onClose()
+        }
+    }
+    BackHandler { leaveToGallery() }
+
     // the video's height follows the screen height: clear picture, but room left for the list
     val screenHeightDp = LocalConfiguration.current.screenHeightDp
     val videoHeight = (screenHeightDp * 0.27f).coerceIn(170f, 300f).dp
@@ -511,14 +568,7 @@ fun EditorScreen() {
                     Text(statusText, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 }
                 Spacer(Modifier.width(4.dp))
-                TextButton(onClick = {
-                    scope.launch {
-                        savedSessions = withContext(Dispatchers.IO) {
-                            try { SessionStore.listFootage(context) } catch (e: Exception) { emptyList() }
-                        }
-                        showSessions = true
-                    }
-                }, enabled = !analyzing && !exporting) { Text("Sessions") }
+                TextButton(onClick = { leaveToGallery() }, enabled = !analyzing && !exporting) { Text("Gallery") }
                 Button(onClick = {
                     picker.launch(arrayOf("video/*"))
                 }, enabled = !analyzing && !exporting) { Text("Import video") }
@@ -1141,125 +1191,8 @@ fun EditorScreen() {
             )
         }
 
-        // ===== the About window: author credit and licence notice (the licence needs this to stay in the app, see NOTICE.md) =====
-        if (showAbout) {
-            AlertDialog(
-                onDismissRequest = { showAbout = false },
-                title = { Text("CubeCut") },
-                text = {
-                    Column(
-                        Modifier
-                            .heightIn(max = 360.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        Text("Created by $AUTHOR_NAME", style = MaterialTheme.typography.bodyLarge)
-                        Text(AUTHOR_FIND_ME, style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Cuts a speedcubing session video into one clip per solve by reading the timer. " +
-                                    "Everything runs on this phone and nothing is uploaded.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Free software under the GNU General Public License, version 3, with no warranty. " +
-                                    "Anyone who shares CubeCut or a changed version of it must also share the source code under the same licence, " +
-                                    "keep this credit in the app, and say clearly that a changed version is changed. " +
-                                    "See the LICENSE and NOTICE.md files in the source code.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(onClick = { showAbout = false }) { Text("OK") }
-                }
-            )
-        }
-
-        // ===== the "Saved sessions" window (a simple list for now; the Gallery of version 3 will replace it) =====
-        if (showSessions) {
-            AlertDialog(
-                onDismissRequest = { showSessions = false },
-                title = { Text("Saved sessions") },
-                text = {
-                    Column(
-                        Modifier
-                            .heightIn(max = 420.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        if (savedSessions.isEmpty()) {
-                            Text(
-                                "Nothing saved yet. Import a video and run Find solves: the session is kept here automatically.",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                        for (s in savedSessions) {
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        scope.launch {
-                                            val uri = Uri.parse(s.uri)
-                                            val ok = withContext(Dispatchers.IO) { SessionStore.canOpen(context, uri) }
-                                            showSessions = false
-                                            if (ok) {
-                                                if (uri == videoUri) {
-                                                    status = "This session is already open"
-                                                } else {
-                                                    videoUri = uri
-                                                }
-                                            } else {
-                                                status = "The video of \"${s.title}\" can't be found any more (moved or deleted). " +
-                                                        "If you still have it, use Import video: CubeCut recognises it and brings back the saved cuts."
-                                            }
-                                        }
-                                    }
-                                    .padding(vertical = 6.dp)
-                            ) {
-                                Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    formatDate(if (s.dateTakenMs > 0) s.dateTakenMs else s.addedMs) + "  |  " + formatTime(s.durationMs) + "  |  " +
-                                            (if (s.cutCount > 0) "${s.includedCount} of ${s.cutCount} solves on" else "not scanned yet"),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                TextButton(onClick = { forgetTarget = s }, enabled = s.uri != videoUri?.toString()) {
-                                    Text("Forget this session")
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(onClick = { showSessions = false }) { Text("Close") }
-                }
-            )
-        }
-        val forgetting = forgetTarget
-        if (forgetting != null) {
-            AlertDialog(
-                onDismissRequest = { forgetTarget = null },
-                title = { Text("Forget this session?") },
-                text = {
-                    Text(
-                        "\"${forgetting.title}\" and its ${forgetting.cutCount} saved cuts are removed from CubeCut. " +
-                                "The video itself and any clips you exported are not touched.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                },
-                confirmButton = {
-                    Button(onClick = {
-                        forgetTarget = null
-                        scope.launch {
-                            withContext(Dispatchers.IO) { try { SessionStore.delete(context, forgetting) } catch (e: Exception) { } }
-                            savedSessions = withContext(Dispatchers.IO) {
-                                try { SessionStore.listFootage(context) } catch (e: Exception) { emptyList() }
-                            }
-                        }
-                    }) { Text("Forget") }
-                },
-                dismissButton = { TextButton(onClick = { forgetTarget = null }) { Text("Cancel") } }
-            )
-        }
+        // ===== the About window (shared with the Gallery, see AboutDialog in Gallery.kt) =====
+        if (showAbout) AboutDialog { showAbout = false }
 
         // ===== the "Find solves may take a while" window =====
         if (showFindConfirm) {

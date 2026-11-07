@@ -308,6 +308,28 @@ object SessionStore {
         }
     }
 
+    /** Everything the Gallery shows: every session, every cut of every session, and whether each video can still be opened. */
+    fun loadGallery(context: Context): GalleryData {
+        val footage = listFootage(context)
+        val clips = ArrayList<GalleryClip>()
+        val openable = HashMap<Long, Boolean>()
+        for (f in footage) {
+            openable[f.id] = canOpen(context, Uri.parse(f.uri))
+            val cuts = loadCuts(context, f.id)
+            for ((i, c) in cuts.withIndex()) clips.add(GalleryClip(f, i, cuts.size, c))
+        }
+        return GalleryData(footage, clips, openable)
+    }
+
+    /** Gives a session a new title (an empty title is ignored). */
+    fun renameFootage(context: Context, footageId: Long, title: String) {
+        val t = title.trim()
+        if (t.isEmpty()) return
+        val v = ContentValues()
+        v.put("title", t)
+        db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
+    }
+
     /** Remembers that Find solves has just run on this session. */
     fun markScanned(context: Context, footageId: Long) {
         val v = ContentValues()
@@ -320,4 +342,29 @@ object SessionStore {
         db(context).delete("footage", "id = ?", arrayOf(footage.id.toString()))
         releaseAccess(context, footage.uri)
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// What the Gallery works with
+// ---------------------------------------------------------------------------------------
+
+/**
+ * One cut as the Gallery shows it, with the session it comes from. [index] is the cut's position in its session (0-based), the same
+ * numbering as "Solve n of N" in the editor. A cut has no number of its own in the database (the cuts of a session are saved as one
+ * list), so a picture is identified by its session and the moment the clip stops: [key].
+ */
+class GalleryClip(val footage: Footage, val index: Int, val total: Int, val cut: CutItem) {
+    val key: String get() = "${footage.id}_${Math.round(cut.stopSec * 1000.0)}"
+    val listKey: String get() = "${footage.id}:$index"        // unique in a list, even if two cuts sit on the same frame
+    val seconds: Double? get() = parseTimeSeconds(cut.timeText)
+    val needsCheck: Boolean get() = cut.note.isNotEmpty() && cut.note != "added by you"
+    val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
+}
+
+/** "Sunday practice \u00B7 Solve 03 \u00B7 11.263s" */
+fun clipTitle(footageTitle: String, number: Int, timeText: String): String =
+    "$footageTitle \u00B7 Solve ${"%02d".format(number)} \u00B7 " + (if (timeText.isBlank()) "time unknown" else "${timeText}s")
+
+class GalleryData(val footage: List<Footage>, val clips: List<GalleryClip>, val openable: Map<Long, Boolean>) {
+    fun clipsOf(footageId: Long): List<GalleryClip> = clips.filter { it.footage.id == footageId }
 }
