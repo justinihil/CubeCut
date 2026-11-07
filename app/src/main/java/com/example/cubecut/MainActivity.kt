@@ -17,6 +17,7 @@
 package com.example.cubecut
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.view.LayoutInflater
@@ -28,7 +29,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -178,6 +178,12 @@ fun EditorScreen() {
     var isPlaying by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Import a video to begin") }
 
+    // ---- saved sessions (version 3) ----
+    var footageId by remember { mutableStateOf<Long?>(null) }    // this video's saved record (null = none yet, or still loading it)
+    var showSessions by remember { mutableStateOf(false) }       // the "Saved sessions" window
+    var savedSessions by remember { mutableStateOf<List<Footage>>(emptyList()) }
+    var forgetTarget by remember { mutableStateOf<Footage?>(null) }   // the session the user is about to forget
+
     // ---- settings ----
     var beforePad by remember { mutableStateOf(2.5f) }           // seconds kept BEFORE the solve starts (used when the scramble is left out)
     var afterPad by remember { mutableStateOf(2.5f) }            // seconds kept AFTER the first frame that shows the final time
@@ -258,14 +264,19 @@ fun EditorScreen() {
         }
     }
 
-    // the system video picker (needs no storage permission)
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) videoUri = uri
+    // the system file picker (needs no storage permission). It is used instead of the photo picker because Android lets the app
+    // keep its permission to read the chosen video, so a saved session can be opened again after the app or the phone restarted.
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            SessionStore.keepAccess(context, uri)
+            videoUri = uri
+        }
     }
 
     // when a video is chosen: load it into the player, then build the film strip
     LaunchedEffect(videoUri) {
         val uri = videoUri ?: return@LaunchedEffect
+        footageId = null        // first of all: stop saving into the previous video's record while the lists below are cleared
         // the timer setup belongs to one video: a new video needs a new setup
         timerEngine?.release()
         timerEngine = null
@@ -297,6 +308,30 @@ fun EditorScreen() {
             durationMs = dur
             importProgress = 0.05f
 
+            // is this a video the app has seen before? If so, bring back its saved cuts and settings
+            val opened = try {
+                withContext(Dispatchers.IO) { SessionStore.openOrCreate(context, uri, dur, beforePad, afterPad, scrambleAll) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null        // the session could not be saved or loaded; the editor still works, it just won't remember this video
+            }
+            if (opened != null) {
+                if (!opened.isNew) {
+                    beforePad = opened.footage.beforePad
+                    afterPad = opened.footage.afterPad
+                    scrambleAll = opened.footage.scrambleAll
+                    cuts.addAll(opened.cuts)
+                    if (opened.cuts.isNotEmpty()) {
+                        setupExpanded = false
+                        analysisStatus = "Opened your saved session: ${opened.cuts.size} cuts" +
+                                (if (opened.footage.lastScanMs > 0) ", found on ${formatDate(opened.footage.lastScanMs)}" else "") +
+                                ". Set up the timer again only if you want to run Find solves again."
+                    }
+                }
+                footageId = opened.footage.id       // set last: from now on every change is saved
+            }
+
             importStage = "Building film strip..."
             status = "Building film strip..."
             thumbs = withContext(Dispatchers.IO) {
@@ -308,7 +343,8 @@ fun EditorScreen() {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            status = "Couldn't import this video: ${e.message ?: e.javaClass.simpleName}"
+            status = "Couldn't open this video: ${e.message ?: e.javaClass.simpleName}. " +
+                    "If it was moved, import it again: CubeCut recognises it and brings back its saved cuts."
         } finally {
             importing = false
         }
@@ -317,6 +353,23 @@ fun EditorScreen() {
     // the timer setup is not kept between runs any more; remove the files an older version left behind
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { TimerStore.clear(context) }
+    }
+
+    // version 3: every change to the cuts or the settings is saved on the phone (after a short pause, so a burst of edits is one write)
+    LaunchedEffect(footageId, cuts.toList(), beforePad, afterPad, scrambleAll) {
+        val id = footageId ?: return@LaunchedEffect
+        delay(400)
+        val snapshot = cuts.toList()
+        val before = beforePad
+        val after = afterPad
+        val scramble = scrambleAll
+        withContext(Dispatchers.IO) {
+            try {
+                SessionStore.saveSession(context, id, snapshot, before, after, scramble)
+            } catch (e: Exception) {
+                // saving is a bonus: if it fails the editor keeps working
+            }
+        }
     }
 
     // the clips that would be exported right now
@@ -389,6 +442,9 @@ fun EditorScreen() {
                         cuts.add(CutItem(r.stopSec, r.timeText, r.include, r.note, scrambleAll))
                     }
                     scanReport = report
+                    footageId?.let { id ->
+                        withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
+                    }
                     val seconds = (System.currentTimeMillis() - started) / 1000
                     analysisStatus = "Done in ${seconds}s: ${report.solves.count { it.include && it.note.isEmpty() }} solves found, " +
                             "${report.solves.count { it.note.isNotEmpty() }} to check"
@@ -454,9 +510,17 @@ fun EditorScreen() {
                     val statusText = if (status == "Ready") (if (timerEngine == null) "Ready - first, set up the timer" else "Ready") else status
                     Text(statusText, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = {
+                    scope.launch {
+                        savedSessions = withContext(Dispatchers.IO) {
+                            try { SessionStore.listFootage(context) } catch (e: Exception) { emptyList() }
+                        }
+                        showSessions = true
+                    }
+                }, enabled = !analyzing && !exporting) { Text("Sessions") }
                 Button(onClick = {
-                    picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+                    picker.launch(arrayOf("video/*"))
                 }, enabled = !analyzing && !exporting) { Text("Import video") }
             }
             Spacer(Modifier.height(6.dp))
@@ -1112,6 +1176,91 @@ fun EditorScreen() {
             )
         }
 
+        // ===== the "Saved sessions" window (a simple list for now; the Gallery of version 3 will replace it) =====
+        if (showSessions) {
+            AlertDialog(
+                onDismissRequest = { showSessions = false },
+                title = { Text("Saved sessions") },
+                text = {
+                    Column(
+                        Modifier
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        if (savedSessions.isEmpty()) {
+                            Text(
+                                "Nothing saved yet. Import a video and run Find solves: the session is kept here automatically.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        for (s in savedSessions) {
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch {
+                                            val uri = Uri.parse(s.uri)
+                                            val ok = withContext(Dispatchers.IO) { SessionStore.canOpen(context, uri) }
+                                            showSessions = false
+                                            if (ok) {
+                                                if (uri == videoUri) {
+                                                    status = "This session is already open"
+                                                } else {
+                                                    videoUri = uri
+                                                }
+                                            } else {
+                                                status = "The video of \"${s.title}\" can't be found any more (moved or deleted). " +
+                                                        "If you still have it, use Import video: CubeCut recognises it and brings back the saved cuts."
+                                            }
+                                        }
+                                    }
+                                    .padding(vertical = 6.dp)
+                            ) {
+                                Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    formatDate(if (s.dateTakenMs > 0) s.dateTakenMs else s.addedMs) + "  |  " + formatTime(s.durationMs) + "  |  " +
+                                            (if (s.cutCount > 0) "${s.includedCount} of ${s.cutCount} solves on" else "not scanned yet"),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                TextButton(onClick = { forgetTarget = s }, enabled = s.uri != videoUri?.toString()) {
+                                    Text("Forget this session")
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { showSessions = false }) { Text("Close") }
+                }
+            )
+        }
+        val forgetting = forgetTarget
+        if (forgetting != null) {
+            AlertDialog(
+                onDismissRequest = { forgetTarget = null },
+                title = { Text("Forget this session?") },
+                text = {
+                    Text(
+                        "\"${forgetting.title}\" and its ${forgetting.cutCount} saved cuts are removed from CubeCut. " +
+                                "The video itself and any clips you exported are not touched.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        forgetTarget = null
+                        scope.launch {
+                            withContext(Dispatchers.IO) { try { SessionStore.delete(context, forgetting) } catch (e: Exception) { } }
+                            savedSessions = withContext(Dispatchers.IO) {
+                                try { SessionStore.listFootage(context) } catch (e: Exception) { emptyList() }
+                            }
+                        }
+                    }) { Text("Forget") }
+                },
+                dismissButton = { TextButton(onClick = { forgetTarget = null }) { Text("Cancel") } }
+            )
+        }
+
         // ===== the "Find solves may take a while" window =====
         if (showFindConfirm) {
             AlertDialog(
@@ -1128,7 +1277,7 @@ fun EditorScreen() {
                         if (cuts.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "You already have a list of solves. Continuing replaces it, including any edits you made.",
+                                "You already have a saved list of solves for this video. Continuing replaces it, including any edits you made.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
