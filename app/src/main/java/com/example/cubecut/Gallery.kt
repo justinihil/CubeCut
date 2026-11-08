@@ -32,6 +32,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -421,7 +422,7 @@ private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: I
         Badge(timeBadgeText(clip), Color(0xCC000000), modifier = Modifier.align(Alignment.TopEnd).padding(if (columns >= 5) 3.dp else 6.dp))
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (clip.exportOnly) Badge("Video deleted", RED)
+                if (clip.exportOnly) Badge(if (clip.footage.trashedMs > 0) "Raw in trash" else "Raw deleted", RED)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
                 if (!clip.cut.included) Badge("Left out", GREY)
@@ -480,7 +481,7 @@ private fun ClipRow(clip: GalleryClip, openable: Map<Long, Boolean>, onClick: ()
             Text(
                 formatDate(dateOf(clip.footage)) +
                         (if (clip.index >= 0) "  |  Solve ${clip.index + 1} of ${clip.total}" else "") +
-                        (if (clip.exportOnly) "  |  video deleted, exported file" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
+                        (if (clip.exportOnly) (if (clip.footage.trashedMs > 0) "  |  raw footage in trash" else "  |  raw footage deleted") else if (clip.exported != null) "  |  exported" else "  |  not exported") +
                         (if (!clip.cut.included) "  |  left out" else "") +
                         (if (clip.needsCheck) "  |  check" else "") +
                         (if (clip.sharedList.isNotEmpty()) "  |  " + clip.sharedList.joinToString(", ") else ""),
@@ -517,7 +518,7 @@ private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hid
         )
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (f.trashedMs > 0) Badge("In trash", RED) else if (!openable) Badge("Video deleted", RED)
+                if (f.trashedMs > 0) Badge("Raw in trash", RED) else if (!openable) Badge("Raw deleted", RED)
                 if ((stats?.check ?: 0) > 0) Badge("${stats?.check} to check", AMBER, Color.Black)
                 if (f.lastScanMs == 0L && f.cutCount == 0) Badge("Not scanned", GREY)
                 if (hidden) Badge("Hidden in Clips", GREY)
@@ -561,7 +562,7 @@ private fun FootageRow(f: Footage, stats: FootageStats?, openable: Boolean, hidd
                 formatDate(dateOf(f)) + "  |  " + formatTime(f.durationMs) + "  |  ${stats?.solves ?: 0} " + (if (openable) "solves" else "exported") +
                         (if (stats?.best != null) "  |  best ${stats.bestText}" else "") +
                         (if ((stats?.check ?: 0) > 0) "  |  ${stats?.check} to check" else "") +
-                        (if (!openable) "  |  video deleted" else "") +
+                        (if (f.trashedMs > 0) "  |  raw footage in trash" else if (!openable) "  |  raw footage deleted" else "") +
                         (if (hidden) "  |  hidden in Clips" else ""),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2
@@ -1575,12 +1576,15 @@ private fun PlayerOverlay(
     var durationMs by remember { mutableStateOf(0L) }
     var touched by remember { mutableStateOf(0) }       // goes up whenever a control is used, so the 2 second hide timer starts again
     var skipMenu by remember { mutableStateOf(false) }
+    var lastUseMs by remember { mutableStateOf(0L) }       // when a control was last used
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
-                if (isPlaying) onVisibleChange(false)         // as soon as it plays, the controls go away
+                // a clip that starts playing hides the controls at once; but playback also stops and starts again by itself right after a
+                // skip or a seek, and that must not hide them while you are using them
+                if (isPlaying && System.currentTimeMillis() - lastUseMs > 1500L) onVisibleChange(false)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1613,6 +1617,7 @@ private fun PlayerOverlay(
             ) {
                 OverlayIconButton(IconKind.BACK, skipSeconds, false) {
                     player.seekTo(max(0L, player.currentPosition - skipSeconds * 1000L))
+                    lastUseMs = System.currentTimeMillis()
                     touched++
                 }
                 OverlayIconButton(if (playing) IconKind.PAUSE else IconKind.PLAY, 0, true) {
@@ -1622,11 +1627,13 @@ private fun PlayerOverlay(
                         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
                         player.play()
                     }
+                    lastUseMs = System.currentTimeMillis()
                     touched++
                 }
                 OverlayIconButton(IconKind.FORWARD, skipSeconds, false) {
                     val target = player.currentPosition + skipSeconds * 1000L
                     player.seekTo(if (durationMs > 0) min(target, durationMs) else target)
+                    lastUseMs = System.currentTimeMillis()
                     touched++
                 }
             }
@@ -1643,6 +1650,7 @@ private fun PlayerOverlay(
                     onValueChange = {
                         player.seekTo(it.toLong())
                         positionMs = it.toLong()
+                        lastUseMs = System.currentTimeMillis()
                         touched++
                     },
                     valueRange = 0f..top
@@ -1663,14 +1671,14 @@ private fun PlayerOverlay(
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
                                 .background(Color(0x99000000), RoundedCornerShape(12.dp))
-                                .clickable { skipMenu = true; touched++ }
+                                .clickable { skipMenu = true; lastUseMs = System.currentTimeMillis(); touched++ }
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                         DropdownMenu(expanded = skipMenu, onDismissRequest = { skipMenu = false }) {
                             for (s in listOf(1, 2, 3, 5, 10, 15, 30)) {
                                 DropdownMenuItem(
                                     text = { Text(if (s == skipSeconds) "\u2713 $s seconds" else "$s seconds") },
-                                    onClick = { skipMenu = false; onSkipChange(s) }
+                                    onClick = { skipMenu = false; lastUseMs = System.currentTimeMillis(); touched++; onSkipChange(s) }
                                 )
                             }
                         }
@@ -1724,7 +1732,8 @@ fun ClipViewer(
     var exporting by remember { mutableStateOf(false) }
     var confirmReexport by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf(false) }
-    var frameShown by remember { mutableStateOf(false) }        // true once the player has drawn the clip's first picture
+    var loadingKey by remember { mutableStateOf("") }            // the clip that was last handed to the player
+    var renderedKey by remember { mutableStateOf("") }           // the clip whose first picture the player has drawn
 
     fun withScramble(c: GalleryClip): Boolean = scrambleOv[c.listKey] ?: c.cut.includeScramble
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
@@ -1737,6 +1746,11 @@ fun ClipViewer(
             .sortedBy { it.index }
             .map { c -> c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c)) }
 
+    // the clip's still picture covers the player until the player has drawn its own first picture, then fades away
+    val stillAlpha by animateFloatAsState(
+        targetValue = if (renderedKey == current.listKey) 0f else 1f,
+        animationSpec = tween(if (renderedKey == current.listKey) 250 else 0)
+    )
     val sourceOk = openable[footage.id] == true
     val playsExport = current.exportOnly && current.exported != null          // the video is gone: play the exported file instead
     val editable = sourceOk && !current.exportOnly && current.index >= 0
@@ -1749,7 +1763,7 @@ fun ClipViewer(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
-                frameShown = true
+                renderedKey = loadingKey
             }
         }
         player.addListener(listener)
@@ -1758,7 +1772,8 @@ fun ClipViewer(
 
     // load the clip into the player and start it as soon as it is chosen
     LaunchedEffect(current.listKey, window, playsExport) {
-        frameShown = false
+        loadingKey = current.listKey
+        renderedKey = ""
         val exportedFile = current.exported
         if (playsExport && exportedFile != null) {
             player.setMediaItem(MediaItem.fromUri(Uri.parse(exportedFile.uri)))
@@ -1909,15 +1924,17 @@ fun ClipViewer(
                                 factory = { ctx ->
                                     val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
                                     pv.useController = false          // the controls are drawn by CubeCut (PlayerOverlay), not by the player
+                                    pv.setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)    // no black cover while the player starts
+                                    pv.keepContentOnPlayerReset = true
                                     pv.player = player
                                     pv
                                 },
                                 modifier = Modifier.fillMaxSize()
                             )
                             // until the player has drawn its first picture, the clip's own still picture stays in place (no black flash)
-                            if (!frameShown) {
+                            if (stillAlpha > 0.01f) {
                                 Thumb(
-                                    clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize(),
+                                    clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize().alpha(stillAlpha),
                                     ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
                                 )
                             }
