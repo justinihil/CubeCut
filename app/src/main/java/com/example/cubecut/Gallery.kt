@@ -16,14 +16,18 @@
  */
 package com.example.cubecut
 
+import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
@@ -31,6 +35,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -93,7 +98,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -105,8 +118,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items as listItems
@@ -122,9 +137,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.TimeZone
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 // ---------------------------------------------------------------------------------------
 // Version 3: the Gallery. It is the first screen of the app. It shows what the phone remembers (see SessionStore.kt):
@@ -148,6 +165,12 @@ private val AMBER = Color(0xFFFFB74D)
 private val GREY = Color(0xFF757575)
 private val GREEN = Color(0xFF2E7D32)
 private val RED = Color(0xFFC62828)
+
+/** A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). */
+class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean) {
+    val uriString: String get() = footage?.uri ?: export?.uri ?: ""
+    val name: String get() = footage?.title ?: export?.fileName ?: ""
+}
 
 /** What the editor is asked to open: [uri] (null = an empty editor) and optionally the solve to jump to ([seekSec] = its stop time). */
 class EditorRequest(val uri: Uri?, val seekSec: Double? = null)
@@ -485,7 +508,7 @@ private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hid
         )
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (!openable) Badge("Video deleted", RED)
+                if (f.trashedMs > 0) Badge("In trash", RED) else if (!openable) Badge("Video deleted", RED)
                 if ((stats?.check ?: 0) > 0) Badge("${stats?.check} to check", AMBER, Color.Black)
                 if (f.lastScanMs == 0L && f.cutCount == 0) Badge("Not scanned", GREY)
                 if (hidden) Badge("Hidden in Clips", GREY)
@@ -638,6 +661,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var showSort by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showMore by remember { mutableStateOf(false) }
+    var showTrash by remember { mutableStateOf(false) }                  // the "Recently deleted" window
+    var trashData by remember { mutableStateOf<TrashData?>(null) }
+    var pendingTrash by remember { mutableStateOf<PendingTrash?>(null) } // waiting for the system's confirmation
+    var confirmTrashFootage by remember { mutableStateOf<Footage?>(null) }   // our own warning before moving a video to the trash
     var showFilter by remember { mutableStateOf(false) }
     var footageMenu by remember { mutableStateOf<Footage?>(null) }      // the session whose options window is open
     var renaming by remember { mutableStateOf<Footage?>(null) }
@@ -721,6 +748,60 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
 
+    // ---- the phone's trash: Android asks the user to confirm, then tells us the answer ----
+    val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val p = pendingTrash
+        pendingTrash = null
+        if (p != null) {
+            if (result.resultCode == Activity.RESULT_OK) {
+                scope.launch {
+                    val stamp = if (p.trashing) System.currentTimeMillis() else 0L
+                    withContext(Dispatchers.IO) {
+                        try {
+                            if (p.footage != null) SessionStore.setFootageTrashed(context, p.footage.id, stamp)
+                            else if (p.export != null) SessionStore.setExportTrashed(context, p.export.id, stamp)
+                        } catch (e: Exception) {
+                        }
+                    }
+                    message = if (p.trashing) "Moved \"${p.name}\" to trash. You can bring it back from Recently deleted."
+                    else "Restored \"${p.name}\"."
+                    ui.refresh++
+                }
+            } else {
+                message = "Nothing was changed."
+            }
+        }
+    }
+    fun startTrash(p: PendingTrash) {
+        if (Build.VERSION.SDK_INT < 30) {
+            message = "Moving to trash needs Android 11 or newer."
+            return
+        }
+        val media = SessionStore.mediaStoreUriOf(p.uriString)
+        if (media == null) {
+            message = "CubeCut can't move \"${p.name}\" to trash: it was picked from a folder view, and Android only allows the trash for " +
+                    "videos picked from the Videos list of the picker. Delete it in your Files app instead."
+            return
+        }
+        try {
+            val request = MediaStore.createTrashRequest(context.contentResolver, listOf(media), p.trashing)
+            pendingTrash = p
+            trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        } catch (e: Exception) {
+            pendingTrash = null
+            message = "Couldn't ask Android: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    // the Recently deleted list is read again whenever it is open and something changed
+    LaunchedEffect(showTrash, ui.refresh) {
+        if (showTrash) {
+            trashData = withContext(Dispatchers.IO) {
+                try { SessionStore.loadTrash(context) } catch (e: Exception) { null }
+            }
+        }
+    }
+
     val d = data
     val statsById: Map<Long, FootageStats> = remember(d) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
@@ -752,6 +833,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     TextButton(onClick = { showMore = true }) { Text("\u22EE") }
                     DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
                         DropdownMenuItem(text = { Text("Refresh") }, onClick = { showMore = false; ui.refresh++ })
+                        DropdownMenuItem(text = { Text("Recently deleted") }, onClick = { showMore = false; showTrash = true })
                         DropdownMenuItem(text = { Text("Settings") }, onClick = { showMore = false; showSettings = true })
                     }
                 }
@@ -901,6 +983,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 openable = d.openable,
                 stats = statsById,
                 skipSeconds = ui.skipSeconds,
+                onSkipChange = { ui.skipSeconds = it; ui.save() },
                 showHint = !ui.swipeHintSeen,
                 onHintSeen = {
                     if (!ui.swipeHintSeen) {
@@ -926,6 +1009,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ui.hidden = d.footage.map { it.id }.filter { it != f.id }.toSet()
                     ui.save()
                     ui.tab = 0
+                },
+                onTrashExport = { e ->
+                    ui.detail = null
+                    startTrash(PendingTrash(null, e, true))
                 }
             )
         }
@@ -1099,11 +1186,103 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             footageMenu = null
                             onOpenEditor(EditorRequest(Uri.parse(menuFootage.uri), null))
                         }) { Text("Open in editor") }
+                        if (menuFootage.trashedMs > 0) {
+                            TextButton(onClick = { footageMenu = null; startTrash(PendingTrash(menuFootage, null, false)) }) { Text("Restore video from trash") }
+                        } else if (canOpenIt && Build.VERSION.SDK_INT >= 30) {
+                            TextButton(onClick = { footageMenu = null; confirmTrashFootage = menuFootage }) { Text("Move video to trash") }
+                        }
                         TextButton(onClick = { renaming = menuFootage; footageMenu = null }) { Text("Rename") }
                         TextButton(onClick = { forgetting = menuFootage; footageMenu = null }) { Text("Forget this session") }
                     }
                 },
                 confirmButton = { Button(onClick = { footageMenu = null }) { Text("Close") } }
+            )
+        }
+
+        // ===== warning before the original video is moved to the trash =====
+        val trashingFootage = confirmTrashFootage
+        if (trashingFootage != null) {
+            val stats = statsById[trashingFootage.id]
+            AlertDialog(
+                onDismissRequest = { confirmTrashFootage = null },
+                title = { Text("Move the original video to trash?") },
+                text = {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        Text(
+                            "\"${trashingFootage.title}\" (${trashingFootage.displayName}, ${formatTime(trashingFootage.durationMs)}) is the original recording on your phone. " +
+                                    "It will leave your gallery and Files apps. Android asks you to confirm next.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("What happens:", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            "\u2022 Clips you exported stay in the Gallery and keep playing.\n" +
+                                    "\u2022 The ${(stats?.solves ?: 0)} solves you did NOT export disappear from the Gallery until the video is back. " +
+                                    "Their cuts and notes stay saved in CubeCut.\n" +
+                                    "\u2022 You can restore the video from \"Recently deleted\" for about 30 days. After that Android deletes it for good, " +
+                                    "and clips you didn't export can't be made any more.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { confirmTrashFootage = null; startTrash(PendingTrash(trashingFootage, null, true)) }) { Text("Move to trash") }
+                },
+                dismissButton = { TextButton(onClick = { confirmTrashFootage = null }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== Recently deleted: what CubeCut moved to the trash, with a way back =====
+        if (showTrash) {
+            val td = trashData
+            AlertDialog(
+                onDismissRequest = { showTrash = false },
+                title = { Text("Recently deleted") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text(
+                            "Items you moved to trash from CubeCut. Android keeps them for about 30 days and then deletes them for good.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (td == null) {
+                            Text("Loading...", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+                        } else if (td.videos.isEmpty() && td.clips.isEmpty()) {
+                            Text("Nothing here.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+                        } else {
+                            if (td.videos.isNotEmpty()) {
+                                Text("Original videos", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
+                                for (v in td.videos) {
+                                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(v.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Text(
+                                                "Deleted ${formatDate(v.trashedMs)}  |  ${formatTime(v.durationMs)}",
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
+                                        Button(onClick = { startTrash(PendingTrash(v, null, false)) }) { Text("Restore") }
+                                    }
+                                }
+                            }
+                            if (td.clips.isNotEmpty()) {
+                                Text("Exported clips", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
+                                for (t in td.clips) {
+                                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(t.clip.fileName, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            Text(
+                                                "${t.footageTitle}  |  deleted ${formatDate(t.clip.trashedMs)}",
+                                                style = MaterialTheme.typography.labelSmall, maxLines = 2
+                                            )
+                                        }
+                                        Button(onClick = { startTrash(PendingTrash(null, t.clip, false)) }) { Text("Restore") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = { Button(onClick = { showTrash = false }) { Text("Close") } }
             )
         }
 
@@ -1202,15 +1381,18 @@ private fun SocialChip(label: String, on: Boolean, onClick: () -> Unit) {
 
 /**
  * Reacts to a mostly vertical swipe (and only to that: taps and sideways swipes still reach whatever is underneath).
- * [onDrag] gets the finger's vertical movement in pixels (negative = up), [onEnd] is called when the finger lifts.
+ * [shouldStart] is asked once, when a swipe turns out to be vertical, with true = it moves down; answering false lets the swipe go on to
+ * whatever is underneath (for example the sheet's own scrolling). [onDrag] gets the finger's vertical movement in pixels (negative = up),
+ * [onEnd] is called when the finger lifts after a swipe that was taken.
  */
-private fun Modifier.verticalSheetDrag(onDrag: (Float) -> Unit, onEnd: () -> Unit): Modifier = pointerInput(Unit) {
+private fun Modifier.verticalSheetDrag(shouldStart: (Boolean) -> Boolean, onDrag: (Float) -> Unit, onEnd: () -> Unit): Modifier = pointerInput(Unit) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         var totalX = 0f
         var totalY = 0f
         var dragging = false
-        val slop = viewConfiguration.touchSlop
+        var rejected = false
+        val slop = viewConfiguration.touchSlop * 0.6f           // starts a little sooner than a normal scroll
         do {
             val event = awaitPointerEvent(PointerEventPass.Initial)
             val change = event.changes.firstOrNull { it.id == down.id }
@@ -1218,7 +1400,9 @@ private fun Modifier.verticalSheetDrag(onDrag: (Float) -> Unit, onEnd: () -> Uni
             val delta = change.positionChange()
             totalX += delta.x
             totalY += delta.y
-            if (!dragging && Math.abs(totalY) > slop && Math.abs(totalY) > Math.abs(totalX) * 1.5f) dragging = true
+            if (!dragging && !rejected && Math.abs(totalY) > slop && Math.abs(totalY) > Math.abs(totalX) * 1.2f) {
+                if (shouldStart(totalY > 0f)) dragging = true else rejected = true
+            }
             if (dragging) {
                 onDrag(delta.y)
                 change.consume()
@@ -1228,57 +1412,124 @@ private fun Modifier.verticalSheetDrag(onDrag: (Float) -> Unit, onEnd: () -> Uni
     }
 }
 
-/** The first-time hint: a bouncing arrow that says there is more under the picture. */
+/** The first-time hint: an arrow that keeps floating upwards over the picture, to show that a swipe up works anywhere. */
 @Composable
 private fun SwipeUpHint(modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition()
-    val bounce by transition.animateFloat(
+    val travel by transition.animateFloat(
         initialValue = 0f,
-        targetValue = -14f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse)
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1500))
     )
-    Column(modifier.offset(y = bounce.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("\u25B2", color = Color.White, style = MaterialTheme.typography.titleMedium)
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
-            "Swipe up for more",
+            "\u25B2",
+            color = Color.White,
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.offset(y = (50f - 110f * travel).dp).alpha(1f - travel * 0.85f)
+        )
+        Spacer(Modifier.height(70.dp))
+        Text(
+            "Swipe up anywhere for more",
             color = Color.White,
             style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp)
+            modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)
         )
     }
 }
 
+private enum class IconKind { PLAY, PAUSE, BACK, FORWARD }
+
+/** The player's icons, drawn by CubeCut (no icon library needed): play, pause, and the round skip arrows with their seconds inside. */
 @Composable
-private fun OverlayButton(label: String, big: Boolean = false, onClick: () -> Unit) {
-    Text(
-        label,
-        color = Color.White,
-        fontWeight = FontWeight.Bold,
-        style = if (big) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
-        modifier = Modifier
-            .clip(RoundedCornerShape(28.dp))
+private fun PlayerIcon(kind: IconKind, seconds: Int, size: Dp) {
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val w = this.size.width
+            val h = this.size.height
+            when (kind) {
+                IconKind.PLAY -> {
+                    val p = Path().apply {
+                        moveTo(w * 0.30f, h * 0.18f)
+                        lineTo(w * 0.82f, h * 0.50f)
+                        lineTo(w * 0.30f, h * 0.82f)
+                        close()
+                    }
+                    drawPath(p, Color.White)
+                }
+                IconKind.PAUSE -> {
+                    drawRoundRect(Color.White, Offset(w * 0.24f, h * 0.18f), Size(w * 0.18f, h * 0.64f), CornerRadius(w * 0.04f))
+                    drawRoundRect(Color.White, Offset(w * 0.58f, h * 0.18f), Size(w * 0.18f, h * 0.64f), CornerRadius(w * 0.04f))
+                }
+                IconKind.BACK, IconKind.FORWARD -> {
+                    // a nearly closed circle with an arrow head; "forward" is the same picture mirrored
+                    val flip = if (kind == IconKind.FORWARD) -1f else 1f
+                    scale(scaleX = flip, scaleY = 1f, pivot = Offset(w / 2f, h / 2f)) {
+                        val r = w * 0.36f
+                        val cx = w / 2f
+                        val cy = h / 2f
+                        drawArc(
+                            Color.White, startAngle = -60f, sweepAngle = -300f, useCenter = false,
+                            topLeft = Offset(cx - r, cy - r), size = Size(2 * r, 2 * r),
+                            style = Stroke(width = w * 0.075f, cap = StrokeCap.Round)
+                        )
+                        // the arrow head sits where the arc ends (at 3 o'clock) and points up, along the circle
+                        val endX = cx + r
+                        val endY = cy
+                        val head = Path().apply {
+                            moveTo(endX, endY - w * 0.17f)
+                            lineTo(endX - w * 0.13f, endY + w * 0.02f)
+                            lineTo(endX + w * 0.13f, endY + w * 0.02f)
+                            close()
+                        }
+                        drawPath(head, Color.White)
+                    }
+                }
+            }
+        }
+        if (kind == IconKind.BACK || kind == IconKind.FORWARD) {
+            Text("$seconds", color = Color.White, fontSize = (size.value * 0.30f).sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun OverlayIconButton(kind: IconKind, seconds: Int, big: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(50))
             .background(Color(0x99000000))
             .clickable(onClick = onClick)
-            .padding(horizontal = if (big) 28.dp else 18.dp, vertical = if (big) 18.dp else 12.dp)
-    )
+            .padding(if (big) 16.dp else 10.dp)
+    ) {
+        PlayerIcon(kind, seconds, if (big) 44.dp else 34.dp)
+    }
 }
 
 /**
- * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen in Settings) and
- * a seek bar. They hide the moment the clip is playing, a tap on the picture brings them back, and they hide again after 2 seconds.
+ * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen in Settings or with
+ * the small button above the seek bar) and a seek bar. They hide the moment the clip is playing, a tap on the picture brings them back,
+ * and they hide again after 2 seconds. They only come back by themselves when the clip ends.
  */
 @Composable
-private fun PlayerOverlay(player: ExoPlayer, visible: Boolean, onVisibleChange: (Boolean) -> Unit, skipSeconds: Int) {
+private fun PlayerOverlay(
+    player: ExoPlayer, visible: Boolean, onVisibleChange: (Boolean) -> Unit, skipSeconds: Int, onSkipChange: (Int) -> Unit
+) {
     var playing by remember { mutableStateOf(player.isPlaying) }
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
     var touched by remember { mutableStateOf(0) }       // goes up whenever a control is used, so the 2 second hide timer starts again
+    var skipMenu by remember { mutableStateOf(false) }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
-                onVisibleChange(!isPlaying)               // playing: the controls go away at once; paused: they come back
+                if (isPlaying) onVisibleChange(false)         // as soon as it plays, the controls go away
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) onVisibleChange(true)
             }
         }
         player.addListener(listener)
@@ -1291,8 +1542,8 @@ private fun PlayerOverlay(player: ExoPlayer, visible: Boolean, onVisibleChange: 
             delay(100)
         }
     }
-    LaunchedEffect(visible, playing, touched) {
-        if (visible && playing) {
+    LaunchedEffect(visible, playing, touched, skipMenu) {
+        if (visible && playing && !skipMenu) {
             delay(2000)
             onVisibleChange(false)
         }
@@ -1303,13 +1554,13 @@ private fun PlayerOverlay(player: ExoPlayer, visible: Boolean, onVisibleChange: 
             Row(
                 Modifier.align(Alignment.Center),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
+                horizontalArrangement = Arrangement.spacedBy(22.dp)
             ) {
-                OverlayButton("\u2212${skipSeconds}s") {
+                OverlayIconButton(IconKind.BACK, skipSeconds, false) {
                     player.seekTo(max(0L, player.currentPosition - skipSeconds * 1000L))
                     touched++
                 }
-                OverlayButton(if (playing) "Pause" else "Play", big = true) {
+                OverlayIconButton(if (playing) IconKind.PAUSE else IconKind.PLAY, 0, true) {
                     if (player.isPlaying) {
                         player.pause()
                     } else {
@@ -1318,7 +1569,7 @@ private fun PlayerOverlay(player: ExoPlayer, visible: Boolean, onVisibleChange: 
                     }
                     touched++
                 }
-                OverlayButton("+${skipSeconds}s") {
+                OverlayIconButton(IconKind.FORWARD, skipSeconds, false) {
                     val target = player.currentPosition + skipSeconds * 1000L
                     player.seekTo(if (durationMs > 0) min(target, durationMs) else target)
                     touched++
@@ -1341,12 +1592,35 @@ private fun PlayerOverlay(player: ExoPlayer, visible: Boolean, onVisibleChange: 
                     },
                     valueRange = 0f..top
                 )
-                Text(
-                    formatTime(positionMs) + " / " + formatTime(durationMs),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.background(Color(0x66000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        formatTime(positionMs) + " / " + formatTime(durationMs),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.background(Color(0x66000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                    Spacer(Modifier.weight(1f))
+                    // how far the skip buttons jump: tap to choose
+                    Box {
+                        Text(
+                            "Skip ${skipSeconds}s \u25BE",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier
+                                .background(Color(0x99000000), RoundedCornerShape(12.dp))
+                                .clickable { skipMenu = true; touched++ }
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                        DropdownMenu(expanded = skipMenu, onDismissRequest = { skipMenu = false }) {
+                            for (s in listOf(1, 2, 3, 5, 10, 15, 30)) {
+                                DropdownMenuItem(
+                                    text = { Text(if (s == skipSeconds) "\u2713 $s seconds" else "$s seconds") },
+                                    onClick = { skipMenu = false; onSkipChange(s) }
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1360,12 +1634,14 @@ fun ClipViewer(
     openable: Map<Long, Boolean>,
     stats: Map<Long, FootageStats>,
     skipSeconds: Int,
+    onSkipChange: (Int) -> Unit,
     showHint: Boolean,
     onHintSeen: () -> Unit,
     onBack: () -> Unit,
     onOpenEditor: (GalleryClip) -> Unit,
     onReconnect: (Footage) -> Unit,
-    onShowSession: (Footage) -> Unit
+    onShowSession: (Footage) -> Unit,
+    onTrashExport: (ExportedClip) -> Unit
 ) {
     if (list.isEmpty()) return
     val context = LocalContext.current
@@ -1382,7 +1658,6 @@ fun ClipViewer(
     DisposableEffect(Unit) { onDispose { player.release() } }
 
     // changes made here are saved at once and also kept here, because the clip objects themselves never change
-    val includedOv = remember { mutableStateMapOf<String, Boolean>() }
     val scrambleOv = remember { mutableStateMapOf<String, Boolean>() }
     val exportedNow = remember { mutableStateMapOf<String, ExportedClip>() }
     val noteDrafts = remember { mutableStateMapOf<String, String>() }
@@ -1393,15 +1668,18 @@ fun ClipViewer(
     var exportMessage by remember { mutableStateOf("") }
     var exporting by remember { mutableStateOf(false) }
     var confirmReexport by remember { mutableStateOf(false) }
+    var confirmTrash by remember { mutableStateOf(false) }
 
-    fun isOn(c: GalleryClip): Boolean = includedOv[c.listKey] ?: c.cut.included
     fun withScramble(c: GalleryClip): Boolean = scrambleOv[c.listKey] ?: c.cut.includeScramble
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
-    /** All cuts of one session as they are right now (the editor's list, with the changes made here). */
-    fun cutsOf(footageId: Long): List<CutItem> =
-        allClips.filter { it.footage.id == footageId && !it.exportOnly && it.index >= 0 }
+    /**
+     * All cuts of one session as they are right now (the editor's list, with the scramble choices made here). The cut of [clip] itself is
+     * counted as switched on even if it is off in the editor: asking for this clip here is an explicit request for it.
+     */
+    fun cutsFor(clip: GalleryClip): List<CutItem> =
+        allClips.filter { it.footage.id == clip.footage.id && !it.exportOnly && it.index >= 0 }
             .sortedBy { it.index }
-            .map { c -> c.cut.copy(included = isOn(c), includeScramble = withScramble(c)) }
+            .map { c -> c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c)) }
 
     val sourceOk = openable[footage.id] == true
     val playsExport = current.exportOnly && current.exported != null          // the video is gone: play the exported file instead
@@ -1409,7 +1687,7 @@ fun ClipViewer(
     val playable = playsExport || editable
 
     val window: Pair<Double, Double>? = remember(current.listKey, overrideVersion, allClips, sourceOk) {
-        if (editable) clipWindow(current, cutsOf(footage.id)) else null
+        if (editable) clipWindow(current, cutsFor(current)) else null
     }
 
     // load the clip into the player and start it as soon as it is chosen
@@ -1434,6 +1712,8 @@ fun ClipViewer(
     LaunchedEffect(current.listKey) {
         exportMessage = ""
         confirmReexport = false
+        confirmTrash = false
+        controlsVisible = false          // a new clip starts without the controls on top of it
     }
 
     // ---- notes: kept as drafts, saved a moment after typing, when swiping to another clip, and when leaving ----
@@ -1470,24 +1750,36 @@ fun ClipViewer(
     var sheetP by remember { mutableStateOf(0f) }          // 0 = only the handle shows, 1 = fully open
     var settleTo by remember { mutableStateOf(0f) }
     var settleCount by remember { mutableStateOf(0) }
+    var draggedUp by remember { mutableStateOf(true) }     // which way the finger was last moving
+    val sheetScroll = rememberScrollState()
     LaunchedEffect(settleCount) {
         if (settleCount > 0) animate(sheetP, settleTo, animationSpec = tween(220)) { v, _ -> sheetP = v }
     }
-    fun dragSheet(dy: Float) { sheetP = (sheetP - dy / travelPx).coerceIn(0f, 1f) }
-    fun releaseSheet() { settleTo = if (sheetP > 0.35f) 1f else 0f; settleCount++ }
+    // the sheet follows the finger a little faster than the finger moves, and a short swipe is enough to open or close it
+    fun dragSheet(dy: Float) {
+        if (Math.abs(dy) > 0.5f) draggedUp = dy < 0f
+        sheetP = (sheetP - dy * 1.6f / travelPx).coerceIn(0f, 1f)
+    }
+    fun releaseSheet() {
+        settleTo = if (draggedUp) (if (sheetP > 0.08f) 1f else 0f) else (if (sheetP < 0.92f) 0f else 1f)
+        settleCount++
+    }
     fun setSheet(open: Boolean) { settleTo = if (open) 1f else 0f; settleCount++ }
+    // a swipe on the picture: up opens the sheet, down closes it
+    val startOnPicture: (Boolean) -> Boolean = { down -> if (down) sheetP > 0.02f else sheetP < 0.999f }
+    // a swipe on the sheet itself: down closes it (only when its contents are scrolled to the top), up opens it further
+    val startOnSheet: (Boolean) -> Boolean = { down -> if (down) sheetScroll.value == 0 && sheetP > 0.02f else sheetP < 0.999f }
     LaunchedEffect(sheetP > 0.3f) {
         if (sheetP > 0.3f) onHintSeen()
     }
     BackHandler { if (sheetP > 0.5f) setSheet(false) else leave() }
 
-    fun setFlags(c: GalleryClip, on: Boolean, scramble: Boolean) {
-        includedOv[c.listKey] = on
+    fun setScramble(c: GalleryClip, scramble: Boolean) {
         scrambleOv[c.listKey] = scramble
         overrideVersion++
         scope.launch {
             withContext(Dispatchers.IO) {
-                try { SessionStore.updateCutFlags(context, c.footage.id, c.cut.stopSec, on, scramble) } catch (e: Exception) { }
+                try { SessionStore.updateCutScramble(context, c.footage.id, c.cut.stopSec, scramble) } catch (e: Exception) { }
             }
         }
     }
@@ -1497,10 +1789,10 @@ fun ClipViewer(
         if (exporting) return
         val c = current
         val f = c.footage
-        val cuts = cutsOf(f.id)
+        val cuts = cutsFor(c)
         val clip = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0).firstOrNull { it.cutIndex == c.index }
         if (clip == null) {
-            exportMessage = "This solve has no clip right now. Switch \"Include this solve\" on first."
+            exportMessage = "This solve is too close to the one before it to make a clip of its own."
             return
         }
         val cut = cuts.getOrNull(c.index) ?: return
@@ -1534,7 +1826,7 @@ fun ClipViewer(
         Box(
             Modifier
                 .fillMaxSize()
-                .verticalSheetDrag({ dy -> dragSheet(dy) }, { releaseSheet() })
+                .verticalSheetDrag(startOnPicture, { dy -> dragSheet(dy) }, { releaseSheet() })
         ) {
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 val c = list[page]
@@ -1567,7 +1859,7 @@ fun ClipViewer(
                 }
             }
 
-            if (playable) PlayerOverlay(player, controlsVisible, { controlsVisible = it }, skipSeconds)
+            if (playable) PlayerOverlay(player, controlsVisible, { controlsVisible = it }, skipSeconds, onSkipChange)
 
             if (controlsVisible) {
                 Row(
@@ -1592,7 +1884,7 @@ fun ClipViewer(
         }
 
         if (showHint && sheetP < 0.05f && !controlsVisible) {
-            SwipeUpHint(Modifier.align(Alignment.BottomCenter).padding(bottom = 44.dp))
+            SwipeUpHint(Modifier.align(Alignment.Center).padding(top = 120.dp))
         }
 
         // ===== the sheet: switches, note, export, where the clip comes from =====
@@ -1606,12 +1898,11 @@ fun ClipViewer(
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp
         ) {
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().verticalSheetDrag(startOnSheet, { dy -> dragSheet(dy) }, { releaseSheet() })) {
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .height(peekDp)
-                        .verticalSheetDrag({ dy -> dragSheet(dy) }, { releaseSheet() })
                         .pointerInput(Unit) { detectTapGestures(onTap = { setSheet(sheetP < 0.5f) }) },
                     contentAlignment = Alignment.Center
                 ) {
@@ -1626,7 +1917,7 @@ fun ClipViewer(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(sheetScroll)
                         .padding(horizontal = 14.dp)
                         .padding(bottom = 28.dp)
                 ) {
@@ -1646,7 +1937,7 @@ fun ClipViewer(
                     Text(current.title, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         if (exportedFile != null) "Exported as ${exportedFile.fileName} on ${formatDate(exportedFile.exportedMs)}"
-                        else if (isOn(current)) "Not exported yet" else "Switched off (left out of exports)",
+                        else if (current.cut.included) "Not exported yet" else "Not exported yet (switched off in the editor, you can still export it here)",
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (exportedFile != null) GREEN else MaterialTheme.colorScheme.onSurface
                     )
@@ -1663,12 +1954,8 @@ fun ClipViewer(
                     if (editable) {
                         Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Include this solve in exports", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            Switch(checked = isOn(current), onCheckedChange = { setFlags(current, it, withScramble(current)) })
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Include the scramble", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            Switch(checked = withScramble(current), onCheckedChange = { setFlags(current, isOn(current), it) })
+                            Switch(checked = withScramble(current), onCheckedChange = { setScramble(current, it) })
                         }
                         if (window != null) {
                             Text(
@@ -1696,6 +1983,11 @@ fun ClipViewer(
                         if (exportMessage.isNotEmpty()) {
                             Text(exportMessage, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
                         }
+                    }
+
+                    if (exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30) {
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedButton(onClick = { confirmTrash = true }, modifier = Modifier.fillMaxWidth()) { Text("Move the exported clip to trash") }
                     }
 
                     // ===== note and social media buttons =====
@@ -1786,6 +2078,24 @@ fun ClipViewer(
                     }
                 }
             }
+        }
+
+        val trashTarget = exportedFor(current)
+        if (confirmTrash && trashTarget != null) {
+            AlertDialog(
+                onDismissRequest = { confirmTrash = false },
+                title = { Text("Move this exported clip to trash?") },
+                text = {
+                    Text(
+                        "The file ${trashTarget.fileName} (in Movies/CubeCut) goes to your phone's trash and disappears from your gallery apps. " +
+                                "Android shows its own confirmation next. You can bring it back from \"Recently deleted\" in CubeCut " +
+                                "for about 30 days; after that Android deletes it for good.\n\nThe solve itself, its cut and your note stay in CubeCut.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Move to trash") } },
+                dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Cancel") } }
+            )
         }
 
         if (confirmReexport) {

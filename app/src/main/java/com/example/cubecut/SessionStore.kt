@@ -16,6 +16,7 @@
  */
 package com.example.cubecut
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -24,6 +25,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import java.text.DateFormat
 import java.text.SimpleDateFormat
@@ -62,7 +64,8 @@ class Footage(
     val includedCount: Int,       // how many of them are switched on
     val timerFrameMs: Long,       // where in the video the timer was set up (-1 = never)
     val timerCorners: String,     // the four corners marked on that picture (8 numbers, comma separated)
-    val timerTyped: String        // the number that was typed in for it
+    val timerTyped: String,       // the number that was typed in for it
+    val trashedMs: Long           // when CubeCut moved the video to the phone's trash (0 = it is not in the trash)
 )
 
 /** What opening a video gave: its record, and the cuts saved earlier (empty for a video seen for the first time). */
@@ -75,7 +78,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 3
+    private const val DB_VERSION = 4
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -99,7 +102,8 @@ object SessionStore {
                         "scramble_all INTEGER NOT NULL DEFAULT 1, " +
                         "timer_frame_ms INTEGER NOT NULL DEFAULT -1, " +
                         "timer_corners TEXT NOT NULL DEFAULT '', " +
-                        "timer_typed TEXT NOT NULL DEFAULT '')"
+                        "timer_typed TEXT NOT NULL DEFAULT '', " +
+                        "trashed_ms INTEGER NOT NULL DEFAULT 0)"
             )
             db.execSQL(
                 "CREATE TABLE cuts (" +
@@ -126,7 +130,8 @@ object SessionStore {
                         "uri TEXT NOT NULL, " +
                         "file_name TEXT NOT NULL, " +
                         "offset_sec REAL NOT NULL, " +
-                        "exported_ms INTEGER NOT NULL)"
+                        "exported_ms INTEGER NOT NULL, " +
+                        "trashed_ms INTEGER NOT NULL DEFAULT 0)"
             )
             db.execSQL("CREATE INDEX exports_by_footage ON exports(footage_id)")
         }
@@ -142,6 +147,11 @@ object SessionStore {
                 db.execSQL("ALTER TABLE footage ADD COLUMN timer_frame_ms INTEGER NOT NULL DEFAULT -1")
                 db.execSQL("ALTER TABLE footage ADD COLUMN timer_corners TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE footage ADD COLUMN timer_typed TEXT NOT NULL DEFAULT ''")
+            }
+            if (oldVersion < 4) {
+                // version 4: when a video or an exported clip was moved to the phone's trash from CubeCut (0 = not in the trash)
+                db.execSQL("ALTER TABLE footage ADD COLUMN trashed_ms INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE exports ADD COLUMN trashed_ms INTEGER NOT NULL DEFAULT 0")
             }
         }
     }
@@ -291,7 +301,7 @@ object SessionStore {
                 "f.before_pad, f.after_pad, f.scramble_all, " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id), " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id AND c.included = 1), " +
-                "f.timer_frame_ms, f.timer_corners, f.timer_typed " +
+                "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms " +
                 "FROM footage f"
 
     private fun readFootage(c: android.database.Cursor) = Footage(
@@ -299,7 +309,7 @@ object SessionStore {
         durationMs = c.getLong(4), title = c.getString(5), dateTakenMs = c.getLong(6), addedMs = c.getLong(7),
         lastScanMs = c.getLong(8), beforePad = c.getFloat(9), afterPad = c.getFloat(10), scrambleAll = c.getInt(11) == 1,
         cutCount = c.getInt(12), includedCount = c.getInt(13),
-        timerFrameMs = c.getLong(14), timerCorners = c.getString(15), timerTyped = c.getString(16)
+        timerFrameMs = c.getLong(14), timerCorners = c.getString(15), timerTyped = c.getString(16), trashedMs = c.getLong(17)
     )
 
     fun getFootage(context: Context, id: Long): Footage? =
@@ -372,7 +382,7 @@ object SessionStore {
             val sourceOk = canOpen(context, Uri.parse(f.uri))
             openable[f.id] = sourceOk
             val cuts = loadCuts(context, f.id)
-            val exports = loadExports(context, f.id).filter { canOpen(context, Uri.parse(it.uri)) }
+            val exports = loadExports(context, f.id).filter { it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }
             if (sourceOk) {
                 for ((i, c) in cuts.withIndex()) {
                     val e = exports.filter { Math.abs(it.stopSec - c.stopSec) < 0.05 }.maxByOrNull { it.exportedMs }
@@ -399,12 +409,12 @@ object SessionStore {
 
     fun loadExports(context: Context, footageId: Long): List<ExportedClip> =
         db(context).query(
-            "exports", arrayOf("id", "stop_sec", "time_text", "uri", "file_name", "offset_sec", "exported_ms"),
+            "exports", arrayOf("id", "stop_sec", "time_text", "uri", "file_name", "offset_sec", "exported_ms", "trashed_ms"),
             "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
         ).use { c ->
             val out = ArrayList<ExportedClip>()
             while (c.moveToNext()) {
-                out.add(ExportedClip(c.getLong(0), footageId, c.getDouble(1), c.getString(2), c.getString(3), c.getString(4), c.getDouble(5), c.getLong(6)))
+                out.add(ExportedClip(c.getLong(0), footageId, c.getDouble(1), c.getString(2), c.getString(3), c.getString(4), c.getDouble(5), c.getLong(6), c.getLong(7)))
             }
             out
         }
@@ -494,6 +504,70 @@ object SessionStore {
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
+    /** Switches the scramble of one cut on or off (found by its stop time). The editor sees the change. */
+    fun updateCutScramble(context: Context, footageId: Long, stopSec: Double, includeScramble: Boolean) {
+        val v = ContentValues()
+        v.put("include_scramble", if (includeScramble) 1 else 0)
+        db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
+    }
+
+    // ---------------------------------------------------------------- the phone's trash
+
+    /**
+     * The link to a video in Android's media library, which is what the system's "move to trash" request needs. Videos picked from the
+     * file picker's Videos or Images lists (and the clips CubeCut exported) have one; videos picked from a folder view do not (null).
+     */
+    fun mediaStoreUriOf(uriString: String): Uri? {
+        return try {
+            val uri = Uri.parse(uriString)
+            when (uri.authority) {
+                "media" -> uri
+                "com.android.providers.media.documents" -> {
+                    val parts = DocumentsContract.getDocumentId(uri).split(":")
+                    if (parts.size == 2 && parts[0] == "video") ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, parts[1].toLong()) else null
+                }
+                else -> null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Remembers that a session's video was moved to the trash ([trashedMs] > 0) or restored (0). */
+    fun setFootageTrashed(context: Context, footageId: Long, trashedMs: Long) {
+        val v = ContentValues()
+        v.put("trashed_ms", trashedMs)
+        db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
+    }
+
+    /** Remembers that an exported clip was moved to the trash ([trashedMs] > 0) or restored (0). */
+    fun setExportTrashed(context: Context, exportId: Long, trashedMs: Long) {
+        val v = ContentValues()
+        v.put("trashed_ms", trashedMs)
+        db(context).update("exports", v, "id = ?", arrayOf(exportId.toString()))
+    }
+
+    /** Everything CubeCut moved to the trash: raw videos and exported clips. */
+    fun loadTrash(context: Context): TrashData {
+        val d = db(context)
+        val videos = listFootage(context).filter { it.trashedMs > 0 }.sortedByDescending { it.trashedMs }
+        val clips = ArrayList<TrashedExport>()
+        d.rawQuery(
+            "SELECT e.id, e.footage_id, e.stop_sec, e.time_text, e.uri, e.file_name, e.offset_sec, e.exported_ms, e.trashed_ms, f.title " +
+                    "FROM exports e JOIN footage f ON f.id = e.footage_id WHERE e.trashed_ms > 0 ORDER BY e.trashed_ms DESC", null
+        ).use { c ->
+            while (c.moveToNext()) {
+                clips.add(
+                    TrashedExport(
+                        ExportedClip(c.getLong(0), c.getLong(1), c.getDouble(2), c.getString(3), c.getString(4), c.getString(5), c.getDouble(6), c.getLong(7), c.getLong(8)),
+                        c.getString(9)
+                    )
+                )
+            }
+        }
+        return TrashData(videos, clips)
+    }
+
     /** Remembers that Find solves has just run on this session. */
     fun markScanned(context: Context, footageId: Long) {
         val v = ContentValues()
@@ -525,7 +599,8 @@ object SessionStore {
 /** One clip that was exported to a file (Movies/CubeCut): which solve it was, where the file is, and where in it the final time first shows. */
 class ExportedClip(
     val id: Long, val footageId: Long, val stopSec: Double, val timeText: String,
-    val uri: String, val fileName: String, val offsetSec: Double, val exportedMs: Long
+    val uri: String, val fileName: String, val offsetSec: Double, val exportedMs: Long,
+    val trashedMs: Long = 0L          // when it was moved to the phone's trash from CubeCut (0 = not in the trash)
 )
 
 /**
@@ -582,3 +657,9 @@ fun togglePlatform(note: String, platform: String): String {
     val base = note.trimEnd().trimEnd(',').trimEnd()
     return if (base.isEmpty()) platform else "$base, $platform"
 }
+
+/** An exported clip in the trash, with the title of the session it came from. */
+class TrashedExport(val clip: ExportedClip, val footageTitle: String)
+
+/** What CubeCut moved to the phone's trash and can restore. */
+class TrashData(val videos: List<Footage>, val clips: List<TrashedExport>)

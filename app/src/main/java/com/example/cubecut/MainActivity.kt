@@ -392,13 +392,21 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             timerEngine = withContext(Dispatchers.Default) { TimerEngine(restoredSetup, restoredRef) }
                             timerMessage = "Timer setup brought back from the last time this video was open. " + res.message
                             timerDebug = null
+                            status = (openedNote ?: "Ready") + " Timer set up again from your saved setup."
+                        } else {
+                            timerMessage = "Couldn't bring back the saved timer setup (${res.message}). Please set it up again."
+                            status = (openedNote ?: "Ready") + " The saved timer setup couldn't be used: set it up again."
                         }
+                    } else {
+                        timerMessage = "Couldn't bring back the saved timer setup (no picture at that point of the video). Please set it up again."
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // the saved setup couldn't be rebuilt: nothing is lost, the timer just has to be set up again
+                    timerMessage = "Couldn't bring back the saved timer setup: ${e.message ?: e.javaClass.simpleName}. Please set it up again."
                 }
+            } else if (savedSession != null && savedCorners == null && savedSession.timerFrameMs >= 0) {
+                timerMessage = "A timer setup was saved for this video but it couldn't be read. Please set it up again."
             }
         } catch (e: CancellationException) {
             throw e
@@ -1394,9 +1402,17 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             // remember this setup for this video, so it is brought back the next time the session is opened
                             val savedId = footageId
                             if (savedId != null) {
-                                withContext(Dispatchers.IO) {
-                                    try { SessionStore.saveTimerSetup(context, savedId, setupAtMs, corners, typed) } catch (e: Exception) { }
+                                val problem = withContext(Dispatchers.IO) {
+                                    try {
+                                        SessionStore.saveTimerSetup(context, savedId, setupAtMs, corners, typed)
+                                        ""
+                                    } catch (e: Exception) {
+                                        e.message ?: e.javaClass.simpleName
+                                    }
                                 }
+                                timerMessage += if (problem.isEmpty()) "\nThis setup is remembered for this video." else "\nCouldn't remember this setup: $problem"
+                            } else {
+                                timerMessage += "\nThis setup can't be remembered: the video has no saved session yet."
                             }
                         } else {
                             setupMessage = res.message
