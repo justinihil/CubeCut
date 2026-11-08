@@ -1925,7 +1925,7 @@ fun ClipViewer(
                                     val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
                                     pv.useController = false          // the controls are drawn by CubeCut (PlayerOverlay), not by the player
                                     pv.setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)    // no black cover while the player starts
-                                    pv.keepContentOnPlayerReset = true
+                                    pv.setKeepContentOnPlayerReset(true)
                                     pv.player = player
                                     pv
                                 },
