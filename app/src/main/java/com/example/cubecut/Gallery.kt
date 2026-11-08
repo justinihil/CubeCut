@@ -25,10 +25,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +47,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -52,6 +60,8 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -65,7 +75,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -74,6 +86,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -84,12 +97,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -108,6 +124,7 @@ import kotlinx.coroutines.withContext
 import java.util.TimeZone
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 // ---------------------------------------------------------------------------------------
 // Version 3: the Gallery. It is the first screen of the app. It shows what the phone remembers (see SessionStore.kt):
@@ -237,7 +254,10 @@ fun sortFootage(list: List<Footage>, sort: FootageSort, stats: Map<Long, Footage
 class GalleryUiState(private val prefs: SharedPreferences) {
     var tab by mutableStateOf(0)                                  // 0 = Clips, 1 = Footage
     var refresh by mutableStateOf(0)                              // add 1 to load the data again
-    var detail by mutableStateOf<GalleryClip?>(null)              // the clip whose detail screen is open
+    var detail by mutableStateOf<GalleryClip?>(null)              // the clip the viewer was opened on (null = viewer closed)
+    var detailList by mutableStateOf<List<GalleryClip>>(emptyList())   // the clips the viewer can swipe through, in the order shown
+    var skipSeconds by mutableStateOf(prefs.getInt("skip_seconds", 5).coerceIn(1, 60))
+    var swipeHintSeen by mutableStateOf(prefs.getBoolean("swipe_hint_seen", false))
     var openClip by mutableStateOf<Pair<Long, Double>?>(null)     // (session id, stop time) of a clip to open as soon as the data has loaded
     var clipsGrid by mutableStateOf(prefs.getBoolean("clips_grid", true))
     var footageGrid by mutableStateOf(prefs.getBoolean("footage_grid", true))
@@ -250,6 +270,12 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var hidden by mutableStateOf(
         (prefs.getString("hidden", "") ?: "").split(',').mapNotNull { it.toLongOrNull() }.toSet()
     )
+
+    /** Opens the viewer on [clip]; swiping left and right moves through [list]. */
+    fun openViewer(list: List<GalleryClip>, clip: GalleryClip) {
+        detailList = list
+        detail = clip
+    }
 
     val filterActive: Boolean get() = hidden.isNotEmpty() || exportFilter != ExportFilter.ALL
 
@@ -264,6 +290,8 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("footage_sort", footageSort.name)
             .putString("export_filter", exportFilter.name)
             .putString("hidden", hidden.joinToString(","))
+            .putInt("skip_seconds", skipSeconds)
+            .putBoolean("swipe_hint_seen", swipeHintSeen)
             .apply()
     }
 }
@@ -608,6 +636,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var message by remember { mutableStateOf("") }                        // a short notice under the tabs (for example when something failed)
     var showAbout by remember { mutableStateOf(false) }
     var showSort by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var showMore by remember { mutableStateOf(false) }
     var showFilter by remember { mutableStateOf(false) }
     var footageMenu by remember { mutableStateOf<Footage?>(null) }      // the session whose options window is open
     var renaming by remember { mutableStateOf<Footage?>(null) }
@@ -655,7 +685,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 val found = loaded.clips.firstOrNull { it.footage.id == request.first && Math.abs(it.cut.stopSec - request.second) < 0.05 }
                 if (found != null) {
                     ui.tab = 0
-                    ui.detail = found
+                    ui.openViewer(loaded.clips.filter { it.footage.id == found.footage.id }.sortedBy { it.index }, found)
                 }
             }
             // forget filter choices about sessions that no longer exist
@@ -718,7 +748,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                TextButton(onClick = { ui.refresh++ }) { Text("Refresh") }
+                Box {
+                    TextButton(onClick = { showMore = true }) { Text("\u22EE") }
+                    DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
+                        DropdownMenuItem(text = { Text("Refresh") }, onClick = { showMore = false; ui.refresh++ })
+                        DropdownMenuItem(text = { Text("Settings") }, onClick = { showMore = false; showSettings = true })
+                    }
+                }
                 Button(onClick = { relinkFor = null; picker.launch(arrayOf("video/*")) }) { Text("Import video") }
             }
 
@@ -820,11 +856,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             verticalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            gridItems(shown, key = { it.listKey }) { clip -> ClipCell(clip, d.openable, ui.clipsColumns) { ui.detail = clip } }
+                            gridItems(shown, key = { it.listKey }) { clip -> ClipCell(clip, d.openable, ui.clipsColumns) { ui.openViewer(shown, clip) } }
                         }
                     } else {
                         LazyColumn(Modifier.fillMaxSize(), state = clipsListState, contentPadding = PaddingValues(bottom = 8.dp)) {
-                            listItems(shown, key = { it.listKey }) { clip -> ClipRow(clip, d.openable) { ui.detail = clip } }
+                            listItems(shown, key = { it.listKey }) { clip -> ClipRow(clip, d.openable) { ui.openViewer(shown, clip) } }
                         }
                     }
                 } else {
@@ -855,33 +891,70 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             AuthorCreditLine { showAbout = true }
         }
 
-        // ===== clip detail screen, on top of the gallery =====
+        // ===== the clip viewer, on top of the gallery =====
         val detail = ui.detail
         if (detail != null && d != null) {
-            ClipDetailScreen(
-                clip = detail,
-                sessionClips = d.clipsOf(detail.footage.id),
-                openable = d.openable[detail.footage.id] == true,
-                stats = statsById[detail.footage.id],
+            ClipViewer(
+                list = ui.detailList,
+                startKey = detail.listKey,
+                allClips = d.clips,
+                openable = d.openable,
+                stats = statsById,
+                skipSeconds = ui.skipSeconds,
+                showHint = !ui.swipeHintSeen,
+                onHintSeen = {
+                    if (!ui.swipeHintSeen) {
+                        ui.swipeHintSeen = true
+                        ui.save()
+                    }
+                },
                 onBack = {
                     ui.detail = null
-                    ui.refresh++            // pick up the note that may have just been written
+                    ui.refresh++            // pick up what was changed in the viewer (notes, switches, exports)
                 },
-                onOpenEditor = {
+                onOpenEditor = { c ->
                     ui.detail = null
-                    onOpenEditor(EditorRequest(Uri.parse(detail.footage.uri), detail.cut.stopSec))
+                    onOpenEditor(EditorRequest(Uri.parse(c.footage.uri), c.cut.stopSec))
                 },
-                onReconnect = {
-                    relinkFor = detail.footage
+                onReconnect = { f ->
+                    relinkFor = f
                     picker.launch(arrayOf("video/*"))
                 },
-                onShowSession = {
+                onShowSession = { f ->
                     ui.detail = null
                     ui.refresh++
-                    ui.hidden = d.footage.map { it.id }.filter { it != detail.footage.id }.toSet()
+                    ui.hidden = d.footage.map { it.id }.filter { it != f.id }.toSet()
                     ui.save()
                     ui.tab = 0
                 }
+            )
+        }
+
+        // ===== settings =====
+        if (showSettings) {
+            AlertDialog(
+                onDismissRequest = { showSettings = false },
+                title = { Text("Settings") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text("Skip buttons in the clip player jump by", style = MaterialTheme.typography.labelLarge)
+                        Row(
+                            Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            for (s in listOf(1, 2, 3, 5, 10, 15, 30)) {
+                                SocialChip("$s s", ui.skipSeconds == s) { ui.skipSeconds = s; ui.save() }
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        TextButton(onClick = { ui.swipeHintSeen = false; ui.save(); showSettings = false }) {
+                            Text("Show the \"swipe up for more\" hint again")
+                        }
+                    }
+                },
+                confirmButton = { Button(onClick = { showSettings = false }) { Text("Done") } }
             )
         }
 
@@ -1098,17 +1171,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
 }
 
 // ---------------------------------------------------------------------------------------
-// the clip detail screen
+// the clip viewer: the clip fills the screen and plays at once; swipe left or right for the other clips, swipe up for the details
 // ---------------------------------------------------------------------------------------
 
-/** The part of the video this clip would export: the same maths as the export (computeClips), so what you see is what you get. */
-private fun clipWindow(clip: GalleryClip, sessionClips: List<GalleryClip>): Pair<Double, Double> {
+/** The part of the video a clip exports, worked out with the export's own maths (computeClips) from the given cuts. */
+private fun clipWindow(clip: GalleryClip, cuts: List<CutItem>): Pair<Double, Double> {
     val f = clip.footage
     val durSec = f.durationMs / 1000.0
-    val cuts = sessionClips.sortedBy { it.index }.map { it.cut }
     val computed = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), durSec).firstOrNull { it.cutIndex == clip.index }
     if (computed != null) return Pair(computed.startSec, computed.endSec)
-    // a cut that is left out has no exported clip; show the stretch leading up to it instead
+    // a cut that is switched off has no exported clip; show the stretch leading up to it instead
     return Pair(max(0.0, clip.cut.stopSec - 20.0), min(durSec, clip.cut.stopSec + f.afterPad))
 }
 
@@ -1128,232 +1200,607 @@ private fun SocialChip(label: String, on: Boolean, onClick: () -> Unit) {
     )
 }
 
+/**
+ * Reacts to a mostly vertical swipe (and only to that: taps and sideways swipes still reach whatever is underneath).
+ * [onDrag] gets the finger's vertical movement in pixels (negative = up), [onEnd] is called when the finger lifts.
+ */
+private fun Modifier.verticalSheetDrag(onDrag: (Float) -> Unit, onEnd: () -> Unit): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        var totalX = 0f
+        var totalY = 0f
+        var dragging = false
+        val slop = viewConfiguration.touchSlop
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull { it.id == down.id }
+            if (change == null || !change.pressed) break
+            val delta = change.positionChange()
+            totalX += delta.x
+            totalY += delta.y
+            if (!dragging && Math.abs(totalY) > slop && Math.abs(totalY) > Math.abs(totalX) * 1.5f) dragging = true
+            if (dragging) {
+                onDrag(delta.y)
+                change.consume()
+            }
+        } while (event.changes.any { it.pressed })
+        if (dragging) onEnd()
+    }
+}
+
+/** The first-time hint: a bouncing arrow that says there is more under the picture. */
 @Composable
-fun ClipDetailScreen(
-    clip: GalleryClip,
-    sessionClips: List<GalleryClip>,
-    openable: Boolean,
-    stats: FootageStats?,
+private fun SwipeUpHint(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition()
+    val bounce by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = -14f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse)
+    )
+    Column(modifier.offset(y = bounce.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("\u25B2", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Swipe up for more",
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun OverlayButton(label: String, big: Boolean = false, onClick: () -> Unit) {
+    Text(
+        label,
+        color = Color.White,
+        fontWeight = FontWeight.Bold,
+        style = if (big) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
+        modifier = Modifier
+            .clip(RoundedCornerShape(28.dp))
+            .background(Color(0x99000000))
+            .clickable(onClick = onClick)
+            .padding(horizontal = if (big) 28.dp else 18.dp, vertical = if (big) 18.dp else 12.dp)
+    )
+}
+
+/**
+ * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen in Settings) and
+ * a seek bar. They hide the moment the clip is playing, a tap on the picture brings them back, and they hide again after 2 seconds.
+ */
+@Composable
+private fun PlayerOverlay(player: ExoPlayer, visible: Boolean, onVisibleChange: (Boolean) -> Unit, skipSeconds: Int) {
+    var playing by remember { mutableStateOf(player.isPlaying) }
+    var positionMs by remember { mutableStateOf(0L) }
+    var durationMs by remember { mutableStateOf(0L) }
+    var touched by remember { mutableStateOf(0) }       // goes up whenever a control is used, so the 2 second hide timer starts again
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playing = isPlaying
+                onVisibleChange(!isPlaying)               // playing: the controls go away at once; paused: they come back
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+    LaunchedEffect(player) {
+        while (true) {
+            positionMs = max(0L, player.currentPosition)
+            durationMs = max(0L, player.duration)
+            delay(100)
+        }
+    }
+    LaunchedEffect(visible, playing, touched) {
+        if (visible && playing) {
+            delay(2000)
+            onVisibleChange(false)
+        }
+    }
+
+    if (visible) {
+        Box(Modifier.fillMaxSize()) {
+            Row(
+                Modifier.align(Alignment.Center),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                OverlayButton("\u2212${skipSeconds}s") {
+                    player.seekTo(max(0L, player.currentPosition - skipSeconds * 1000L))
+                    touched++
+                }
+                OverlayButton(if (playing) "Pause" else "Play", big = true) {
+                    if (player.isPlaying) {
+                        player.pause()
+                    } else {
+                        if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
+                        player.play()
+                    }
+                    touched++
+                }
+                OverlayButton("+${skipSeconds}s") {
+                    val target = player.currentPosition + skipSeconds * 1000L
+                    player.seekTo(if (durationMs > 0) min(target, durationMs) else target)
+                    touched++
+                }
+            }
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 44.dp)
+            ) {
+                val top = max(1f, durationMs.toFloat())
+                Slider(
+                    value = positionMs.toFloat().coerceIn(0f, top),
+                    onValueChange = {
+                        player.seekTo(it.toLong())
+                        positionMs = it.toLong()
+                        touched++
+                    },
+                    valueRange = 0f..top
+                )
+                Text(
+                    formatTime(positionMs) + " / " + formatTime(durationMs),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.background(Color(0x66000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ClipViewer(
+    list: List<GalleryClip>,
+    startKey: String,
+    allClips: List<GalleryClip>,
+    openable: Map<Long, Boolean>,
+    stats: Map<Long, FootageStats>,
+    skipSeconds: Int,
+    showHint: Boolean,
+    onHintSeen: () -> Unit,
     onBack: () -> Unit,
-    onOpenEditor: () -> Unit,
-    onReconnect: () -> Unit,
-    onShowSession: () -> Unit
+    onOpenEditor: (GalleryClip) -> Unit,
+    onReconnect: (Footage) -> Unit,
+    onShowSession: (Footage) -> Unit
 ) {
+    if (list.isEmpty()) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val footage = clip.footage
-    val exportedFile = clip.exported
-    val playsExport = clip.exportOnly && exportedFile != null          // the video is gone: play the exported file instead
-    val clipPlayer = remember { ExoPlayer.Builder(context).build() }
-    DisposableEffect(Unit) { onDispose { clipPlayer.release() } }
+    val density = LocalDensity.current
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
 
-    val window = remember(clip.listKey, sessionClips) { if (playsExport) Pair(0.0, 0.0) else clipWindow(clip, sessionClips) }
+    val startIndex = remember { max(0, list.indexOfFirst { it.listKey == startKey }) }
+    val pagerState = rememberPagerState(initialPage = startIndex) { list.size }
+    val current = list[pagerState.currentPage.coerceIn(0, list.size - 1)]
+    val footage = current.footage
 
-    // load just this clip into the player (it plays only its own part of the video, or the whole exported file)
-    LaunchedEffect(clip.listKey, openable) {
-        if (playsExport) {
-            clipPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(exportedFile!!.uri)))
-            clipPlayer.prepare()
-            clipPlayer.pause()
-        } else if (openable) {
+    val player = remember { ExoPlayer.Builder(context).build() }
+    DisposableEffect(Unit) { onDispose { player.release() } }
+
+    // changes made here are saved at once and also kept here, because the clip objects themselves never change
+    val includedOv = remember { mutableStateMapOf<String, Boolean>() }
+    val scrambleOv = remember { mutableStateMapOf<String, Boolean>() }
+    val exportedNow = remember { mutableStateMapOf<String, ExportedClip>() }
+    val noteDrafts = remember { mutableStateMapOf<String, String>() }
+    val noteSaved = remember { mutableStateMapOf<String, String>() }
+    var noteVersion by remember { mutableStateOf(0) }
+    var overrideVersion by remember { mutableStateOf(0) }
+    var controlsVisible by remember { mutableStateOf(false) }
+    var exportMessage by remember { mutableStateOf("") }
+    var exporting by remember { mutableStateOf(false) }
+    var confirmReexport by remember { mutableStateOf(false) }
+
+    fun isOn(c: GalleryClip): Boolean = includedOv[c.listKey] ?: c.cut.included
+    fun withScramble(c: GalleryClip): Boolean = scrambleOv[c.listKey] ?: c.cut.includeScramble
+    fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
+    /** All cuts of one session as they are right now (the editor's list, with the changes made here). */
+    fun cutsOf(footageId: Long): List<CutItem> =
+        allClips.filter { it.footage.id == footageId && !it.exportOnly && it.index >= 0 }
+            .sortedBy { it.index }
+            .map { c -> c.cut.copy(included = isOn(c), includeScramble = withScramble(c)) }
+
+    val sourceOk = openable[footage.id] == true
+    val playsExport = current.exportOnly && current.exported != null          // the video is gone: play the exported file instead
+    val editable = sourceOk && !current.exportOnly && current.index >= 0
+    val playable = playsExport || editable
+
+    val window: Pair<Double, Double>? = remember(current.listKey, overrideVersion, allClips, sourceOk) {
+        if (editable) clipWindow(current, cutsOf(footage.id)) else null
+    }
+
+    // load the clip into the player and start it as soon as it is chosen
+    LaunchedEffect(current.listKey, window, playsExport) {
+        val exportedFile = current.exported
+        if (playsExport && exportedFile != null) {
+            player.setMediaItem(MediaItem.fromUri(Uri.parse(exportedFile.uri)))
+            player.prepare()
+            player.playWhenReady = true
+        } else if (window != null) {
             val range = MediaItem.ClippingConfiguration.Builder()
                 .setStartPositionMs((window.first * 1000.0).toLong())
                 .setEndPositionMs((window.second * 1000.0).toLong())
                 .build()
-            clipPlayer.setMediaItem(MediaItem.Builder().setUri(Uri.parse(footage.uri)).setClippingConfiguration(range).build())
-            clipPlayer.prepare()
-            clipPlayer.pause()
+            player.setMediaItem(MediaItem.Builder().setUri(Uri.parse(footage.uri)).setClippingConfiguration(range).build())
+            player.prepare()
+            player.playWhenReady = true
+        } else {
+            player.clearMediaItems()
         }
+    }
+    LaunchedEffect(current.listKey) {
+        exportMessage = ""
+        confirmReexport = false
     }
 
-    // your note (the social media buttons write into it); saved a moment after you stop typing, and when you leave
-    var note by remember(clip.listKey) { mutableStateOf(clip.cut.userNote) }
-    val canSaveNote = clip.index >= 0           // the solve still exists as a cut in its session
-    var savedNote by remember(clip.listKey) { mutableStateOf(clip.cut.userNote) }
-    suspend fun saveNote() {
-        if (canSaveNote && note != savedNote) {
-            val text = note
+    // ---- notes: kept as drafts, saved a moment after typing, when swiping to another clip, and when leaving ----
+    val byKey = remember(list) { list.associateBy { it.listKey } }
+    suspend fun flushNotes() {
+        val pending = noteDrafts.entries
+            .filter { e -> e.value != (noteSaved[e.key] ?: byKey[e.key]?.cut?.userNote ?: "") }
+            .map { e -> e.key to e.value }
+        for ((key, text) in pending) {
+            val c = byKey[key] ?: continue
+            if (c.index < 0) continue
             withContext(Dispatchers.IO) {
-                try { SessionStore.updateCutNote(context, footage.id, clip.cut.stopSec, text) } catch (e: Exception) { }
+                try { SessionStore.updateCutNote(context, c.footage.id, c.cut.stopSec, text) } catch (e: Exception) { }
             }
-            savedNote = text
+            noteSaved[key] = text
         }
     }
-    LaunchedEffect(note) {
+    LaunchedEffect(noteVersion) {
         delay(500)
-        saveNote()
+        flushNotes()
     }
+    LaunchedEffect(pagerState.currentPage) { flushNotes() }
     fun leave() {
         scope.launch {
-            saveNote()
+            flushNotes()
             onBack()
         }
     }
-    BackHandler { leave() }
 
-    val screenHeightDp = LocalConfiguration.current.screenHeightDp
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
+    // ---- the sheet that slides up from the bottom ----
+    val sheetHeightDp = (screenHeightDp * 0.66f).dp
+    val peekDp = 30.dp
+    val travelPx = with(density) { (sheetHeightDp - peekDp).toPx() }
+    var sheetP by remember { mutableStateOf(0f) }          // 0 = only the handle shows, 1 = fully open
+    var settleTo by remember { mutableStateOf(0f) }
+    var settleCount by remember { mutableStateOf(0) }
+    LaunchedEffect(settleCount) {
+        if (settleCount > 0) animate(sheetP, settleTo, animationSpec = tween(220)) { v, _ -> sheetP = v }
+    }
+    fun dragSheet(dy: Float) { sheetP = (sheetP - dy / travelPx).coerceIn(0f, 1f) }
+    fun releaseSheet() { settleTo = if (sheetP > 0.35f) 1f else 0f; settleCount++ }
+    fun setSheet(open: Boolean) { settleTo = if (open) 1f else 0f; settleCount++ }
+    LaunchedEffect(sheetP > 0.3f) {
+        if (sheetP > 0.3f) onHintSeen()
+    }
+    BackHandler { if (sheetP > 0.5f) setSheet(false) else leave() }
+
+    fun setFlags(c: GalleryClip, on: Boolean, scramble: Boolean) {
+        includedOv[c.listKey] = on
+        scrambleOv[c.listKey] = scramble
+        overrideVersion++
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutFlags(context, c.footage.id, c.cut.stopSec, on, scramble) } catch (e: Exception) { }
+            }
+        }
+    }
+
+    // ---- export this one clip (the same maths and rules as the editor's export) ----
+    fun doExport() {
+        if (exporting) return
+        val c = current
+        val f = c.footage
+        val cuts = cutsOf(f.id)
+        val clip = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0).firstOrNull { it.cutIndex == c.index }
+        if (clip == null) {
+            exportMessage = "This solve has no clip right now. Switch \"Include this solve\" on first."
+            return
+        }
+        val cut = cuts.getOrNull(c.index) ?: return
+        exporting = true
+        exportMessage = "Exporting..."
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try { ClipExporter.export(context, Uri.parse(f.uri), listOf(clip)) { _, _ -> } } catch (e: Exception) { null }
+            }
+            if (result == null) {
+                exportMessage = "The export failed."
+            } else {
+                exportMessage = result.message
+                val now = System.currentTimeMillis()
+                val records = result.files.map { ef ->
+                    ExportedClip(0L, f.id, cut.stopSec, cut.timeText, ef.uri, ef.fileName, max(0.0, cut.stopSec - ef.startSec), now)
+                }
+                if (records.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        try { SessionStore.recordExports(context, f.id, records) } catch (e: Exception) { }
+                    }
+                    exportedNow[c.listKey] = records[0]
+                }
+            }
+            exporting = false
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // ===== the picture area: swipe sideways for other clips, up for the details, tap for the controls =====
+        Box(
             Modifier
                 .fillMaxSize()
-                .systemBarsPadding()
-                .padding(8.dp)
+                .verticalSheetDrag({ dy -> dragSheet(dy) }, { releaseSheet() })
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { leave() }) { Text("\u2039 Back") }
-                Text(clip.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-
-            // the clip itself
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height((screenHeightDp * 0.38f).dp)
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                if (openable || playsExport) {
-                    AndroidView(
-                        factory = { ctx ->
-                            val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
-                            pv.player = clipPlayer
-                            pv.useController = true
-                            pv.controllerShowTimeoutMs = 2000        // after a tap the controls show for 2 seconds
-                            pv.hideController()                      // hidden from the start: tap the picture to show them
-                            clipPlayer.addListener(object : Player.Listener {
-                                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                                    if (isPlaying) pv.hideController()   // as soon as it plays, the controls go away
-                                }
-                            })
-                            pv
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Thumb(clipPictureKey(clip), null, 0L, Modifier.fillMaxSize())
-                    Text(
-                        "The video can't be opened right now.",
-                        color = Color.White, style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.background(Color(0xAA000000)).padding(8.dp)
-                    )
-                }
-            }
-
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(top = 8.dp)
-            ) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        if (clip.cut.timeText.isBlank()) "time unknown" else "${clip.cut.timeText} s",
-                        style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        (if (clip.index >= 0) "Solve ${clip.index + 1} of ${clip.total}  |  " else "") +
-                                "at ${formatTime(Math.round(clip.cut.stopSec * 1000.0))} in the video",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                Text(
-                    if (exportedFile != null) "Exported as ${exportedFile.fileName} on ${formatDate(exportedFile.exportedMs)}"
-                    else if (clip.cut.included) "Not exported yet" else "Left out of the export",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (exportedFile != null) GREEN else MaterialTheme.colorScheme.onSurface
-                )
-                if (playsExport) {
-                    Text(
-                        "The original video is gone, so this is the exported file.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                if (clip.needsCheck) {
-                    Text(highlightCheck("check: " + clip.cut.note), style = MaterialTheme.typography.bodyMedium)
-                } else if (clip.cut.note.isNotEmpty()) {
-                    Text(clip.cut.note, style = MaterialTheme.typography.bodySmall)
-                }
-
-                // ===== note and social media buttons =====
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Note", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                    if (canSaveNote) {
-                        TextButton(onClick = { note = "" }, enabled = note.isNotEmpty()) { Text("Clear") }
-                    }
-                }
-                if (canSaveNote) {
-                    OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        placeholder = { Text("Write a note, or press a button below") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(
-                        Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        for (p in SOCIAL_PLATFORMS) {
-                            SocialChip(p, noteMentions(note, p)) { note = togglePlatform(note, p) }
+            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                val c = list[page]
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) { detectTapGestures(onTap = { controlsVisible = !controlsVisible }) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (page == pagerState.currentPage && playable) {
+                        AndroidView(
+                            factory = { ctx ->
+                                val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
+                                pv.useController = false          // the controls are drawn by CubeCut (PlayerOverlay), not by the player
+                                pv.player = player
+                                pv
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Thumb(clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize())
+                        if (page == pagerState.currentPage && !playable) {
+                            Text(
+                                "The video can't be opened right now.",
+                                color = Color.White, style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.background(Color(0xAA000000)).padding(8.dp)
+                            )
                         }
                     }
-                } else {
-                    Text(
-                        "This exported clip no longer matches a solve in the session (its cut was moved or removed), so it can't take a note.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
                 }
+            }
 
-                Spacer(Modifier.height(10.dp))
-                Text("From this video", style = MaterialTheme.typography.labelLarge)
-                Card(
+            if (playable) PlayerOverlay(player, controlsVisible, { controlsVisible = it }, skipSeconds)
+
+            if (controlsVisible) {
+                Row(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .background(Color(0x66000000))
+                        .systemBarsPadding()
+                        .padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { leave() }) { Text("\u2039 Back", color = Color.White) }
+                    Column(Modifier.weight(1f)) {
+                        Text(current.title, color = Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "${pagerState.currentPage + 1} / ${list.size}",
+                            color = Color(0xFFCCCCCC), style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showHint && sheetP < 0.05f && !controlsVisible) {
+            SwipeUpHint(Modifier.align(Alignment.BottomCenter).padding(bottom = 44.dp))
+        }
+
+        // ===== the sheet: switches, note, export, where the clip comes from =====
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(sheetHeightDp)
+                .offset { IntOffset(0, ((1f - sheetP) * travelPx).roundToInt()) },
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Box(
                     Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp)
-                        .clickable(onClick = { scope.launch { saveNote(); onShowSession() } })
+                        .height(peekDp)
+                        .verticalSheetDrag({ dy -> dragSheet(dy) }, { releaseSheet() })
+                        .pointerInput(Unit) { detectTapGestures(onTap = { setSheet(sheetP < 0.5f) }) },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Thumb(
-                            footageThumbKey(footage), if (openable) Uri.parse(footage.uri) else null, footage.durationMs / 10,
-                            Modifier.width(54.dp).aspectRatio(THUMB_ASPECT).clip(RoundedCornerShape(8.dp))
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(footage.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                formatDate(dateOf(footage)) + "  |  " + formatTime(footage.durationMs) + "  |  ${stats?.solves ?: 0} " +
-                                        (if (openable) "solves" else "exported"),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text("File: ${footage.displayName}" + (if (!openable) " (deleted or moved)" else ""),
-                                style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Tap to see only this video's clips", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(10.dp))
-                Button(
-                    onClick = { scope.launch { saveNote(); onOpenEditor() } },
-                    enabled = openable && !playsExport,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Open in editor at this solve") }
-                if (!openable) {
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedButton(onClick = { scope.launch { saveNote(); onReconnect() } }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Reconnect video")
-                    }
-                    Text(
-                        "Your saved cuts are safe. Pick the original session video and every clip of it is back.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 4.dp)
+                    Box(
+                        Modifier
+                            .width(44.dp)
+                            .height(5.dp)
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f), RoundedCornerShape(3.dp))
                     )
                 }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp)
+                        .padding(bottom = 28.dp)
+                ) {
+                    val exportedFile = exportedFor(current)
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            if (current.cut.timeText.isBlank()) "time unknown" else "${current.cut.timeText} s",
+                            style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            (if (current.index >= 0) "Solve ${current.index + 1} of ${current.total}  |  " else "") +
+                                    "at ${formatTime(Math.round(current.cut.stopSec * 1000.0))} in the video",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text(current.title, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        if (exportedFile != null) "Exported as ${exportedFile.fileName} on ${formatDate(exportedFile.exportedMs)}"
+                        else if (isOn(current)) "Not exported yet" else "Switched off (left out of exports)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (exportedFile != null) GREEN else MaterialTheme.colorScheme.onSurface
+                    )
+                    if (playsExport) {
+                        Text("The original video is gone, so this is the exported file.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (current.needsCheck) {
+                        Text(highlightCheck("check: " + current.cut.note), style = MaterialTheme.typography.bodyMedium)
+                    } else if (current.cut.note.isNotEmpty()) {
+                        Text(current.cut.note, style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    // ===== what the clip contains (changes here show up in the editor too) =====
+                    if (editable) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Include this solve in exports", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Switch(checked = isOn(current), onCheckedChange = { setFlags(current, it, withScramble(current)) })
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Include the scramble", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Switch(checked = withScramble(current), onCheckedChange = { setFlags(current, isOn(current), it) })
+                        }
+                        if (window != null) {
+                            Text(
+                                "This clip runs from ${formatTime(Math.round(window.first * 1000.0))} to ${formatTime(Math.round(window.second * 1000.0))} " +
+                                        "(${Math.round(window.second - window.first)} s).",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        if (exportedFile != null) {
+                            Text(
+                                "The file you already exported isn't changed by this; exporting again makes a new file.",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+
+                    // ===== export =====
+                    if (editable) {
+                        Spacer(Modifier.height(10.dp))
+                        Button(
+                            onClick = { if (exportedFile != null) confirmReexport = true else doExport() },
+                            enabled = !exporting,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(if (exporting) "Exporting..." else if (exportedFile != null) "Export this clip again" else "Export this clip") }
+                        if (exportMessage.isNotEmpty()) {
+                            Text(exportMessage, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+
+                    // ===== note and social media buttons =====
+                    Spacer(Modifier.height(10.dp))
+                    val canNote = current.index >= 0
+                    val note = noteDrafts[current.listKey] ?: current.cut.userNote
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Note", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                        if (canNote) {
+                            TextButton(onClick = { noteDrafts[current.listKey] = ""; noteVersion++ }, enabled = note.isNotEmpty()) { Text("Clear") }
+                        }
+                    }
+                    if (canNote) {
+                        OutlinedTextField(
+                            value = note,
+                            onValueChange = { noteDrafts[current.listKey] = it; noteVersion++ },
+                            placeholder = { Text("Write a note, or press a button below") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            for (p in SOCIAL_PLATFORMS) {
+                                SocialChip(p, noteMentions(note, p)) {
+                                    noteDrafts[current.listKey] = togglePlatform(note, p)
+                                    noteVersion++
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            "This exported clip no longer matches a solve in the session (its cut was moved or removed), so it can't take a note.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    // ===== where it comes from =====
+                    Spacer(Modifier.height(10.dp))
+                    Text("From this video", style = MaterialTheme.typography.labelLarge)
+                    Card(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .clickable(onClick = { scope.launch { flushNotes(); onShowSession(footage) } })
+                    ) {
+                        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Thumb(
+                                footageThumbKey(footage), if (sourceOk) Uri.parse(footage.uri) else null, footage.durationMs / 10,
+                                Modifier.width(54.dp).aspectRatio(THUMB_ASPECT).clip(RoundedCornerShape(8.dp))
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(footage.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    formatDate(dateOf(footage)) + "  |  " + formatTime(footage.durationMs) + "  |  ${stats[footage.id]?.solves ?: 0} " +
+                                            (if (sourceOk) "solves" else "exported"),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    "File: ${footage.displayName}" + (if (!sourceOk) " (deleted or moved)" else ""),
+                                    style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Text("Tap to see only this video's clips", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = { scope.launch { flushNotes(); onOpenEditor(current) } },
+                        enabled = editable,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Open in editor at this solve") }
+                    if (!sourceOk) {
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedButton(
+                            onClick = { scope.launch { flushNotes(); onReconnect(footage) } },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Reconnect video") }
+                        Text(
+                            "Your saved cuts are safe. Pick the original session video and every clip of it is back.",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
             }
+        }
+
+        if (confirmReexport) {
+            AlertDialog(
+                onDismissRequest = { confirmReexport = false },
+                title = { Text("Export again?") },
+                text = {
+                    Text(
+                        "This solve was already exported. Exporting again makes a second file in Movies/CubeCut (the first one stays).",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = { Button(onClick = { confirmReexport = false; doExport() }) { Text("Export again") } },
+                dismissButton = { TextButton(onClick = { confirmReexport = false }) { Text("Cancel") } }
+            )
         }
     }
 }

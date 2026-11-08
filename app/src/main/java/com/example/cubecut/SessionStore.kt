@@ -59,7 +59,10 @@ class Footage(
     val afterPad: Float,
     val scrambleAll: Boolean,
     val cutCount: Int,            // how many cuts are saved for it
-    val includedCount: Int        // how many of them are switched on
+    val includedCount: Int,       // how many of them are switched on
+    val timerFrameMs: Long,       // where in the video the timer was set up (-1 = never)
+    val timerCorners: String,     // the four corners marked on that picture (8 numbers, comma separated)
+    val timerTyped: String        // the number that was typed in for it
 )
 
 /** What opening a video gave: its record, and the cuts saved earlier (empty for a video seen for the first time). */
@@ -72,7 +75,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 2
+    private const val DB_VERSION = 3
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -93,7 +96,10 @@ object SessionStore {
                         "last_scan_ms INTEGER NOT NULL DEFAULT 0, " +
                         "before_pad REAL NOT NULL DEFAULT 2.5, " +
                         "after_pad REAL NOT NULL DEFAULT 2.5, " +
-                        "scramble_all INTEGER NOT NULL DEFAULT 1)"
+                        "scramble_all INTEGER NOT NULL DEFAULT 1, " +
+                        "timer_frame_ms INTEGER NOT NULL DEFAULT -1, " +
+                        "timer_corners TEXT NOT NULL DEFAULT '', " +
+                        "timer_typed TEXT NOT NULL DEFAULT '')"
             )
             db.execSQL(
                 "CREATE TABLE cuts (" +
@@ -130,6 +136,12 @@ object SessionStore {
                 // version 2: your own note per cut, and a record of every exported clip
                 db.execSQL("ALTER TABLE cuts ADD COLUMN user_note TEXT NOT NULL DEFAULT ''")
                 createExportsTable(db)
+            }
+            if (oldVersion < 3) {
+                // version 3: where the timer was set up on this video (so it doesn't have to be set up again)
+                db.execSQL("ALTER TABLE footage ADD COLUMN timer_frame_ms INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE footage ADD COLUMN timer_corners TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE footage ADD COLUMN timer_typed TEXT NOT NULL DEFAULT ''")
             }
         }
     }
@@ -278,14 +290,16 @@ object SessionStore {
         "SELECT f.id, f.uri, f.display_name, f.size_bytes, f.duration_ms, f.title, f.date_taken_ms, f.added_ms, f.last_scan_ms, " +
                 "f.before_pad, f.after_pad, f.scramble_all, " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id), " +
-                "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id AND c.included = 1) " +
+                "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id AND c.included = 1), " +
+                "f.timer_frame_ms, f.timer_corners, f.timer_typed " +
                 "FROM footage f"
 
     private fun readFootage(c: android.database.Cursor) = Footage(
         id = c.getLong(0), uri = c.getString(1), displayName = c.getString(2), sizeBytes = c.getLong(3),
         durationMs = c.getLong(4), title = c.getString(5), dateTakenMs = c.getLong(6), addedMs = c.getLong(7),
         lastScanMs = c.getLong(8), beforePad = c.getFloat(9), afterPad = c.getFloat(10), scrambleAll = c.getInt(11) == 1,
-        cutCount = c.getInt(12), includedCount = c.getInt(13)
+        cutCount = c.getInt(12), includedCount = c.getInt(13),
+        timerFrameMs = c.getLong(14), timerCorners = c.getString(15), timerTyped = c.getString(16)
     )
 
     fun getFootage(context: Context, id: Long): Footage? =
@@ -454,6 +468,30 @@ object SessionStore {
         val v = ContentValues()
         v.put("title", t)
         db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
+    }
+
+    /** Remembers where the timer was set up on this video: the picture (its time in the video), the four corners and the typed number. */
+    fun saveTimerSetup(context: Context, footageId: Long, frameMs: Long, corners: DoubleArray, typed: String) {
+        val v = ContentValues()
+        v.put("timer_frame_ms", frameMs)
+        v.put("timer_corners", corners.joinToString(","))
+        v.put("timer_typed", typed)
+        db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
+    }
+
+    /** The remembered timer corners (8 numbers), or null if none were saved. */
+    fun timerCornersOf(f: Footage): DoubleArray? {
+        if (f.timerFrameMs < 0 || f.timerTyped.isEmpty()) return null
+        val parts = f.timerCorners.split(',').mapNotNull { it.trim().toDoubleOrNull() }
+        return if (parts.size == 8) parts.toDoubleArray() else null
+    }
+
+    /** Switches one cut on or off, and with or without its scramble (found by its stop time). Used by the Gallery; the editor sees the change. */
+    fun updateCutFlags(context: Context, footageId: Long, stopSec: Double, included: Boolean, includeScramble: Boolean) {
+        val v = ContentValues()
+        v.put("included", if (included) 1 else 0)
+        v.put("include_scramble", if (includeScramble) 1 else 0)
+        db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
     /** Remembers that Find solves has just run on this session. */

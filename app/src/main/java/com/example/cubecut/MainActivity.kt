@@ -261,6 +261,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
     var timerDebug by remember { mutableStateOf<Bitmap?>(null) }
     var setupFrame by remember { mutableStateOf<Bitmap?>(null) }
+    var setupAtMs by remember { mutableStateOf(0L) }                    // where in the video the setup picture was taken (saved with the session)
     var setupBusy by remember { mutableStateOf(false) }
     var setupMessage by remember { mutableStateOf("") }
 
@@ -376,6 +377,29 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 positionMs = ms
                 scrollToSelected = true
             }
+
+            // the timer was set up on this video before: set it up again from the saved corners, so Find solves is ready
+            val savedSession = opened?.footage
+            val savedCorners = if (savedSession != null) SessionStore.timerCornersOf(savedSession) else null
+            if (savedSession != null && savedCorners != null && timerEngine == null) {
+                try {
+                    val frame = withContext(Dispatchers.IO) { grabFrame(context, uri, savedSession.timerFrameMs) }
+                    if (frame != null) {
+                        val res = withContext(Dispatchers.Default) { TimerVision.createSetup(frame, savedCorners, savedSession.timerTyped) }
+                        val restoredSetup = res.setup
+                        val restoredRef = res.reference
+                        if (restoredSetup != null && restoredRef != null) {
+                            timerEngine = withContext(Dispatchers.Default) { TimerEngine(restoredSetup, restoredRef) }
+                            timerMessage = "Timer setup brought back from the last time this video was open. " + res.message
+                            timerDebug = null
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // the saved setup couldn't be rebuilt: nothing is lost, the timer just has to be set up again
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -433,6 +457,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 val bmp = withContext(Dispatchers.IO) { grabFrame(context, uri, atMs) }
                 if (bmp != null) {
                     setupMessage = ""
+                    setupAtMs = atMs
                     setupFrame = bmp
                 } else {
                     timerMessage = "Couldn't grab a picture from the video here"
@@ -1366,6 +1391,13 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             timerMessage = res.message + zeroWarning
                             timerDebug = null
                             setupFrame = null
+                            // remember this setup for this video, so it is brought back the next time the session is opened
+                            val savedId = footageId
+                            if (savedId != null) {
+                                withContext(Dispatchers.IO) {
+                                    try { SessionStore.saveTimerSetup(context, savedId, setupAtMs, corners, typed) } catch (e: Exception) { }
+                                }
+                            }
                         } else {
                             setupMessage = res.message
                         }
