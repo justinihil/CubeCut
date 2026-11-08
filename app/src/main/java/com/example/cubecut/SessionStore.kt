@@ -379,7 +379,8 @@ object SessionStore {
         val clips = ArrayList<GalleryClip>()
         val openable = HashMap<Long, Boolean>()
         for (f in footage) {
-            val sourceOk = canOpen(context, Uri.parse(f.uri))
+            // a video CubeCut moved to the trash still answers when asked to open, so the trash flag decides, not the answer
+            val sourceOk = f.trashedMs == 0L && canOpen(context, Uri.parse(f.uri))
             openable[f.id] = sourceOk
             val cuts = loadCuts(context, f.id)
             val exports = loadExports(context, f.id).filter { it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }

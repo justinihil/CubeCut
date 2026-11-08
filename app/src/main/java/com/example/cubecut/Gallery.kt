@@ -104,11 +104,14 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
@@ -157,6 +160,9 @@ import kotlin.math.sin
 
 /** How tall a picture cell is compared to its width (3 wide : 4 tall). Change this one number to reshape the whole grid. */
 private const val THUMB_ASPECT = 0.75f
+
+/** The height in pixels of the still pictures shown in the full-screen viewer while swiping (bigger than the grid's). */
+private const val VIEWER_PICTURE_HEIGHT = 900
 
 private const val MIN_COLUMNS = 2
 private const val MAX_COLUMNS = 6
@@ -332,9 +338,10 @@ private fun Context.findActivity(): ComponentActivity? {
 /**
  * Pinch with two fingers to change the number of grid columns: fingers apart = bigger pictures (fewer columns), fingers together =
  * smaller pictures (more columns). It only reacts to two fingers; one finger still scrolls and taps as usual.
- * [onStep] is called with -1 (fewer columns) or +1 (more columns) each time the fingers have moved far enough.
+ * [onStep] is called with -1 (fewer columns) or +1 (more columns) each time the fingers have moved far enough. [onScale] follows the
+ * fingers (1 = no change) so the grid can grow or shrink under them, and [onEnd] is called when they lift.
  */
-private fun Modifier.pinchColumns(onStep: (Int) -> Unit): Modifier = pointerInput(Unit) {
+private fun Modifier.pinchColumns(onStep: (Int) -> Unit, onScale: (Float) -> Unit, onEnd: () -> Unit): Modifier = pointerInput(Unit) {
     awaitEachGesture {
         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         var lastDistance = 0f
@@ -353,6 +360,7 @@ private fun Modifier.pinchColumns(onStep: (Int) -> Unit): Modifier = pointerInpu
                         onStep(1)
                         accumulated = 1f
                     }
+                    onScale(accumulated.coerceIn(0.8f, 1.25f))
                 }
                 lastDistance = distance
                 event.changes.forEach { it.consume() }
@@ -361,6 +369,7 @@ private fun Modifier.pinchColumns(onStep: (Int) -> Unit): Modifier = pointerInpu
                 accumulated = 1f
             }
         } while (event.changes.any { it.pressed })
+        onEnd()
     }
 }
 
@@ -399,9 +408,9 @@ private fun clipPictureMs(clip: GalleryClip): Long =
 
 /** One solve as a picture, with its time at the upper right. [columns] tells how crowded the grid is, so small cells show less text. */
 @Composable
-private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: Int, onClick: () -> Unit) {
+private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: Int, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .aspectRatio(THUMB_ASPECT)
             .clip(RoundedCornerShape(10.dp))
@@ -492,9 +501,9 @@ private fun ClipRow(clip: GalleryClip, openable: Map<Long, Boolean>, onClick: ()
 private fun footageThumbKey(f: Footage): String = "f_${f.id}"
 
 @Composable
-private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, onClick: () -> Unit) {
+private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .aspectRatio(THUMB_ASPECT)
             .clip(RoundedCornerShape(10.dp))
@@ -683,6 +692,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
         activity?.lifecycle?.addObserver(observer)
         onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
+
+    // the two tabs are pages you can swipe between (tapping a tab moves the pager, swiping the pager moves the tab)
+    val tabPager = rememberPagerState(initialPage = ui.tab) { 2 }
+    LaunchedEffect(ui.tab) { if (tabPager.currentPage != ui.tab) tabPager.animateScrollToPage(ui.tab) }
+    LaunchedEffect(tabPager.currentPage) { if (ui.tab != tabPager.currentPage) ui.tab = tabPager.currentPage }
+
+    // pinching: the grid grows or shrinks under the fingers, then springs back as the columns change
+    var pinchScale by remember { mutableStateOf(1f) }
+    var pinchEnd by remember { mutableStateOf(0) }
+    LaunchedEffect(pinchEnd) {
+        if (pinchEnd > 0) animate(pinchScale, 1f, animationSpec = tween(180)) { v, _ -> pinchScale = v }
     }
 
     // scroll positions of the four lists (they jump back to the top whenever the order or the filter changes)
@@ -884,86 +905,92 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 }
             }
 
-            // ===== the content =====
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .pinchColumns { step ->
-                        if (ui.tab == 0 && ui.clipsGrid) {
-                            ui.clipsColumns = (ui.clipsColumns + step).coerceIn(MIN_COLUMNS, MAX_COLUMNS)
-                            ui.save()
-                        } else if (ui.tab == 1 && ui.footageGrid) {
-                            ui.footageColumns = (ui.footageColumns + step).coerceIn(MIN_COLUMNS, MAX_COLUMNS)
-                            ui.save()
-                        }
-                    }
-            ) {
-                if (loadError.isNotEmpty()) {
-                    Text(loadError, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
-                } else if (d == null) {
-                    Text("Loading...", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
-                } else if (d.footage.isEmpty()) {
-                    Text(
-                        "Nothing here yet.\n\nTap Import video, set up the timer and press Find solves. Every session you scan is kept here, " +
-                                "with all its solves, the next time you open CubeCut.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(12.dp)
-                    )
-                } else if (ui.tab == 0) {
-                    val shown = remember(d, ui.hidden, ui.exportFilter, ui.clipKeys) {
-                        sortClips(
-                            d.clips.filter { c ->
-                                c.footage.id !in ui.hidden && when (ui.exportFilter) {
-                                    ExportFilter.ALL -> true
-                                    ExportFilter.EXPORTED -> c.exported != null
-                                    ExportFilter.NOT_EXPORTED -> c.exported == null
+            // ===== the content: two pages (Clips, Footage) you can swipe between =====
+            HorizontalPager(state = tabPager, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pinchColumns(
+                            { step ->
+                                if (page == 0 && ui.clipsGrid) {
+                                    ui.clipsColumns = (ui.clipsColumns + step).coerceIn(MIN_COLUMNS, MAX_COLUMNS)
+                                    ui.save()
+                                } else if (page == 1 && ui.footageGrid) {
+                                    ui.footageColumns = (ui.footageColumns + step).coerceIn(MIN_COLUMNS, MAX_COLUMNS)
+                                    ui.save()
                                 }
                             },
-                            ui.clipKeys
+                            { scale -> pinchScale = scale },
+                            { pinchEnd++ }
                         )
-                    }
-                    if (shown.isEmpty()) {
+                        .graphicsLayer { scaleX = pinchScale; scaleY = pinchScale }
+                ) {
+                    if (loadError.isNotEmpty()) {
+                        Text(loadError, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
+                    } else if (d == null) {
+                        Text("Loading...", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
+                    } else if (d.footage.isEmpty()) {
                         Text(
-                            if (ui.filterActive) "No clips match the filter. Tap Filter to change it."
-                            else "No clips yet. Open a session in the editor and press Find solves.",
-                            style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp)
+                            "Nothing here yet.\n\nTap Import video, set up the timer and press Find solves. Every session you scan is kept here, " +
+                                    "with all its solves, the next time you open CubeCut.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(12.dp)
                         )
-                    } else if (ui.clipsGrid) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(ui.clipsColumns),
-                            state = clipsGridState,
-                            contentPadding = PaddingValues(bottom = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            gridItems(shown, key = { it.listKey }) { clip -> ClipCell(clip, d.openable, ui.clipsColumns) { ui.openViewer(shown, clip) } }
+                    } else if (page == 0) {
+                        val shown = remember(d, ui.hidden, ui.exportFilter, ui.clipKeys) {
+                            sortClips(
+                                d.clips.filter { c ->
+                                    c.footage.id !in ui.hidden && when (ui.exportFilter) {
+                                        ExportFilter.ALL -> true
+                                        ExportFilter.EXPORTED -> c.exported != null
+                                        ExportFilter.NOT_EXPORTED -> c.exported == null
+                                    }
+                                },
+                                ui.clipKeys
+                            )
                         }
-                    } else {
-                        LazyColumn(Modifier.fillMaxSize(), state = clipsListState, contentPadding = PaddingValues(bottom = 8.dp)) {
-                            listItems(shown, key = { it.listKey }) { clip -> ClipRow(clip, d.openable) { ui.openViewer(shown, clip) } }
-                        }
-                    }
-                } else {
-                    val shown = remember(d, ui.footageSort) { sortFootage(d.footage, ui.footageSort, statsById) }
-                    if (ui.footageGrid) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(ui.footageColumns),
-                            state = footageGridState,
-                            contentPadding = PaddingValues(bottom = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (ui.footageColumns >= 5) 4.dp else 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(if (ui.footageColumns >= 5) 4.dp else 8.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            gridItems(shown, key = { it.id }) { f ->
-                                FootageCell(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns) { footageMenu = f }
+                        if (shown.isEmpty()) {
+                            Text(
+                                if (ui.filterActive) "No clips match the filter. Tap Filter to change it."
+                                else "No clips yet. Open a session in the editor and press Find solves.",
+                                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp)
+                            )
+                        } else if (ui.clipsGrid) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(ui.clipsColumns),
+                                state = clipsGridState,
+                                contentPadding = PaddingValues(bottom = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                gridItems(shown, key = { it.listKey }) { clip -> ClipCell(clip, d.openable, ui.clipsColumns, Modifier.animateItem()) { ui.openViewer(shown, clip) } }
+                            }
+                        } else {
+                            LazyColumn(Modifier.fillMaxSize(), state = clipsListState, contentPadding = PaddingValues(bottom = 8.dp)) {
+                                listItems(shown, key = { it.listKey }) { clip -> ClipRow(clip, d.openable) { ui.openViewer(shown, clip) } }
                             }
                         }
                     } else {
-                        LazyColumn(Modifier.fillMaxSize(), state = footageListState, contentPadding = PaddingValues(bottom = 8.dp)) {
-                            listItems(shown, key = { it.id }) { f ->
-                                FootageRow(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden) { footageMenu = f }
+                        val shown = remember(d, ui.footageSort) { sortFootage(d.footage, ui.footageSort, statsById) }
+                        if (ui.footageGrid) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(ui.footageColumns),
+                                state = footageGridState,
+                                contentPadding = PaddingValues(bottom = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(if (ui.footageColumns >= 5) 4.dp else 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(if (ui.footageColumns >= 5) 4.dp else 8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                gridItems(shown, key = { it.id }) { f ->
+                                    FootageCell(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns, Modifier.animateItem()) { footageMenu = f }
+                                }
+                            }
+                        } else {
+                            LazyColumn(Modifier.fillMaxSize(), state = footageListState, contentPadding = PaddingValues(bottom = 8.dp)) {
+                                listItems(shown, key = { it.id }) { f ->
+                                    FootageRow(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden) { footageMenu = f }
+                                }
                             }
                         }
                     }
@@ -1024,18 +1051,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 title = { Text("Settings") },
                 text = {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
-                        Text("Skip buttons in the clip player jump by", style = MaterialTheme.typography.labelLarge)
-                        Row(
-                            Modifier
-                                .horizontalScroll(rememberScrollState())
-                                .padding(top = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            for (s in listOf(1, 2, 3, 5, 10, 15, 30)) {
-                                SocialChip("$s s", ui.skipSeconds == s) { ui.skipSeconds = s; ui.save() }
-                            }
-                        }
-                        Spacer(Modifier.height(14.dp))
                         TextButton(onClick = { ui.swipeHintSeen = false; ui.save(); showSettings = false }) {
                             Text("Show the \"swipe up for more\" hint again")
                         }
@@ -1241,7 +1256,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 text = {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                         Text(
-                            "Items you moved to trash from CubeCut. Android keeps them for about 30 days and then deletes them for good.",
+                            "Items you moved to trash from CubeCut. Android keeps them for about 30 days and then deletes them for good. " +
+                                    "If you already restored one in another app, tap \"Already restored\" to clear it from this list.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         if (td == null) {
@@ -1260,7 +1276,15 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                                 style = MaterialTheme.typography.labelSmall
                                             )
                                         }
-                                        Button(onClick = { startTrash(PendingTrash(v, null, false)) }) { Text("Restore") }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Button(onClick = { startTrash(PendingTrash(v, null, false)) }) { Text("Restore") }
+                                            TextButton(onClick = {
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) { try { SessionStore.setFootageTrashed(context, v.id, 0L) } catch (e: Exception) { } }
+                                                    ui.refresh++
+                                                }
+                                            }) { Text("Already restored", style = MaterialTheme.typography.labelSmall) }
+                                        }
                                     }
                                 }
                             }
@@ -1275,7 +1299,15 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                                 style = MaterialTheme.typography.labelSmall, maxLines = 2
                                             )
                                         }
-                                        Button(onClick = { startTrash(PendingTrash(null, t.clip, false)) }) { Text("Restore") }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Button(onClick = { startTrash(PendingTrash(null, t.clip, false)) }) { Text("Restore") }
+                                            TextButton(onClick = {
+                                                scope.launch {
+                                                    withContext(Dispatchers.IO) { try { SessionStore.setExportTrashed(context, t.clip.id, 0L) } catch (e: Exception) { } }
+                                                    ui.refresh++
+                                                }
+                                            }) { Text("Already restored", style = MaterialTheme.typography.labelSmall) }
+                                        }
                                     }
                                 }
                             }
@@ -1438,6 +1470,29 @@ private fun SwipeUpHint(modifier: Modifier = Modifier) {
     }
 }
 
+/** A small trash can, drawn by CubeCut. */
+@Composable
+private fun TrashIcon(color: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val sw = w * 0.085f
+        drawLine(color, Offset(w * 0.16f, h * 0.28f), Offset(w * 0.84f, h * 0.28f), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, Offset(w * 0.38f, h * 0.16f), Offset(w * 0.62f, h * 0.16f), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, Offset(w * 0.38f, h * 0.16f), Offset(w * 0.38f, h * 0.28f), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, Offset(w * 0.62f, h * 0.16f), Offset(w * 0.62f, h * 0.28f), strokeWidth = sw, cap = StrokeCap.Round)
+        val body = Path().apply {
+            moveTo(w * 0.24f, h * 0.36f)
+            lineTo(w * 0.31f, h * 0.88f)
+            lineTo(w * 0.69f, h * 0.88f)
+            lineTo(w * 0.76f, h * 0.36f)
+        }
+        drawPath(body, color, style = Stroke(width = sw, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawLine(color, Offset(w * 0.42f, h * 0.48f), Offset(w * 0.44f, h * 0.76f), strokeWidth = sw * 0.8f, cap = StrokeCap.Round)
+        drawLine(color, Offset(w * 0.58f, h * 0.48f), Offset(w * 0.56f, h * 0.76f), strokeWidth = sw * 0.8f, cap = StrokeCap.Round)
+    }
+}
+
 private enum class IconKind { PLAY, PAUSE, BACK, FORWARD }
 
 /** The player's icons, drawn by CubeCut (no icon library needed): play, pause, and the round skip arrows with their seconds inside. */
@@ -1508,8 +1563,8 @@ private fun OverlayIconButton(kind: IconKind, seconds: Int, big: Boolean, onClic
 
 /**
  * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen in Settings or with
- * the small button above the seek bar) and a seek bar. They hide the moment the clip is playing, a tap on the picture brings them back,
- * and they hide again after 2 seconds. They only come back by themselves when the clip ends.
+ * the small button above the seek bar) and a seek bar. They hide the moment the clip starts playing, a tap on the picture brings them back,
+ * and they hide again 4 seconds after the last tap or skip. They only come back by themselves when the clip ends.
  */
 @Composable
 private fun PlayerOverlay(
@@ -1544,7 +1599,7 @@ private fun PlayerOverlay(
     }
     LaunchedEffect(visible, playing, touched, skipMenu) {
         if (visible && playing && !skipMenu) {
-            delay(2000)
+            delay(4000)                                   // after the last tap or skip; not right away
             onVisibleChange(false)
         }
     }
@@ -1669,6 +1724,7 @@ fun ClipViewer(
     var exporting by remember { mutableStateOf(false) }
     var confirmReexport by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf(false) }
+    var frameShown by remember { mutableStateOf(false) }        // true once the player has drawn the clip's first picture
 
     fun withScramble(c: GalleryClip): Boolean = scrambleOv[c.listKey] ?: c.cut.includeScramble
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
@@ -1690,8 +1746,19 @@ fun ClipViewer(
         if (editable) clipWindow(current, cutsFor(current)) else null
     }
 
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                frameShown = true
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
     // load the clip into the player and start it as soon as it is chosen
     LaunchedEffect(current.listKey, window, playsExport) {
+        frameShown = false
         val exportedFile = current.exported
         if (playsExport && exportedFile != null) {
             player.setMediaItem(MediaItem.fromUri(Uri.parse(exportedFile.uri)))
@@ -1837,17 +1904,29 @@ fun ClipViewer(
                     contentAlignment = Alignment.Center
                 ) {
                     if (page == pagerState.currentPage && playable) {
-                        AndroidView(
-                            factory = { ctx ->
-                                val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
-                                pv.useController = false          // the controls are drawn by CubeCut (PlayerOverlay), not by the player
-                                pv.player = player
-                                pv
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
+                        Box(Modifier.fillMaxSize()) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
+                                    pv.useController = false          // the controls are drawn by CubeCut (PlayerOverlay), not by the player
+                                    pv.player = player
+                                    pv
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            // until the player has drawn its first picture, the clip's own still picture stays in place (no black flash)
+                            if (!frameShown) {
+                                Thumb(
+                                    clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize(),
+                                    ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
+                                )
+                            }
+                        }
                     } else {
-                        Thumb(clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize())
+                        Thumb(
+                            clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize(),
+                            ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
+                        )
                         if (page == pagerState.currentPage && !playable) {
                             Text(
                                 "The video can't be opened right now.",
@@ -1985,11 +2064,6 @@ fun ClipViewer(
                         }
                     }
 
-                    if (exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30) {
-                        Spacer(Modifier.height(6.dp))
-                        OutlinedButton(onClick = { confirmTrash = true }, modifier = Modifier.fillMaxWidth()) { Text("Move the exported clip to trash") }
-                    }
-
                     // ===== note and social media buttons =====
                     Spacer(Modifier.height(10.dp))
                     val canNote = current.index >= 0
@@ -2075,6 +2149,22 @@ fun ClipViewer(
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(top = 4.dp)
                         )
+                    }
+
+                    // the exported file can be moved to the phone's trash: a small trash icon at the very bottom
+                    if (exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30) {
+                        Spacer(Modifier.height(18.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .clickable { confirmTrash = true }
+                                    .padding(12.dp)
+                            ) {
+                                TrashIcon(MaterialTheme.colorScheme.onSurface, 24.dp)
+                            }
+                        }
                     }
                 }
             }

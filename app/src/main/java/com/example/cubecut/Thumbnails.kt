@@ -70,15 +70,16 @@ object ThumbCache {
      * The picture for [key]. [uri] and [timeMs] say where to take it from if it doesn't exist yet
      * (a null [uri] = the video can't be opened, so only an already made picture can be returned).
      */
-    suspend fun get(context: Context, key: String, uri: Uri?, timeMs: Long): Bitmap? {
-        val cached = memory.get(key)
+    suspend fun get(context: Context, key: String, uri: Uri?, timeMs: Long, height: Int = TARGET_HEIGHT): Bitmap? {
+        val name = if (height == TARGET_HEIGHT) key else "${key}_h$height"      // bigger pictures (for the full-screen viewer) are kept apart
+        val cached = memory.get(name)
         if (cached != null) return cached
         return withContext(Dispatchers.IO) {
-            val file = File(dir(context), "$key.jpg")
+            val file = File(dir(context), "$name.jpg")
             var bmp: Bitmap? = if (file.exists()) BitmapFactory.decodeFile(file.path) else null
             if (bmp == null && uri != null) {
                 gate.withPermit {
-                    bmp = grab(context, uri, timeMs)
+                    bmp = grab(context, uri, timeMs, height)
                     val made = bmp
                     if (made != null) {
                         try {
@@ -90,7 +91,7 @@ object ThumbCache {
                 }
             }
             val result = bmp
-            if (result != null) memory.put(key, result)
+            if (result != null) memory.put(name, result)
             result
         }
     }
@@ -99,25 +100,25 @@ object ThumbCache {
     fun forgetFootage(context: Context, footageId: Long) {
         try {
             dir(context).listFiles()?.forEach { f ->
-                if (f.name.startsWith("c_${footageId}_") || f.name == "f_$footageId.jpg") f.delete()
+                if (f.name.startsWith("c_${footageId}_") || f.name == "f_$footageId.jpg" || f.name.startsWith("f_${footageId}_h")) f.delete()
             }
             memory.evictAll()
         } catch (e: Exception) {
         }
     }
 
-    private fun grab(context: Context, uri: Uri, timeMs: Long): Bitmap? {
+    private fun grab(context: Context, uri: Uri, timeMs: Long, targetHeight: Int): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(context, uri)
             val frame = retriever.getFrameAtTime(max(0L, timeMs) * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
             if (frame == null) {
                 null
-            } else if (frame.height <= TARGET_HEIGHT) {
+            } else if (frame.height <= targetHeight) {
                 frame
             } else {
-                val w = max(1, frame.width * TARGET_HEIGHT / frame.height)
-                val small = Bitmap.createScaledBitmap(frame, w, TARGET_HEIGHT, true)
+                val w = max(1, frame.width * targetHeight / frame.height)
+                val small = Bitmap.createScaledBitmap(frame, w, targetHeight, true)
                 if (small !== frame) frame.recycle()
                 small
             }
@@ -129,20 +130,26 @@ object ThumbCache {
     }
 }
 
-/** A picture that fills its box (cropped to fit) and appears as soon as it has been made; dark grey until then. */
+/**
+ * A picture that fills its box and appears as soon as it has been made; dark grey (or [background]) until then. [contentScale] Crop fills
+ * the box, Fit shows the whole picture; [height] is the picture's height in pixels (bigger for the full-screen viewer).
+ */
 @Composable
-fun Thumb(key: String, uri: Uri?, timeMs: Long, modifier: Modifier = Modifier) {
+fun Thumb(
+    key: String, uri: Uri?, timeMs: Long, modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop, height: Int = 360, background: Color = Color(0xFF26262B)
+) {
     val context = LocalContext.current
-    val picture by produceState<ImageBitmap?>(initialValue = null, key, uri) {
-        value = ThumbCache.get(context, key, uri, timeMs)?.asImageBitmap()
+    val picture by produceState<ImageBitmap?>(initialValue = null, key, uri, height) {
+        value = ThumbCache.get(context, key, uri, timeMs, height)?.asImageBitmap()
     }
-    Box(modifier.background(Color(0xFF26262B))) {
+    Box(modifier.background(background)) {
         val p = picture
         if (p != null) {
             Image(
                 bitmap = p,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = contentScale,
                 modifier = Modifier.fillMaxSize()
             )
         }
