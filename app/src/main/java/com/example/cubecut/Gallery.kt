@@ -308,6 +308,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var footageSort by mutableStateOf(FootageSort.from(prefs.getString("footage_sort", null)))
     var exportFilter by mutableStateOf(ExportFilter.from(prefs.getString("export_filter", null)))
     var checkOnly by mutableStateOf(prefs.getBoolean("check_only", false))   // show only clips that need a check
+    var themeMode by mutableStateOf(ThemeMode.from(prefs.getString("theme", null)))  // light, dark or as the phone (the whole app)
     // sessions switched off in the Clips tab (everything else is shown, so a new session shows up by itself)
     var hidden by mutableStateOf(
         (prefs.getString("hidden", "") ?: "").split(',').mapNotNull { it.toLongOrNull() }.toSet()
@@ -332,6 +333,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("footage_sort", footageSort.name)
             .putString("export_filter", exportFilter.name)
             .putBoolean("check_only", checkOnly)
+            .putString("theme", themeMode.name)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
             .putBoolean("swipe_hint_seen", swipeHintSeen)
@@ -618,7 +620,7 @@ private fun ClipRow(
             timeBadgeText(clip),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
-            color = if (clip.needsCheck) AMBER else MaterialTheme.colorScheme.onSurface
+            color = if (clip.needsCheck) AppColors.check else MaterialTheme.colorScheme.onSurface
         )
         if (selecting) {
             Spacer(Modifier.width(8.dp))
@@ -630,7 +632,10 @@ private fun ClipRow(
 private fun footageThumbKey(f: Footage): String = "f_${f.id}"
 
 @Composable
-private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun FootageCell(
+    f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier,
+    onMenu: () -> Unit, onClick: () -> Unit
+) {
     Box(
         modifier
             .fillMaxWidth()
@@ -656,7 +661,7 @@ private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hid
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
                     .background(Color(0x99000000))
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                    .padding(start = 6.dp, top = 3.dp, bottom = 3.dp, end = 38.dp)
             ) {
                 Text(f.title, style = MaterialTheme.typography.labelLarge, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (columns <= 3) {
@@ -667,11 +672,12 @@ private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hid
                 }
             }
         }
+        MoreButton(if (columns >= 5) 22.dp else 30.dp, Modifier.align(Alignment.BottomEnd).padding(4.dp), onMenu)
     }
 }
 
 @Composable
-private fun FootageRow(f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, onClick: () -> Unit) {
+private fun FootageRow(f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, onMenu: () -> Unit, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -695,6 +701,26 @@ private fun FootageRow(f: Footage, stats: FootageStats?, openable: Boolean, hidd
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2
             )
+        }
+        Spacer(Modifier.width(6.dp))
+        MoreButton(30.dp, onClick = onMenu)
+    }
+}
+
+/** The round "more options" button with three dots, shown over a footage picture. */
+@Composable
+private fun MoreButton(size: Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .size(size)
+            .clip(RoundedCornerShape(50))
+            .background(Color(0x99000000))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(size * 0.6f)) {
+            val r = this.size.width * 0.09f
+            for (k in 0..2) drawCircle(Color.White, r, Offset(this.size.width / 2f, this.size.height * (0.2f + 0.3f * k)))
         }
     }
 }
@@ -887,6 +913,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
     BackHandler(enabled = ui.selecting) { exitSelection() }
+
+    /** Tapping a video on the Footage tab opens it in the editor; a video that can't be opened shows its options instead (Reconnect). */
+    fun openFootage(f: Footage, canOpen: Boolean) {
+        if (canOpen) onOpenEditor(EditorRequest(Uri.parse(f.uri), null)) else footageMenu = f
+    }
 
     // Android can't tell CubeCut when a video is deleted or restored while the app is open, so everything is checked again each time you
     // come back to the app (and the Refresh button does it on demand)
@@ -1250,13 +1281,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 modifier = Modifier.fillMaxSize()
                             ) {
                                 gridItems(shown, key = { it.id }) { f ->
-                                    FootageCell(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns, Modifier.animateItem()) { footageMenu = f }
+                                    FootageCell(
+                                        f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns, Modifier.animateItem(),
+                                        onMenu = { footageMenu = f }
+                                    ) { openFootage(f, d.openable[f.id] == true) }
                                 }
                             }
                         } else {
                             LazyColumn(Modifier.fillMaxSize(), state = footageListState, contentPadding = PaddingValues(bottom = 8.dp)) {
                                 listItems(shown, key = { it.id }) { f ->
-                                    FootageRow(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden) { footageMenu = f }
+                                    FootageRow(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, onMenu = { footageMenu = f }) {
+                                        openFootage(f, d.openable[f.id] == true)
+                                    }
                                 }
                             }
                         }
@@ -1377,6 +1413,19 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 title = { Text("Settings") },
                 text = {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text("Appearance", style = MaterialTheme.typography.labelLarge)
+                        for (m in ThemeMode.values()) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { ui.themeMode = m; ui.save() },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = ui.themeMode == m, onClick = { ui.themeMode = m; ui.save() })
+                                Text(m.label, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
                         TextButton(onClick = { ui.swipeHintSeen = false; ui.save(); showSettings = false }) {
                             Text("Show the \"swipe up for more\" hint again")
                         }
@@ -1811,7 +1860,7 @@ private fun SwipeUpHint(modifier: Modifier = Modifier) {
 
 /** A small trash can, drawn by CubeCut. */
 @Composable
-private fun TrashIcon(color: Color, size: Dp) {
+fun TrashIcon(color: Color, size: Dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width
         val h = this.size.height
@@ -2462,7 +2511,7 @@ fun ClipViewer(
                                         try { SessionStore.markCutReviewed(context, c.footage.id, c.cut.stopSec) } catch (e: Exception) { }
                                     }
                                 }
-                            }) { Text("It's fine: mark as checked", color = AMBER) }
+                            }) { Text("It's fine: mark as checked", color = AppColors.check) }
                         }
                     } else if (current.cut.note.isNotEmpty()) {
                         Text(current.cut.note, style = MaterialTheme.typography.bodySmall)
