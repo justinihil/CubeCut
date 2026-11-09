@@ -382,6 +382,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var analysisTotal by remember { mutableStateOf(0) }
     var cancelScan by remember { mutableStateOf(false) }         // the Cancel button of Find solves
     var scanReport by remember { mutableStateOf<ScanResult?>(null) }   // what the last scan learned (for the warnings)
+    var scanned by remember { mutableStateOf(false) }            // Find solves has run on this video (now or in an earlier visit)
     var setupExpanded by remember { mutableStateOf(true) }       // the Setup box: open at first, closes after Find solves
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -471,6 +472,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         selectedCut = -1
         analysisStatus = ""
         scanReport = null
+        scanned = false
         zoom = 1f
         videoScale = 1f
         videoOffX = 0f
@@ -505,6 +507,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     afterPad = opened.footage.afterPad
                     scrambleAll = opened.footage.scrambleAll
                     cuts.addAll(opened.cuts)
+                    scanned = opened.footage.lastScanMs > 0
                     if (opened.cuts.isNotEmpty()) {
                         setupExpanded = false
                         openedNote = "Saved session: ${opened.cuts.size} cuts" +
@@ -736,6 +739,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     selectedCut = -1
                     cuts.addAll(merged.cuts)
                     scanReport = report
+                    scanned = true
                     footageId?.let { id ->
                         withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
                     }
@@ -1252,15 +1256,20 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             Spacer(Modifier.height(4.dp))
 
             // ################ always at hand: + Cut at playhead and the two switches ################
+            // (only once Find solves has run on this video: before that there is nothing to add to or switch, and the screen stays
+            // simple: video, timeline, the Setup box and Find solves. A video with solves saved counts as run.)
+            val showTools = videoUri != null && (scanned || cuts.isNotEmpty())
 
-            OutlinedButton(
-                onClick = { startManualCut() },
-                enabled = videoUri != null && durationMs > 0 && !analyzing,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("+ Cut at playhead") }
+            if (showTools) {
+                OutlinedButton(
+                    onClick = { startManualCut() },
+                    enabled = durationMs > 0 && !analyzing,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("+ Cut at playhead") }
+            }
 
             // the scramble for every clip (a card's own scramble button can then change one clip again), and the check filter
-            if (videoUri != null) {
+            if (showTools) {
                 val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
                 val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
                 val toCheck = cuts.indices.count { needsCheck(it) }
