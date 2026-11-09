@@ -1753,6 +1753,14 @@ fun ClipViewer(
             .sortedBy { it.index }
             .map { c -> c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c)) }
 
+    /** The moment of the video a clip starts at (what the player shows first), so the still and the first frame are the same picture. */
+    fun stillMsFor(c: GalleryClip): Long =
+        if (c.exportOnly || c.index < 0) 0L else Math.round(clipWindow(c, cutsFor(c)).first * 1000.0)
+    fun stillKeyFor(c: GalleryClip): String {
+        val e = c.exported
+        return if (c.exportOnly && e != null) "xv_${e.id}" else "v_${c.key}_${stillMsFor(c)}"
+    }
+
     // The clip's still picture covers the player until the player has drawn its own first picture, then fades away. While the player has
     // not drawn it, the still is fully visible from the very first frame of the new page (no animation involved, so there is no gap).
     var stillFade by remember { mutableStateOf(1f) }
@@ -1773,13 +1781,6 @@ fun ClipViewer(
                 context, stillKeyFor(neighbour), clipPictureUri(neighbour, openable), stillMsFor(neighbour), VIEWER_PICTURE_HEIGHT
             )
         }
-    }
-    /** The moment of the video a clip starts at (what the player shows first), so the still and the first frame are the same picture. */
-    fun stillMsFor(c: GalleryClip): Long =
-        if (c.exportOnly || c.index < 0) 0L else Math.round(clipWindow(c, cutsFor(c)).first * 1000.0)
-    fun stillKeyFor(c: GalleryClip): String {
-        val e = c.exported
-        return if (c.exportOnly && e != null) "xv_${e.id}" else "v_${c.key}_${stillMsFor(c)}"
     }
     val sourceOk = openable[footage.id] == true
     val playsExport = current.exportOnly && current.exported != null          // the video is gone: play the exported file instead
