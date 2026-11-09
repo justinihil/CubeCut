@@ -157,13 +157,18 @@ fun AppRoot() {
     var editor by remember { mutableStateOf<EditorRequest?>(null) }
     val request = editor
     if (request != null) {
-        EditorScreen(request = request, onClose = { footageId, solveSec ->
+        EditorScreen(request = request, onClose = { footageId, solveSec, selectToExport ->
             editor = null
-            if (footageId != null && solveSec != null) ui.openClip = Pair(footageId, solveSec)    // "show in Gallery" on a solve
+            if (footageId != null && selectToExport) ui.selectFootage = footageId                       // "Export clips..."
+            else if (footageId != null && solveSec != null) ui.openClip = Pair(footageId, solveSec)    // "show in Gallery" on a solve
             ui.refresh++
         })
     } else {
-        GalleryScreen(ui = ui, onOpenEditor = { editor = it })
+        GalleryScreen(ui = ui, onOpenEditor = {
+            ui.selecting = false            // a selection in progress doesn't survive a trip to the editor
+            ui.selected = emptySet()
+            editor = it
+        })
     }
 }
 
@@ -189,7 +194,7 @@ fun highlightCheck(text: String): AnnotatedString = buildAnnotatedString {
 }
 
 @Composable
-fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
+fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -233,9 +238,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var importStage by remember { mutableStateOf("") }
     var importProgress by remember { mutableStateOf(0f) }
 
-    // ---- "export finished" window ----
-    var exportDialogTitle by remember { mutableStateOf("") }
-    var exportDialogText by remember { mutableStateOf<String?>(null) }
     var showAbout by remember { mutableStateOf(false) }          // the About window (author credit and licence notice)
     var showFindConfirm by remember { mutableStateOf(false) }    // the "this may take a couple of minutes" window
     var analysisDone by remember { mutableStateOf(0) }           // progress of Find solves
@@ -245,13 +247,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var setupExpanded by remember { mutableStateOf(true) }       // the Setup box: open at first, closes after Find solves
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    // ---- export ----
-    var exporting by remember { mutableStateOf(false) }
-    var exportStatus by remember { mutableStateOf("") }
-
     // keep the screen awake while a long job is running (so the phone doesn't go to sleep halfway)
     val view = LocalView.current
-    SideEffect { view.keepScreenOn = analyzing || exporting }
+    SideEffect { view.keepScreenOn = analyzing }
     DisposableEffect(view) { onDispose { view.keepScreenOn = false } }
 
     // ---- timer reading ----
@@ -310,7 +308,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         rowBoxes.clear()
         selectedCut = -1
         analysisStatus = ""
-        exportStatus = ""
         scanReport = null
         zoom = 1f
         videoScale = 1f
@@ -446,6 +443,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         computeClips(cuts, beforePad.toDouble(), afterPad.toDouble(), durationMs / 1000.0)
     }
     val clipByCut = remember(clips) { clips.associateBy { it.cutIndex } }
+    val checks = remember(clips) { checkCuts(cuts, clips) }      // too close / overlapping solves (shown as "check")
     // rough time Find solves needs: about 0.3 s of work per second of video (an estimate)
     val estMin = maxOf(1, Math.round(durationMs / 1000.0 * 0.3 / 60.0).toInt())
 
@@ -506,7 +504,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     }
                     // a re-scan keeps what you changed: see mergeRescan (RescanMerge.kt)
                     val saved = cuts.toList()
-                    val found = report.solves.map { r -> CutItem(r.stopSec, r.timeText, r.include, r.note, scrambleAll) }
+                    val found = report.solves.map { r -> normalizeIncluded(CutItem(r.stopSec, r.timeText, r.include, r.note, scrambleAll)) }
                     val exportedStops: List<Double> = footageId?.let { id ->
                         withContext(Dispatchers.IO) {
                             try { SessionStore.loadExports(context, id).map { it.stopSec } } catch (e: Exception) { emptyList() }
@@ -585,9 +583,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
 
     // back to the Gallery: save the latest edits first (the autosave waits a moment), then close the editor
-    fun leaveToGallery(showSolve: Int? = null) {
-        if (analyzing || exporting) {
-            status = if (analyzing) "Find solves is still running: let it finish or press Cancel first" else "An export is running: wait until it finishes"
+    // [selectToExport]: open the Gallery with this video's clips that aren't exported yet selected, ready to export
+    fun leaveToGallery(showSolve: Int? = null, selectToExport: Boolean = false) {
+        if (analyzing) {
+            status = "Find solves is still running: let it finish or press Cancel first"
             return
         }
         val openSec = if (showSolve != null) cuts.getOrNull(showSolve)?.stopSec else null     // the solve to show in the Gallery
@@ -606,7 +605,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 }
             }
             exoPlayer.pause()
-            onClose(id, openSec)
+            onClose(id, openSec, selectToExport)
         }
     }
     BackHandler { leaveToGallery() }
@@ -638,10 +637,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     Text(statusText, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 }
                 Spacer(Modifier.width(4.dp))
-                TextButton(onClick = { leaveToGallery() }, enabled = !analyzing && !exporting) { Text("Gallery") }
+                TextButton(onClick = { leaveToGallery() }, enabled = !analyzing) { Text("Gallery") }
                 Button(onClick = {
                     picker.launch(arrayOf("video/*"))
-                }, enabled = !analyzing && !exporting) { Text("Import video") }
+                }, enabled = !analyzing) { Text("Import video") }
             }
             Spacer(Modifier.height(6.dp))
 
@@ -764,20 +763,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             highlightCheck(
                                 if (selValid) {
                                     (if (cuts[sel].timeText.isNotEmpty()) "${cuts[sel].timeText} s" else "time unknown") +
-                                            (if (cuts[sel].included) "  |  included" else "  |  left out") +
                                             (if (cuts[sel].includeScramble) "  |  with scramble" else "  |  solve only") +
-                                            (if (cuts[sel].note.isNotEmpty() && cuts[sel].note != "added by you") "  |  check this one" else "")
+                                            (if ((cuts[sel].note.isNotEmpty() && cuts[sel].note != "added by you") || checks.warnings.containsKey(sel)) "  |  check this one" else "")
                                 } else "tap Next or a row below"
                             ),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                     TextButton(onClick = { goToCut(if (selValid) sel + 1 else 0) }) { Text("Next \u203A") }
-                    Switch(
-                        checked = selValid && cuts[sel].included,
-                        onCheckedChange = { on -> if (selValid) cuts[sel] = cuts[sel].copy(included = on, edited = true) },
-                        enabled = selValid
-                    )
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -827,30 +820,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     enabled = videoUri != null && !analyzing,
                     modifier = Modifier.weight(1f)
                 ) { Text("+ Cut at playhead") }
-            }
-
-            // ===== one switch for the scramble of ALL clips - pinned, so it stays visible while the list scrolls =====
-            // (each clip also has its own tick box in its row and can differ afterwards)
-            val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
-            val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
-            if (cuts.isNotEmpty()) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Include scramble in all clips" + if (mixedScramble) " (mixed)" else if (allScrambleOn) " (on)" else " (off)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Switch(
-                        checked = allScrambleOn,
-                        onCheckedChange = { on ->
-                            scrambleAll = on
-                            for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
-                        }
-                    )
-                }
             }
 
             // ################ EVERYTHING BELOW SCROLLS TOGETHER: setup box, status, scramble switch, the list ################
@@ -974,6 +943,32 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
+
+                                // one switch for the scramble of ALL clips: a setting for the whole video, like the buffers
+                                // (each clip can still differ: change it in the Gallery's clip viewer or while selecting clips to export)
+                                val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
+                                val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
+                                Spacer(Modifier.height(12.dp))
+                                Text("3. Scramble", style = MaterialTheme.typography.titleSmall)
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Include the scramble in all clips" + if (mixedScramble) " (mixed)" else if (allScrambleOn) " (on)" else " (off)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Switch(
+                                        checked = allScrambleOn,
+                                        onCheckedChange = { on ->
+                                            scrambleAll = on
+                                            for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
+                                        }
+                                    )
+                                }
+                                Text(
+                                    "On: each clip starts where the previous solve ended. Off: only the solve, with the \"before\" buffer. " +
+                                            "To change one clip, use the Gallery.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
                         }
                     }
@@ -1088,11 +1083,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
                 if (cuts.isNotEmpty()) {
                     Text(
-                        "Green = will be exported, grey = left out. Tap a row to jump to just before the time first appears. " +
-                                "Tick \"Include scramble\" to keep the part before the solve, untick it for the solve only.",
+                        "One row per solve. Tap a row to jump to just before the time first appears. Use Edit to fix a time or a position, " +
+                                "or to delete a cut that isn't a solve. Rows marked check need a look. Choosing what to export happens in the Gallery.",
                         style = MaterialTheme.typography.bodySmall
                     )
-                    // one row per cut: switch = include in the export, box = include the scramble, tap the row to jump there, Edit to fix it
+                    // one row per cut: tap the row to jump there, Edit to fix or delete it, Gallery to see its clip
                     cuts.forEachIndexed { index, item ->
                         val clip = clipByCut[index]
                         val isSelected = index == selectedCut
@@ -1104,11 +1099,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 .onGloballyPositioned { rowBoxes[index] = it },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Switch(
-                                checked = item.included,
-                                onCheckedChange = { on -> cuts[index] = cuts[index].copy(included = on, edited = true) }
-                            )
-                            Spacer(Modifier.width(10.dp))
+                            Spacer(Modifier.width(6.dp))
                             Column(Modifier.weight(1f)) {
                                 Column(
                                     Modifier.clickable {
@@ -1125,29 +1116,23 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     )
                                     val unknownHint = if (item.timeText.isEmpty()) " - no time yet: tap Add time to type it" else ""
                                     val line = when {
-                                        item.included && clip != null -> {
+                                        clip != null -> {
                                             val mode = when {
                                                 clip.noTime -> "full clip (no time yet, so the scramble can't be cut out)"
                                                 clip.withScramble -> "with scramble"
                                                 else -> "solve only"
                                             }
-                                            "clip ${clip.number}: ${formatTime((clip.startSec * 1000).toLong())} - ${formatTime((clip.endSec * 1000).toLong())}  |  $mode" + unknownHint
+                                            "clip: ${formatTime((clip.startSec * 1000).toLong())} - ${formatTime((clip.endSec * 1000).toLong())}  |  $mode" + unknownHint
                                         }
-                                        item.included -> "too close to the previous cut - will be skipped"
-                                        item.note.isNotEmpty() -> "check: ${item.note}"
-                                        else -> "left out"
+                                        isLeftover(item) -> "not a clip (left over from before the video)"
+                                        else -> ""                                  // no clip: the warning below says why
                                     }
-                                    Text(highlightCheck(line), style = MaterialTheme.typography.bodySmall)
-                                    if (item.included && item.note.isNotEmpty() && item.note != "added by you") {
+                                    if (line.isNotEmpty()) Text(highlightCheck(line), style = MaterialTheme.typography.bodySmall)
+                                    val warning = checks.warnings[index]
+                                    if (warning != null) Text(highlightCheck("check: $warning"), style = MaterialTheme.typography.bodySmall)
+                                    if (item.note.isNotEmpty() && item.note != "added by you") {
                                         Text(highlightCheck("check: ${item.note}"), style = MaterialTheme.typography.bodySmall)
                                     }
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(
-                                        checked = item.includeScramble,
-                                        onCheckedChange = { on -> cuts[index] = cuts[index].copy(includeScramble = on, edited = true) }
-                                    )
-                                    Text("Include scramble", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             Column(horizontalAlignment = Alignment.End) {
@@ -1158,57 +1143,23 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     Text(if (item.timeText.isEmpty()) "Add time" else "Edit")
                                 }
                                 // go straight to this solve's page in the Gallery (your edits are saved first)
-                                TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && !exporting && footageId != null) {
+                                TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && footageId != null) {
                                     Text("Gallery")
                                 }
                             }
                         }
                     }
-                    // ===== export: only at the very end of the list =====
+                    // ===== export: only at the very end of the list. Choosing and exporting happen in the Gallery =====
                     Spacer(Modifier.height(4.dp))
                     Button(
-                        onClick = {
-                            val uri = videoUri
-                            if (uri != null && clips.isNotEmpty() && !exporting) {
-                                val toExport = clips.toList()
-                                val cutsAtExport = cuts.toList()
-                                val footageAtExport = footageId
-                                exoPlayer.pause()
-                                scope.launch {
-                                    exporting = true
-                                    exportStatus = "Starting export..."
-                                    val result = withContext(Dispatchers.IO) {
-                                        ClipExporter.export(context, uri, toExport) { done, total ->
-                                            exportStatus = "Exporting clip ${minOf(done + 1, total)} of $total..."
-                                        }
-                                    }
-                                    exportStatus = result.message
-                                    exporting = false
-                                    // remember which solves were exported and where the files are (the Gallery shows them as Exported)
-                                    if (footageAtExport != null && result.files.isNotEmpty()) {
-                                        val now = System.currentTimeMillis()
-                                        val records = result.files.mapNotNull { f ->
-                                            val cut = cutsAtExport.getOrNull(f.clip.cutIndex)
-                                            if (cut == null) null
-                                            else ExportedClip(0L, footageAtExport, cut.stopSec, cut.timeText, f.uri, f.fileName, Math.max(0.0, cut.stopSec - f.startSec), now)
-                                        }
-                                        withContext(Dispatchers.IO) {
-                                            try { SessionStore.recordExports(context, footageAtExport, records) } catch (e: Exception) { }
-                                        }
-                                    }
-                                    val folder = if (Build.VERSION.SDK_INT >= 29) "Movies/CubeCut"
-                                    else "Android/data/${context.packageName}/files/Movies/CubeCut"
-                                    exportDialogTitle = if (result.failed.isEmpty()) "Export complete" else "Export finished with problems"
-                                    exportDialogText =
-                                        (if (result.failed.isEmpty()) "All ${result.done} clips were saved."
-                                        else "${result.done} of ${toExport.size} clips were saved.\n\nProblems:\n" + result.failed.joinToString("\n")) +
-                                                "\n\nSaved in the folder: $folder\n\nYou can find them in your Gallery app, or in the Files app under that folder."
-                                }
-                            }
-                        },
-                        enabled = videoUri != null && clips.isNotEmpty() && !exporting,
+                        onClick = { leaveToGallery(selectToExport = true) },
+                        enabled = footageId != null && !analyzing,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (exporting) "Exporting..." else "Export ${clips.size} clips") }
+                    ) { Text("Export clips...") }
+                    Text(
+                        "Opens the Gallery with this video's clips that aren't exported yet already selected. Change the selection, then Export.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     val unknownCount = clips.count { it.timeText.isBlank() }
                     if (unknownCount > 0) {
                         Text(
@@ -1216,7 +1167,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    if (exportStatus.isNotEmpty()) Text(exportStatus, style = MaterialTheme.typography.bodySmall, maxLines = 3)
                 }
             }
 
@@ -1257,27 +1207,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     }
                 },
                 confirmButton = { }
-            )
-        }
-
-        // ===== the "export finished" window =====
-        val exportText = exportDialogText
-        if (exportText != null) {
-            AlertDialog(
-                onDismissRequest = { exportDialogText = null },
-                title = { Text(exportDialogTitle) },
-                text = {
-                    Column(
-                        Modifier
-                            .heightIn(max = 300.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        Text(exportText, style = MaterialTheme.typography.bodyMedium)
-                    }
-                },
-                confirmButton = {
-                    Button(onClick = { exportDialogText = null }) { Text("OK") }
-                }
             )
         }
 

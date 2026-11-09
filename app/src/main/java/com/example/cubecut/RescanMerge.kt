@@ -113,3 +113,43 @@ fun mergeRescan(saved: List<CutItem>, found: List<CutItem>, exportedStops: List<
     val kept = saved.count { keepAsIs(it) }
     return RescanResult(out.sortedBy { it.stopSec }, added, updated, kept, notFound)
 }
+
+// ---------------------------------------------------------------------------------------
+// Checks on a session's cuts. The editor is only for finding the real solves; choosing what to export happens in the Gallery.
+// ---------------------------------------------------------------------------------------
+
+/** A cut the scan switched off because its time was already on the timer when the video began (computeClips treats it as deleted). */
+fun isLeftover(c: CutItem): Boolean = !c.included && c.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START)
+
+/**
+ * Every cut is a solve that can be exported; the only cuts that stay switched off are the leftovers above. Cuts switched off by hand in an
+ * older version, or by the scan for another reason, become normal solves (a scan note on them still flags them for a check).
+ */
+fun normalizeIncluded(c: CutItem): CutItem = if (c.included || isLeftover(c)) c else c.copy(included = true)
+
+/** What is wrong with some cuts of a session: a short warning per cut index, and the cuts that get no clip at all. */
+class CutChecks(val warnings: Map<Int, String>, val noClip: Set<Int>)
+
+/**
+ * Looks for impossible timing. [clips] must be computeClips(cuts, ...) for the same [cuts].
+ *  - too close: computeClips makes no clip for a solve that ends less than a second after the one before it;
+ *  - overlap: a solve that started before the previous one stopped (worked out from the times shown) can't be right.
+ */
+fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
+    val warnings = HashMap<Int, String>()
+    val withClip = clips.map { it.cutIndex }.toSet()
+    val noClip = cuts.indices.filter { !isLeftover(cuts[it]) && it !in withClip }.toSet()
+    for (i in noClip) warnings[i] = "too close to the solve before it, so it has no clip - delete one of them or move it"
+    var previous: CutItem? = null
+    for (i in cuts.indices.sortedBy { cuts[it].stopSec }) {
+        val c = cuts[i]
+        if (isLeftover(c)) continue
+        val p = previous
+        val t = parseTimeSeconds(c.timeText)
+        if (p != null && t != null && i !in warnings && c.stopSec - t < p.stopSec - SLACK_SEC) {
+            warnings[i] = "it would have started before the previous solve stopped - check this time or the previous one"
+        }
+        previous = c
+    }
+    return CutChecks(warnings, noClip)
+}

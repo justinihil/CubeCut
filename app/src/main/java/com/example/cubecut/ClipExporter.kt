@@ -143,28 +143,36 @@ object ClipExporter {
         return if (t.isEmpty()) "unknown" else t
     }
 
-    /** "Solve_03_11.263s.mp4", or "Solve_03_unknown.mp4" when the time is not known. */
-    fun fileName(c: Clip): String {
+    /** A session title made safe for a file name: no characters Android or PCs refuse, at most 40 characters. */
+    fun safeTitle(title: String): String = title.replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), "_").trim().take(40).trim()
+
+    /**
+     * "Solve_03_11.263s.mp4", or "Solve_03_unknown.mp4" when the time is not known.
+     * With a [prefix] (the session's title): "Sunday practice_Solve_03_11.263s.mp4", numbered like the Gallery ("Solve 3 of 20"),
+     * so clips from different videos never get the same name.
+     */
+    fun fileName(c: Clip, prefix: String = ""): String {
         val t = safeTime(c.timeText)
         val tail = if (t == "unknown") t else t + "s"
-        return "Solve_%02d_%s.mp4".format(c.number, tail)
+        val p = safeTitle(prefix)
+        return if (p.isEmpty()) "Solve_%02d_%s.mp4".format(c.number, tail) else "%s_Solve_%02d_%s.mp4".format(p, c.cutIndex + 1, tail)
     }
 
-    /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. */
-    fun export(context: Context, source: Uri, clips: List<Clip>, onProgress: (Int, Int) -> Unit): ExportResult {
+    /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. [prefix]: see fileName. */
+    fun export(context: Context, source: Uri, clips: List<Clip>, prefix: String = "", onProgress: (Int, Int) -> Unit): ExportResult {
         val failed = mutableListOf<String>()
         val files = mutableListOf<ExportedFile>()
         var done = 0
         for ((i, clip) in clips.withIndex()) {
             onProgress(i, clips.size)
             val made = Made()
-            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip), made)
+            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix), made)
             if (error == null) {
                 done++
                 val uri = made.uri
-                if (uri != null) files.add(ExportedFile(clip, uri, fileName(clip), if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
+                if (uri != null) files.add(ExportedFile(clip, uri, fileName(clip, prefix), if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
             } else {
-                failed.add("${fileName(clip)}: $error")
+                failed.add("${fileName(clip, prefix)}: $error")
             }
         }
         onProgress(clips.size, clips.size)

@@ -344,7 +344,8 @@ object SessionStore {
         ).use { c ->
             val out = ArrayList<CutItem>()
             while (c.moveToNext()) {
-                out.add(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1))
+                // every cut is a solve except the scan's "left over" ones (see normalizeIncluded in RescanMerge.kt)
+                out.add(normalizeIncluded(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1)))
             }
             out
         }
@@ -396,9 +397,10 @@ object SessionStore {
             val cuts = loadCuts(context, f.id)
             val exports = loadExports(context, f.id).filter { it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }
             if (sourceOk) {
+                val checks = checkCuts(cuts, computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0))
                 for ((i, c) in cuts.withIndex()) {
                     val e = exports.filter { Math.abs(it.stopSec - c.stopSec) < 0.05 }.maxByOrNull { it.exportedMs }
-                    clips.add(GalleryClip(f, i, cuts.size, c, e, false))
+                    clips.add(GalleryClip(f, i, cuts.size, c, e, false, checks.warnings[i] ?: "", i in checks.noClip))
                 }
             } else {
                 val latestPerStop = exports.sortedBy { it.stopSec }.groupBy { Math.round(it.stopSec * 20.0) }.map { entry -> entry.value.maxByOrNull { it.exportedMs }!! }
@@ -621,15 +623,21 @@ class ExportedClip(
 /**
  * One clip as the Gallery shows it, with the session it comes from. [index] is the cut's position in its session (0-based, the same
  * numbering as "Solve n of N" in the editor; -1 = the cut was removed or moved since the export). [exported] is the file it was exported
- * to, if any. [exportOnly] = the session's video is gone and only this exported file is left.
+ * to, if any. [exportOnly] = the session's video is gone and only this exported file is left. [warning] = a timing problem found by
+ * checkCuts ("" = none); [noClip] = the solve is too close to the one before it, so no clip can be made of it.
  * A cut has no number of its own in the database (the cuts of a session are saved as one list), so a picture is identified by its
  * session and the moment the clip stops: [key].
  */
-class GalleryClip(val footage: Footage, val index: Int, val total: Int, val cut: CutItem, val exported: ExportedClip?, val exportOnly: Boolean) {
+class GalleryClip(
+    val footage: Footage, val index: Int, val total: Int, val cut: CutItem, val exported: ExportedClip?, val exportOnly: Boolean,
+    val warning: String = "", val noClip: Boolean = false
+) {
     val key: String get() = "${footage.id}_${Math.round(cut.stopSec * 1000.0)}"
     val listKey: String get() = if (exportOnly && exported != null) "x${exported.id}" else "${footage.id}:$index"
     val seconds: Double? get() = parseTimeSeconds(cut.timeText)
-    val needsCheck: Boolean get() = cut.note.isNotEmpty() && cut.note != "added by you"
+    val needsCheck: Boolean get() = (cut.note.isNotEmpty() && cut.note != "added by you") || warning.isNotEmpty()
+    /** Everything to check about this clip, in one line ("" = nothing). */
+    val checkText: String get() = listOf(if (cut.note != "added by you") cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
     val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
     val sharedList: List<String> get() = platformsIn(cut.userNote)
 }

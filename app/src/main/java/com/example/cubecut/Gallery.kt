@@ -36,6 +36,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -76,6 +79,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -90,6 +94,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -117,6 +122,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -126,6 +132,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items as listItems
 import androidx.lifecycle.Lifecycle
@@ -156,6 +163,8 @@ import kotlin.math.sin
 // Tapping a clip opens its detail screen (it plays just that clip, says which video it came from, and keeps your note and social
 // media buttons); tapping a footage card offers "show only its clips", "open in editor", "rename" and "forget".
 // Pinch with two fingers on a grid to change the number of columns (2 to 6), like the phone's own gallery.
+// Long-press a clip to start choosing clips to export (the editor's "Export clips..." opens this too): tap clips to tick them, tap the
+// arrows in a clip's corner to watch it full screen (it can be ticked and its scramble switched there too), then Export.
 // ---------------------------------------------------------------------------------------
 
 /** How tall a picture cell is compared to its width (3 wide : 4 tall). Change this one number to reshape the whole grid. */
@@ -288,6 +297,9 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var skipSeconds by mutableStateOf(prefs.getInt("skip_seconds", 5).coerceIn(1, 60))
     var swipeHintSeen by mutableStateOf(prefs.getBoolean("swipe_hint_seen", false))
     var openClip by mutableStateOf<Pair<Long, Double>?>(null)     // (session id, stop time) of a clip to open as soon as the data has loaded
+    var selecting by mutableStateOf(false)                        // choosing clips to export (long-press a clip, or the editor's Export clips...)
+    var selected by mutableStateOf<Set<String>>(emptySet())       // the chosen clips (their listKey)
+    var selectFootage by mutableStateOf<Long?>(null)              // a session whose clips should be selected as soon as the data has loaded
     var clipsGrid by mutableStateOf(prefs.getBoolean("clips_grid", true))
     var footageGrid by mutableStateOf(prefs.getBoolean("footage_grid", true))
     var clipsColumns by mutableStateOf(prefs.getInt("clips_columns", 3).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
@@ -391,6 +403,92 @@ private fun Badge(text: String, background: Color, textColor: Color = Color.Whit
     )
 }
 
+/** Can this clip be ticked for an export? Only solves whose original video is here and that have a clip of their own. */
+private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
+    !c.exportOnly && c.index >= 0 && !c.noClip && openable[c.footage.id] == true
+
+private fun notSelectableReason(c: GalleryClip, openable: Map<Long, Boolean>): String = when {
+    c.exportOnly || openable[c.footage.id] != true -> "This clip's original video isn't here, so it can't be exported again."
+    c.noClip -> "This solve is too close to the one before it, so it has no clip. Fix it in the editor first."
+    else -> "This clip can't be exported."
+}
+
+/** The round selection mark: an empty ring, or a filled circle with a tick. */
+@Composable
+private fun SelectMark(selected: Boolean, size: Dp) {
+    val fill = MaterialTheme.colorScheme.primary
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val r = w / 2f
+        val c = Offset(w / 2f, h / 2f)
+        if (selected) {
+            drawCircle(fill, r, c)
+            val tick = Path().apply {
+                moveTo(w * 0.28f, h * 0.52f)
+                lineTo(w * 0.44f, h * 0.68f)
+                lineTo(w * 0.74f, h * 0.36f)
+            }
+            drawPath(tick, Color.White, style = Stroke(width = w * 0.12f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        } else {
+            drawCircle(Color(0x55000000), r, c)
+            drawCircle(Color.White, r - w * 0.06f, c, style = Stroke(width = w * 0.09f))
+        }
+    }
+}
+
+/** Two diagonal arrows pointing outwards: "watch this full screen". */
+@Composable
+private fun ExpandIcon(size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val sw = w * 0.11f
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float) =
+            drawLine(Color.White, Offset(w * x1, h * y1), Offset(w * x2, h * y2), strokeWidth = sw, cap = StrokeCap.Round)
+        line(0.56f, 0.44f, 0.80f, 0.20f)       // up and right
+        line(0.56f, 0.20f, 0.80f, 0.20f)
+        line(0.80f, 0.20f, 0.80f, 0.44f)
+        line(0.44f, 0.56f, 0.20f, 0.80f)       // down and left
+        line(0.20f, 0.56f, 0.20f, 0.80f)
+        line(0.20f, 0.80f, 0.44f, 0.80f)
+    }
+}
+
+@Composable
+private fun PreviewButton(size: Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color(0x99000000))
+            .clickable(onClick = onClick)
+            .padding(size / 5)
+    ) {
+        ExpandIcon(size)
+    }
+}
+
+/** What exporting the chosen solves of one session did. */
+private class BatchResult(val made: Int, val skipped: Int, val problems: List<String>)
+
+/**
+ * Exports the chosen solves of one session ([indices] = their positions in the session) with the same maths as every other export, using
+ * the cuts as they are saved right now (so scramble choices made while selecting count), and remembers the new files. Runs on a
+ * background thread; [onClip] is told how many of this session's clips are done.
+ */
+private fun exportFromSession(context: Context, f: Footage, indices: Set<Int>, onClip: (Int) -> Unit): BatchResult {
+    val cuts = SessionStore.loadCuts(context, f.id)
+    val clips = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0).filter { it.cutIndex in indices }
+    val result = ClipExporter.export(context, Uri.parse(f.uri), clips, f.title) { i, _ -> onClip(i) }
+    val now = System.currentTimeMillis()
+    val records = result.files.mapNotNull { ef ->
+        val cut = cuts.getOrNull(ef.clip.cutIndex)
+        if (cut == null) null else ExportedClip(0L, f.id, cut.stopSec, cut.timeText, ef.uri, ef.fileName, max(0.0, cut.stopSec - ef.startSec), now)
+    }
+    if (records.isNotEmpty()) SessionStore.recordExports(context, f.id, records)
+    return BatchResult(result.done, indices.size - clips.size, result.failed)
+}
+
 private fun timeBadgeText(clip: GalleryClip): String = if (clip.cut.timeText.isBlank()) "?" else clip.cut.timeText
 
 /** Where the picture of a clip comes from: the exported file when the video is gone, else the video (null = nothing to take it from). */
@@ -406,27 +504,39 @@ private fun clipPictureKey(clip: GalleryClip): String =
 private fun clipPictureMs(clip: GalleryClip): Long =
     if (clip.exportOnly && clip.exported != null) Math.round(clip.exported.offsetSec * 1000.0) else Math.round(clip.cut.stopSec * 1000.0)
 
-/** One solve as a picture, with its time at the upper right. [columns] tells how crowded the grid is, so small cells show less text. */
+/**
+ * One solve as a picture, with its time at the upper right. [columns] tells how crowded the grid is, so small cells show less text.
+ * While clips are being chosen ([selecting]) the cell shows its selection mark and a button to watch it full screen ([onPreview]).
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: Int, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun ClipCell(
+    clip: GalleryClip, openable: Map<Long, Boolean>, columns: Int, selecting: Boolean, selected: Boolean, modifier: Modifier = Modifier,
+    onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
+) {
+    val canPick = selectable(clip, openable)
     Box(
         modifier
             .fillMaxWidth()
             .aspectRatio(THUMB_ASPECT)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .then(if (selecting && selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Thumb(clipPictureKey(clip), clipPictureUri(clip, openable), clipPictureMs(clip), Modifier.fillMaxSize())
-        if (!clip.cut.included) Box(Modifier.fillMaxSize().background(Color(0x88000000)))
+        if (!clip.cut.included || (selecting && !canPick)) Box(Modifier.fillMaxSize().background(Color(0x88000000)))
         Badge(timeBadgeText(clip), Color(0xCC000000), modifier = Modifier.align(Alignment.TopEnd).padding(if (columns >= 5) 3.dp else 6.dp))
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                if (selecting && canPick) SelectMark(selected, 24.dp)
                 // the clip itself still works (it plays from its exported file), so this tag is not red
                 if (clip.exportOnly) Badge("Export only", GREEN)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
-                if (!clip.cut.included) Badge("Left out", GREY)
+                if (!clip.cut.included) Badge("Left over", GREY)
             }
+        } else if (selecting && canPick) {
+            Box(Modifier.align(Alignment.TopStart).padding(3.dp)) { SelectMark(selected, 16.dp) }
         } else if (clip.exported != null) {
             // very small cells: just a green corner mark for "exported"
             Box(Modifier.align(Alignment.TopStart).padding(3.dp).size(10.dp).background(GREEN, RoundedCornerShape(5.dp)))
@@ -437,7 +547,7 @@ private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: I
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
                     .background(Color(0x99000000))
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                    .padding(start = 6.dp, top = 3.dp, bottom = 3.dp, end = if (selecting) 34.dp else 6.dp)
             ) {
                 Text(
                     if (clip.index >= 0) "Solve ${clip.index + 1} of ${clip.total}" else "Solve",
@@ -458,19 +568,31 @@ private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: I
                 }
             }
         }
+        if (selecting) {
+            PreviewButton(if (columns >= 5) 14.dp else 18.dp, Modifier.align(Alignment.BottomEnd).padding(4.dp), onPreview)
+        }
     }
 }
 
-/** One solve as a list row: small picture, title, a line about where it comes from, and its time. */
+/** One solve as a list row: small picture, title, a line about where it comes from, and its time. While choosing: mark and preview. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ClipRow(clip: GalleryClip, openable: Map<Long, Boolean>, onClick: () -> Unit) {
+private fun ClipRow(
+    clip: GalleryClip, openable: Map<Long, Boolean>, selecting: Boolean, selected: Boolean,
+    onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
+) {
+    val canPick = selectable(clip, openable)
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .alpha(if (selecting && !canPick) 0.45f else 1f)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (selecting) {
+            Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) { if (canPick) SelectMark(selected, 24.dp) }
+        }
         Thumb(
             clipPictureKey(clip), clipPictureUri(clip, openable), clipPictureMs(clip),
             Modifier.width(60.dp).aspectRatio(THUMB_ASPECT).clip(RoundedCornerShape(8.dp))
@@ -482,7 +604,7 @@ private fun ClipRow(clip: GalleryClip, openable: Map<Long, Boolean>, onClick: ()
                 formatDate(dateOf(clip.footage)) +
                         (if (clip.index >= 0) "  |  Solve ${clip.index + 1} of ${clip.total}" else "") +
                         (if (clip.exportOnly) "  |  export only (raw footage gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
-                        (if (!clip.cut.included) "  |  left out" else "") +
+                        (if (!clip.cut.included) "  |  left over" else "") +
                         (if (clip.needsCheck) "  |  check" else "") +
                         (if (clip.sharedList.isNotEmpty()) "  |  " + clip.sharedList.joinToString(", ") else ""),
                 style = MaterialTheme.typography.bodySmall,
@@ -496,6 +618,10 @@ private fun ClipRow(clip: GalleryClip, openable: Map<Long, Boolean>, onClick: ()
             fontWeight = FontWeight.Bold,
             color = if (clip.needsCheck) AMBER else MaterialTheme.colorScheme.onSurface
         )
+        if (selecting) {
+            Spacer(Modifier.width(8.dp))
+            PreviewButton(20.dp, onClick = onPreview)
+        }
     }
 }
 
@@ -680,6 +806,73 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var renaming by remember { mutableStateOf<Footage?>(null) }
     var forgetting by remember { mutableStateOf<Footage?>(null) }
     var relinkFor by remember { mutableStateOf<Footage?>(null) }        // the session whose video is being picked again
+    var askExport by remember { mutableStateOf(false) }                 // the "Export N clips?" window
+    var batchDone by remember { mutableStateOf(-1) }                    // clips exported so far in a batch export (-1 = not exporting)
+    var batchTotal by remember { mutableStateOf(0) }
+
+    // keep the screen awake while a batch export runs
+    val view = LocalView.current
+    SideEffect { view.keepScreenOn = batchDone >= 0 }
+    DisposableEffect(view) { onDispose { view.keepScreenOn = false } }
+
+    // ---- choosing clips to export ----
+    fun exitSelection() {
+        ui.selecting = false
+        ui.selected = emptySet()
+    }
+    fun toggleSelect(clip: GalleryClip, openable: Map<Long, Boolean>) {
+        if (!selectable(clip, openable)) {
+            message = notSelectableReason(clip, openable)
+            return
+        }
+        ui.selected = if (clip.listKey in ui.selected) ui.selected - clip.listKey else ui.selected + clip.listKey
+    }
+    /** Shows only one session's clips and ticks the ones that aren't exported yet (the editor's Export clips..., or the footage menu). */
+    fun selectSession(id: Long, loaded: GalleryData) {
+        ui.tab = 0
+        ui.hidden = loaded.footage.map { it.id }.filter { it != id }.toSet()
+        ui.exportFilter = ExportFilter.ALL
+        ui.save()
+        ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && selectable(it, loaded.openable) }.map { it.listKey }.toSet()
+        ui.selecting = true
+        message = if (ui.selected.isEmpty()) "Every clip of this video is already exported. Tap clips to select them again, then Export."
+        else "The ${ui.selected.size} clips of this video that aren't exported yet are selected. Tap a clip to add or remove it, " +
+                "tap the arrows in its corner to watch it, then Export."
+    }
+    fun runBatchExport(items: List<GalleryClip>) {
+        if (batchDone >= 0 || items.isEmpty()) return
+        batchDone = 0
+        batchTotal = items.size
+        scope.launch {
+            var made = 0
+            var skipped = 0
+            val problems = ArrayList<String>()
+            for (group in items.groupBy { it.footage.id }.values) {
+                val f = group[0].footage
+                val before = batchDone
+                try {
+                    val r = withContext(Dispatchers.IO) {
+                        exportFromSession(context, f, group.map { it.index }.toSet()) { i -> batchDone = before + i }
+                    }
+                    made += r.made
+                    skipped += r.skipped
+                    problems.addAll(r.problems)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    problems.add("${f.title}: ${e.message ?: e.javaClass.simpleName}")
+                }
+                batchDone = before + group.size
+            }
+            message = "Exported $made of ${items.size} clips to Movies/CubeCut." +
+                    (if (skipped > 0) " $skipped had no clip (too close to the solve before them)." else "") +
+                    (if (problems.isNotEmpty()) " Problems: " + problems.take(3).joinToString("; ") + (if (problems.size > 3) " ..." else "") else "")
+            batchDone = -1
+            exitSelection()
+            ui.refresh++
+        }
+    }
+    BackHandler(enabled = ui.selecting) { exitSelection() }
 
     // Android can't tell CubeCut when a video is deleted or restored while the app is open, so everything is checked again each time you
     // come back to the app (and the Refresh button does it on demand)
@@ -736,6 +929,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ui.tab = 0
                     ui.openViewer(loaded.clips.filter { it.footage.id == found.footage.id }.sortedBy { it.index }, found)
                 }
+            }
+            // coming back from the editor's Export clips...: tick that video's clips that aren't exported yet
+            val selectFor = ui.selectFootage
+            if (selectFor != null) {
+                ui.selectFootage = null
+                if (loaded.footage.any { it.id == selectFor }) selectSession(selectFor, loaded)
             }
             // forget filter choices about sessions that no longer exist
             val known = loaded.footage.map { it.id }.toSet()
@@ -828,6 +1027,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val statsById: Map<Long, FootageStats> = remember(d) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
     }
+    // the Clips tab's clips, filtered and sorted
+    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.clipKeys) {
+        if (d == null) emptyList()
+        else sortClips(
+            d.clips.filter { c ->
+                c.footage.id !in ui.hidden && when (ui.exportFilter) {
+                    ExportFilter.ALL -> true
+                    ExportFilter.EXPORTED -> c.exported != null
+                    ExportFilter.NOT_EXPORTED -> c.exported == null
+                }
+            },
+            ui.clipKeys
+        )
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -836,8 +1049,22 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 .systemBarsPadding()
                 .padding(horizontal = 8.dp)
         ) {
-            // ===== header =====
-            Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            // ===== header (while choosing clips: how many are chosen, All / None, Export) =====
+            if (ui.selecting && d != null) {
+                val pickable = shownClips.filter { selectable(it, d.openable) }.map { it.listKey }.toSet()
+                val allOn = pickable.isNotEmpty() && ui.selected.containsAll(pickable)
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { exitSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
+                    Column(Modifier.weight(1f)) {
+                        Text("${ui.selected.size} selected", style = MaterialTheme.typography.titleLarge)
+                        Text("Tap to tick, corner arrows to watch", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    TextButton(onClick = { ui.selected = if (allOn) ui.selected - pickable else ui.selected + pickable }) {
+                        Text(if (allOn) "None" else "All")
+                    }
+                    Button(onClick = { askExport = true }, enabled = ui.selected.isNotEmpty() && batchDone < 0) { Text("Export") }
+                }
+            } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
                     painter = painterResource(R.drawable.cubecut_logo),
                     contentDescription = "CubeCut logo",
@@ -865,7 +1092,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             // ===== the two tabs =====
             TabRow(selectedTabIndex = ui.tab) {
                 Tab(selected = ui.tab == 0, onClick = { ui.tab = 0 }, text = { Text("Clips") })
-                Tab(selected = ui.tab == 1, onClick = { ui.tab = 1 }, text = { Text("Footage") })
+                Tab(selected = ui.tab == 1, onClick = { if (!ui.selecting) ui.tab = 1 }, text = { Text("Footage") })
             }
 
             // ===== view switch, sort and filter =====
@@ -907,7 +1134,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             }
 
             // ===== the content: two pages (Clips, Footage) you can swipe between =====
-            HorizontalPager(state = tabPager, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
+            HorizontalPager(state = tabPager, userScrollEnabled = !ui.selecting, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -938,17 +1165,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             modifier = Modifier.padding(12.dp)
                         )
                     } else if (page == 0) {
-                        val shown = remember(d, ui.hidden, ui.exportFilter, ui.clipKeys) {
-                            sortClips(
-                                d.clips.filter { c ->
-                                    c.footage.id !in ui.hidden && when (ui.exportFilter) {
-                                        ExportFilter.ALL -> true
-                                        ExportFilter.EXPORTED -> c.exported != null
-                                        ExportFilter.NOT_EXPORTED -> c.exported == null
-                                    }
-                                },
-                                ui.clipKeys
-                            )
+                        val shown = shownClips
+                        // tap: watch it (or, while choosing, tick it); long-press: start choosing; the corner arrows: watch it while choosing
+                        val onTap: (GalleryClip) -> Unit = { clip -> if (ui.selecting) toggleSelect(clip, d.openable) else ui.openViewer(shown, clip) }
+                        val onLong: (GalleryClip) -> Unit = { clip ->
+                            if (ui.selecting) {
+                                toggleSelect(clip, d.openable)
+                            } else if (selectable(clip, d.openable)) {
+                                ui.selected = setOf(clip.listKey)
+                                ui.selecting = true
+                            } else {
+                                message = notSelectableReason(clip, d.openable)
+                            }
                         }
                         if (shown.isEmpty()) {
                             Text(
@@ -965,11 +1193,21 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 verticalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                                gridItems(shown, key = { it.listKey }) { clip -> ClipCell(clip, d.openable, ui.clipsColumns, Modifier.animateItem()) { ui.openViewer(shown, clip) } }
+                                gridItems(shown, key = { it.listKey }) { clip ->
+                                    ClipCell(
+                                        clip, d.openable, ui.clipsColumns, ui.selecting, clip.listKey in ui.selected, Modifier.animateItem(),
+                                        onLongClick = { onLong(clip) }, onPreview = { ui.openViewer(shown, clip) }
+                                    ) { onTap(clip) }
+                                }
                             }
                         } else {
                             LazyColumn(Modifier.fillMaxSize(), state = clipsListState, contentPadding = PaddingValues(bottom = 8.dp)) {
-                                listItems(shown, key = { it.listKey }) { clip -> ClipRow(clip, d.openable) { ui.openViewer(shown, clip) } }
+                                listItems(shown, key = { it.listKey }) { clip ->
+                                    ClipRow(
+                                        clip, d.openable, ui.selecting, clip.listKey in ui.selected,
+                                        onLongClick = { onLong(clip) }, onPreview = { ui.openViewer(shown, clip) }
+                                    ) { onTap(clip) }
+                                }
                             }
                         }
                     } else {
@@ -1041,7 +1279,66 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 onTrashExport = { e ->
                     ui.detail = null
                     startTrash(PendingTrash(null, e, true))
+                },
+                selection = if (ui.selecting) ui.selected else null,
+                onToggleSelect = { c -> toggleSelect(c, d.openable) }
+            )
+        }
+
+        // ===== "Export N clips?" =====
+        if (askExport && d != null) {
+            val chosen = shownClips.filter { it.listKey in ui.selected && selectable(it, d.openable) } +
+                    d.clips.filter { it.listKey in ui.selected && selectable(it, d.openable) && it !in shownClips }
+            val again = chosen.count { it.exported != null }
+            val fresh = chosen.filter { it.exported == null }
+            val example = chosen.firstOrNull()
+            AlertDialog(
+                onDismissRequest = { askExport = false },
+                title = { Text("Export ${chosen.size} clips?") },
+                text = {
+                    Text(
+                        "They are saved in Movies/CubeCut, named after their video" +
+                                (if (example != null) " (for example \"${ClipExporter.safeTitle(example.footage.title)}_Solve_${"%02d".format(example.index + 1)}_...\")" else "") +
+                                ". Each clip uses its own scramble choice." +
+                                (if (again > 0) "\n\n$again of them were exported before. Exporting them again makes a second file; the first one stays." else ""),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = { askExport = false; runBatchExport(chosen) }, enabled = chosen.isNotEmpty()) {
+                        Text(if (again > 0) "Export all ${chosen.size}" else "Export")
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        if (again > 0 && fresh.isNotEmpty()) {
+                            TextButton(onClick = { askExport = false; runBatchExport(fresh) }) { Text("Only the ${fresh.size} new") }
+                        }
+                        TextButton(onClick = { askExport = false }) { Text("Cancel") }
+                    }
                 }
+            )
+        }
+
+        // ===== batch export progress (blocks the screen until it is done) =====
+        if (batchDone >= 0) {
+            AlertDialog(
+                onDismissRequest = { },
+                properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+                title = { Text("Exporting clips") },
+                text = {
+                    Column {
+                        Text("Clip ${min(batchDone + 1, batchTotal)} of $batchTotal", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { if (batchTotal > 0) batchDone.toFloat() / batchTotal else 0f },
+                            modifier = Modifier.fillMaxWidth().height(10.dp)
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text("Keep CubeCut open until it is done.", style = MaterialTheme.typography.bodySmall)
+                    }
+                },
+                confirmButton = { }
             )
         }
 
@@ -1202,6 +1499,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             footageMenu = null
                             onOpenEditor(EditorRequest(Uri.parse(menuFootage.uri), null))
                         }) { Text("Open in editor") }
+                        TextButton(enabled = canOpenIt, onClick = {
+                            footageMenu = null
+                            selectSession(menuFootage.id, d)
+                        }) { Text("Export clips...") }
                         if (menuFootage.trashedMs > 0) {
                             TextButton(onClick = { footageMenu = null; startTrash(PendingTrash(menuFootage, null, false)) }) { Text("Restore video from trash") }
                         } else if (canOpenIt && Build.VERSION.SDK_INT >= 30) {
@@ -1704,7 +2005,9 @@ fun ClipViewer(
     onOpenEditor: (GalleryClip) -> Unit,
     onReconnect: (Footage) -> Unit,
     onShowSession: (Footage) -> Unit,
-    onTrashExport: (ExportedClip) -> Unit
+    onTrashExport: (ExportedClip) -> Unit,
+    selection: Set<String>? = null,                 // not null while clips are being chosen for an export: the chosen ones
+    onToggleSelect: (GalleryClip) -> Unit = { }
 ) {
     if (list.isEmpty()) return
     val context = LocalContext.current
@@ -1912,7 +2215,7 @@ fun ClipViewer(
         exportMessage = "Exporting..."
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                try { ClipExporter.export(context, Uri.parse(f.uri), listOf(clip)) { _, _ -> } } catch (e: Exception) { null }
+                try { ClipExporter.export(context, Uri.parse(f.uri), listOf(clip), f.title) { _, _ -> } } catch (e: Exception) { null }
             }
             if (result == null) {
                 exportMessage = "The export failed."
@@ -2006,6 +2309,47 @@ fun ClipViewer(
             }
         }
 
+        // ===== while choosing clips to export: tick this one, and choose its scramble, without leaving the player =====
+        if (selection != null && sheetP < 0.5f) {
+            Column(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .systemBarsPadding()
+                    .padding(top = if (controlsVisible) 56.dp else 8.dp, end = 10.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (editable && !current.noClip) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable { onToggleSelect(current) }
+                            .padding(4.dp)
+                    ) {
+                        SelectMark(current.listKey in selection, 34.dp)
+                    }
+                    val on = withScramble(current)
+                    Text(
+                        if (on) "Scramble: on" else "Scramble: off",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (on) Color(0xCC2E7D32) else Color(0xCC000000))
+                            .clickable { setScramble(current, !on) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                } else {
+                    Text(
+                        if (current.noClip) "No clip: too close to the solve before" else "Can't be exported",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+            }
+        }
+
         if (showHint && sheetP < 0.05f && !controlsVisible) {
             SwipeUpHint(Modifier.align(Alignment.Center).padding(top = 120.dp))
         }
@@ -2068,7 +2412,7 @@ fun ClipViewer(
                         Text("The original video is gone, so this is the exported file.", style = MaterialTheme.typography.bodySmall)
                     }
                     if (current.needsCheck) {
-                        Text(highlightCheck("check: " + current.cut.note), style = MaterialTheme.typography.bodyMedium)
+                        Text(highlightCheck("check: " + current.checkText), style = MaterialTheme.typography.bodyMedium)
                     } else if (current.cut.note.isNotEmpty()) {
                         Text(current.cut.note, style = MaterialTheme.typography.bodySmall)
                     }
