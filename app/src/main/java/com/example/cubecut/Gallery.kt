@@ -470,8 +470,8 @@ private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
     !c.exportOnly && c.index >= 0 && !c.noClip && openable[c.footage.id] == true
 
 private fun notSelectableReason(c: GalleryClip, openable: Map<Long, Boolean>): String = when {
-    c.exportOnly || openable[c.footage.id] != true -> "This clip's original video isn't here, so it can't be exported again."
-    c.noClip -> "This solve is too close to the one before it, so it has no clip. Fix it in the editor first."
+    c.exportOnly || openable[c.footage.id] != true -> "This clip's original video is missing, so it can't be exported again."
+    c.noClip -> "This solve is too close to the one before. Fix it in the editor first."
     else -> "This clip can't be exported."
 }
 
@@ -859,17 +859,18 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 Text(AUTHOR_FIND_ME, style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Cuts a speedcubing session video into one clip per solve by reading the timer. " +
-                            "Everything runs on this phone and nothing is uploaded.",
+                    "Cuts a session video into one clip per solve by reading the timer. " +
+                            "Everything runs on this phone. Nothing is uploaded.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "Free software under the GNU General Public License, version 3, with no warranty. " +
-                            "Anyone who shares CubeCut or a changed version of it must also share the source code under the same licence, " +
-                            "keep this credit in the app, and say clearly that a changed version is changed. " +
-                            "See the LICENSE and NOTICE.md files in the source code.",
-                    style = MaterialTheme.typography.bodySmall
+                BulletLines(
+                    listOf(
+                        "Free software under the GNU General Public License, version 3, with no warranty.",
+                        "If you share CubeCut or a changed version, you must also share the source code under the same licence.",
+                        "Keep this credit in the app, and say clearly when a version is changed.",
+                        "See LICENSE and NOTICE.md in the source code."
+                    )
                 )
             }
         },
@@ -952,9 +953,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ui.save()
         ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && selectable(it, loaded.openable) }.map { it.listKey }.toSet()
         ui.selecting = true
-        message = if (ui.selected.isEmpty()) "Every clip of this video is already exported. Tap clips to select them again, then Export."
-        else "The ${ui.selected.size} clips of this video that aren't exported yet are selected. Tap a clip to add or remove it, " +
-                "tap the arrows in its corner to watch it, then Export."
+        message = if (ui.selected.isEmpty()) "All clips of this video are already exported. Tap clips to pick them again."
+        else "${ui.selected.size} new clips selected. Tap a clip to add or remove it. The corner arrows play it. Then Export."
     }
     fun runBatchExport(items: List<GalleryClip>) {
         if (batchDone >= 0 || items.isEmpty()) return
@@ -982,7 +982,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 batchDone = before + group.size
             }
             message = "Exported $made of ${items.size} clips to Movies/CubeCut." +
-                    (if (skipped > 0) " $skipped had no clip (too close to the solve before them)." else "") +
+                    (if (skipped > 0) " $skipped had no clip (too close to the solve before)." else "") +
                     (if (problems.isNotEmpty()) " Problems: " + problems.take(3).joinToString("; ") + (if (problems.size > 3) " ..." else "") else "")
             batchDone = -1
             exitSelection()
@@ -1146,8 +1146,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
         val media = SessionStore.mediaStoreUriOf(p.uriString)
         if (media == null) {
-            message = "CubeCut can't move \"${p.name}\" to trash: it was picked from a folder view, and Android only allows the trash for " +
-                    "videos picked from the Videos list of the picker. Delete it in your Files app instead."
+            message = "Can't move \"${p.name}\" to trash. It was picked from a folder view, and Android only allows this for videos " +
+                    "picked from the Videos list. Delete it in your Files app instead."
             return
         }
         try {
@@ -1331,10 +1331,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 )
             }
             if (message.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { message = "" }) { Text("OK") }
-                }
+                InfoNote(
+                    message,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                    kind = kindOfMessage(message),
+                    action = "OK",
+                    onAction = { message = "" }
+                )
             }
 
             // ===== the content: two pages (Clips, Footage) you can swipe between =====
@@ -1362,10 +1365,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     } else if (d == null) {
                         Text("Loading...", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
                     } else if (d.footage.isEmpty()) {
-                        Text(
-                            "Nothing here yet.\n\nTap Import video, set up the timer and press Find solves. Every session you scan is kept here, " +
-                                    "with all its solves, the next time you open CubeCut.",
-                            style = MaterialTheme.typography.bodyMedium,
+                        InfoNote(
+                            title = "Nothing here yet",
+                            text = "Tap Import video, set up the timer and press Find solves. Every session you scan is kept here.",
                             modifier = Modifier.padding(12.dp)
                         )
                     } else if (page == 0) {
@@ -1513,12 +1515,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 onDismissRequest = { askExport = false },
                 title = { Text("Export ${chosen.size} clips?") },
                 text = {
-                    Text(
-                        "They are saved in Movies/CubeCut, named after their video" +
-                                (if (example != null) " (for example \"${ClipExporter.safeTitle(example.footage.title)}_Solve_${"%02d".format(example.index + 1)}_...\")" else "") +
-                                ". Each clip uses its own scramble choice." +
-                                (if (again > 0) "\n\n$again of them were exported before. Exporting them again makes a second file; the first one stays." else ""),
-                        style = MaterialTheme.typography.bodyMedium
+                    BulletLines(
+                        buildList {
+                            add("Saved in Movies/CubeCut.")
+                            add(
+                                "Named after their video" +
+                                        (if (example != null) ", like \"${ClipExporter.safeTitle(example.footage.title)}_Solve_${"%02d".format(example.index + 1)}_...\"" else "") + "."
+                            )
+                            add("Each clip uses its own scramble setting.")
+                            if (again > 0) add("$again were exported before. Exporting them again makes a second file. The first stays.")
+                        }
                     )
                 },
                 confirmButton = {
@@ -1599,8 +1605,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 text = {
                     Column {
                         Text(
-                            "Clips are ordered by the first choice. Clips that tie are ordered by the next one. " +
-                                    "For example: Date, then Solve time = each day's solves from fastest to slowest.",
+                            "Clips follow the first choice. Ties follow the next one. " +
+                                    "Example: Date, then Solve time = each day's solves, fastest first.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         LevelPicker("Sort by", k1, false, true) { pick ->
@@ -1700,19 +1706,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                         Text(
                             formatDate(dateOf(menuFootage)) + "  |  " + formatTime(menuFootage.durationMs) + "\n" +
-                                    (if (canOpenIt) "${st?.solves ?: 0} solves on, ${menuFootage.cutCount} cuts saved" else "${st?.solves ?: 0} exported clips") +
+                                    (if (canOpenIt) "${st?.solves ?: 0} solves, ${menuFootage.cutCount} cuts saved" else "${st?.solves ?: 0} exported clips") +
                                     (if (st?.best != null) ", best ${st.bestText}" else "") + "\n" +
-                                    (if (menuFootage.lastScanMs > 0) "Find solves last ran on ${formatDate(menuFootage.lastScanMs)}" else "Find solves hasn't run on it yet") +
+                                    (if (menuFootage.lastScanMs > 0) "Last scanned ${formatDate(menuFootage.lastScanMs)}" else "Not scanned yet") +
                                     "\nFile: ${menuFootage.displayName}",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         if (!canOpenIt) {
                             Spacer(Modifier.height(8.dp))
-                            Text(
-                                "The video can't be opened right now (moved, renamed, deleted, or restored under a new link), so only the clips you exported are shown. " +
-                                        "Your saved cuts are safe: if you still have the video, tap Reconnect video below and pick it, " +
-                                        "and every clip is back.",
-                                style = MaterialTheme.typography.bodySmall
+                            InfoNote(
+                                kind = NoteKind.CHECK,
+                                title = "Can't open the video",
+                                text = "Only exported clips are shown. Your saved cuts are safe. Tap Reconnect video below and pick the original to bring every clip back."
                             )
                         }
                         Spacer(Modifier.height(8.dp))
@@ -1765,19 +1770,19 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 text = {
                     Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                         Text(
-                            "\"${trashingFootage.title}\" (${trashingFootage.displayName}, ${formatTime(trashingFootage.durationMs)}) is the original recording on your phone. " +
-                                    "It will leave your gallery and Files apps. Android asks you to confirm next.",
+                            "\"${trashingFootage.title}\" (${trashingFootage.displayName}, ${formatTime(trashingFootage.durationMs)}) is the original recording. " +
+                                    "It leaves your gallery and Files apps. Android asks you to confirm next.",
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Text("What happens:", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "\u2022 Clips you exported stay in the Gallery and keep playing.\n" +
-                                    "\u2022 The ${(stats?.solves ?: 0)} solves you did NOT export disappear from the Gallery until the video is back. " +
-                                    "Their cuts and notes stay saved in CubeCut.\n" +
-                                    "\u2022 You can restore the video from \"Recently deleted\" for about 30 days. After that Android deletes it for good, " +
-                                    "and clips you didn't export can't be made any more.",
-                            style = MaterialTheme.typography.bodySmall
+                        Spacer(Modifier.height(10.dp))
+                        Text("What happens", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(4.dp))
+                        BulletLines(
+                            listOf(
+                                "Exported clips stay in the Gallery and keep playing.",
+                                "The ${(stats?.solves ?: 0)} solves you didn't export leave the Gallery until the video is back. Their cuts and notes stay saved.",
+                                "Restore it from Recently deleted within about 30 days. After that it's gone for good, and clips you didn't export can't be made."
+                            )
                         )
                     }
                 },
@@ -1796,10 +1801,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 title = { Text("Recently deleted") },
                 text = {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
-                        Text(
-                            "Items you moved to trash from CubeCut. Android keeps them for about 30 days and then deletes them for good. " +
-                                    "If you already restored one in another app, tap \"Already restored\" to clear it from this list.",
-                            style = MaterialTheme.typography.bodySmall
+                        InfoNote(
+                            "Android keeps trashed items about 30 days, then deletes them for good. " +
+                                    "Restored one in another app? Tap Already restored to clear it here."
                         )
                         if (td == null) {
                             Text("Loading...", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
@@ -1890,10 +1894,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 onDismissRequest = { forgetting = null },
                 title = { Text("Forget this session?") },
                 text = {
-                    Text(
-                        "\"${forgetTarget.title}\" and its ${forgetTarget.cutCount} saved cuts are removed from CubeCut, including the list of " +
-                                "clips you exported from it. The video itself and the exported clip files are not touched.",
-                        style = MaterialTheme.typography.bodyMedium
+                    BulletLines(
+                        listOf(
+                            "\"${forgetTarget.title}\" and its ${forgetTarget.cutCount} saved cuts are removed from CubeCut, with its export list.",
+                            "The video and the exported clip files are not touched."
+                        )
                     )
                 },
                 confirmButton = {
@@ -2458,7 +2463,7 @@ fun ClipViewer(
         val cuts = cutsFor(c)
         val clip = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0).firstOrNull { it.cutIndex == c.index }
         if (clip == null) {
-            exportMessage = "This solve is too close to the one before it to make a clip of its own."
+            exportMessage = "This solve is too close to the one before to make a clip."
             return
         }
         val cut = cuts.getOrNull(c.index) ?: return
@@ -2655,7 +2660,7 @@ fun ClipViewer(
                     Text(current.title, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         if (exportedFile != null) "Exported as ${exportedFile.fileName} on ${formatDate(exportedFile.exportedMs)}"
-                        else if (current.cut.included) "Not exported yet" else "Not exported yet (switched off in the editor, you can still export it here)",
+                        else "Not exported yet",
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (exportedFile != null) GREEN else MaterialTheme.colorScheme.onSurface
                     )
@@ -2690,14 +2695,14 @@ fun ClipViewer(
                         }
                         if (window != null) {
                             Text(
-                                "This clip runs from ${formatTime(Math.round(window.first * 1000.0))} to ${formatTime(Math.round(window.second * 1000.0))} " +
-                                        "(${Math.round(window.second - window.first)} s).",
+                                "Clip: ${formatTime(Math.round(window.first * 1000.0))} to ${formatTime(Math.round(window.second * 1000.0))} " +
+                                        "(${Math.round(window.second - window.first)} s)",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
                         if (exportedFile != null) {
                             Text(
-                                "The file you already exported isn't changed by this; exporting again makes a new file.",
+                                "Your exported file stays as it is. Exporting again makes a new file.",
                                 style = MaterialTheme.typography.labelSmall
                             )
                         }
@@ -2748,7 +2753,7 @@ fun ClipViewer(
                         }
                     } else {
                         Text(
-                            "This exported clip no longer matches a solve in the session (its cut was moved or removed), so it can't take a note.",
+                            "This clip no longer matches a solve, so it can't take a note.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -2797,7 +2802,7 @@ fun ClipViewer(
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("Reconnect video") }
                         Text(
-                            "Your saved cuts are safe. Pick the original session video and every clip of it is back.",
+                            "Your saved cuts are safe. Pick the original video to bring every clip back.",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(top = 4.dp)
                         )
@@ -2828,11 +2833,12 @@ fun ClipViewer(
                 onDismissRequest = { confirmTrash = false },
                 title = { Text("Move this exported clip to trash?") },
                 text = {
-                    Text(
-                        "The file ${trashTarget.fileName} (in Movies/CubeCut) goes to your phone's trash and disappears from your gallery apps. " +
-                                "Android shows its own confirmation next. You can bring it back from \"Recently deleted\" in CubeCut " +
-                                "for about 30 days; after that Android deletes it for good.\n\nThe solve itself, its cut and your note stay in CubeCut.",
-                        style = MaterialTheme.typography.bodyMedium
+                    BulletLines(
+                        listOf(
+                            "${trashTarget.fileName} (in Movies/CubeCut) leaves your gallery apps. Android asks you to confirm next.",
+                            "Restore it from Recently deleted within about 30 days. After that it's gone for good.",
+                            "The solve, its cut and your note stay in CubeCut."
+                        )
                     )
                 },
                 confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Move to trash") } },
@@ -2846,7 +2852,7 @@ fun ClipViewer(
                 title = { Text("Export again?") },
                 text = {
                     Text(
-                        "This solve was already exported. Exporting again makes a second file in Movies/CubeCut (the first one stays).",
+                        "This solve was already exported. Exporting again makes a second file in Movies/CubeCut. The first one stays.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 },

@@ -481,7 +481,7 @@ object SessionStore {
             return "Couldn't open that video: ${e.message ?: e.javaClass.simpleName}"
         }
         if (Math.abs(dur - footage.durationMs) > 1500L) {
-            return "That video is ${formatTime(dur)} long but \"${footage.title}\" is ${formatTime(footage.durationMs)}. Pick the original session video."
+            return "That video is ${formatTime(dur)} long, but \"${footage.title}\" is ${formatTime(footage.durationMs)}. Pick the original video."
         }
         val (name, size) = nameAndSize(context, uri)
         val v = ContentValues()
@@ -489,7 +489,7 @@ object SessionStore {
         if (name.isNotEmpty()) v.put("display_name", name)
         if (size > 0) v.put("size_bytes", size)
         db(context).update("footage", v, "id = ?", arrayOf(footage.id.toString()))
-        return "Reconnected \"${footage.title}\". All its clips are back."
+        return "Reconnected \"${footage.title}\". Its clips are back."
     }
 
     /** Gives a session a new title (an empty title is ignored). */

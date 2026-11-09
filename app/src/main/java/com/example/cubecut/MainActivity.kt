@@ -445,9 +445,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                     cuts.addAll(opened.cuts)
                     if (opened.cuts.isNotEmpty()) {
                         setupExpanded = false
-                        openedNote = "Opened your saved session: ${opened.cuts.size} cuts" +
-                                (if (opened.footage.lastScanMs > 0) ", found on ${formatDate(opened.footage.lastScanMs)}" else "") +
-                                ". Set up the timer only to run Find solves again."
+                        openedNote = "Saved session: ${opened.cuts.size} cuts" +
+                                (if (opened.footage.lastScanMs > 0) ", found ${formatDate(opened.footage.lastScanMs)}" else "") +
+                                ". Set up the timer only to scan again."
                         analysisStatus = openedNote
                     }
                 }
@@ -487,29 +487,29 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                         val restoredRef = res.reference
                         if (restoredSetup != null && restoredRef != null) {
                             timerEngine = withContext(Dispatchers.Default) { TimerEngine(restoredSetup, restoredRef) }
-                            timerMessage = "Timer setup brought back from the last time this video was open. " + res.message
+                            timerMessage = "Saved timer setup restored. " + res.message
                             timerDebug = null
-                            status = (openedNote ?: "Ready") + " Timer set up again from your saved setup."
+                            status = (openedNote ?: "Ready") + " Timer restored."
                         } else {
-                            timerMessage = "Couldn't bring back the saved timer setup (${res.message}). Please set it up again."
-                            status = (openedNote ?: "Ready") + " The saved timer setup couldn't be used: set it up again."
+                            timerMessage = "Couldn't use the saved timer setup (${res.message}). Set it up again."
+                            status = (openedNote ?: "Ready") + " Set up the timer again."
                         }
                     } else {
-                        timerMessage = "Couldn't bring back the saved timer setup (no picture at that point of the video). Please set it up again."
+                        timerMessage = "Couldn't restore the saved timer setup (no picture there). Set it up again."
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    timerMessage = "Couldn't bring back the saved timer setup: ${e.message ?: e.javaClass.simpleName}. Please set it up again."
+                    timerMessage = "Couldn't restore the saved timer setup: ${e.message ?: e.javaClass.simpleName}. Set it up again."
                 }
             } else if (savedSession != null && savedCorners == null && savedSession.timerFrameMs >= 0) {
-                timerMessage = "A timer setup was saved for this video but it couldn't be read. Please set it up again."
+                timerMessage = "The saved timer setup couldn't be read. Set it up again."
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             status = "Couldn't open this video: ${e.message ?: e.javaClass.simpleName}. " +
-                    "If it was moved, import it again: CubeCut recognises it and brings back its saved cuts."
+                    "If it moved, import it again. Your saved cuts come back."
         } finally {
             importing = false
         }
@@ -575,7 +575,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                     setupAtMs = atMs
                     setupFrame = bmp
                 } else {
-                    timerMessage = "Couldn't grab a picture from the video here"
+                    timerMessage = "Couldn't read a picture here"
                 }
             }
         }
@@ -630,7 +630,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                     }
                     val seconds = (System.currentTimeMillis() - started) / 1000
                     analysisStatus = if (saved.isEmpty()) {
-                        "Done in ${seconds}s: ${report.solves.count { it.include && it.note.isEmpty() }} solves found, " +
+                        "Done in ${seconds}s: ${report.solves.count { it.include && it.note.isEmpty() }} solves, " +
                                 "${report.solves.count { it.note.isNotEmpty() }} to check"
                     } else {
                         "Re-scan done in ${seconds}s: " + merged.summary()
@@ -640,7 +640,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ScanCancelled) {
-                    analysisStatus = "Find solves cancelled."
+                    analysisStatus = "Cancelled."
                 } catch (e: Exception) {
                     analysisStatus = "Find solves stopped: ${e.message ?: e.javaClass.simpleName}"
                 } finally {
@@ -776,7 +776,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
     // [selectToExport]: open the Gallery with this video's clips that aren't exported yet selected, ready to export
     fun leaveToGallery(showSolve: Int? = null, selectToExport: Boolean = false) {
         if (analyzing) {
-            status = "Find solves is still running: let it finish or press Cancel first"
+            status = "Find solves is running. Let it finish or cancel it first."
             return
         }
         val openSec = if (showSolve != null) cuts.getOrNull(showSolve)?.stopSec else null     // the solve to show in the Gallery
@@ -1020,8 +1020,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                 if (position < 0) position = cuts.size
                                 cuts.add(position, CutItem(stop, text, true, note, scrambleAll, edited = true))
                                 selectedCut = position
-                                analysisStatus = if (text.isNotEmpty()) "Cut added at the first frame that shows $text. Use Edit to adjust it."
-                                else "Cut added. Use Edit to fix its time or move it."
+                                analysisStatus = if (text.isNotEmpty()) "Cut added for $text. Tap Edit to adjust it."
+                                else "Cut added. Tap Edit to set its time."
                             }
                         }
                     },
@@ -1077,18 +1077,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                 Spacer(Modifier.height(8.dp))
                                 Text("1. Timer", style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    if (engineNow != null) "Timer is set up (${engineNow.decimals} decimals) - ready to use"
-                                    else "Timer not set up yet",
+                                    if (engineNow != null) "Ready (${engineNow.decimals} decimals)" else "Not set up yet",
                                     style = MaterialTheme.typography.bodyMedium
                                 )
-                                Text(
-                                    "Use a frame that shows an actual time after a solve: the timer has stopped and shows the final time " +
-                                            "(for example 12.412), with no hand in front of it. Do NOT use a frame that shows 0.000. " +
-                                            "Pause the video on that frame, then tap " + (if (engineNow == null) "Set up timer." else "Set up again."),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold
-                                )
                                 Spacer(Modifier.height(6.dp))
+                                InfoNote(
+                                    title = "Before you set up",
+                                    text = "Pause on a finished time, like 12.412. Not 0.000, and no hand in front of it."
+                                )
+                                Spacer(Modifier.height(8.dp))
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1114,7 +1111,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                                     timerMessage = "Reading..."
                                                     val bmp = withContext(Dispatchers.IO) { grabFrame(context, uri, atMs) }
                                                     if (bmp == null) {
-                                                        timerMessage = "Couldn't grab a picture from the video here"
+                                                        timerMessage = "Couldn't read a picture here"
                                                     } else {
                                                         val res = withContext(Dispatchers.Default) { engine.readFrame(bmp) }
                                                         timerMessage = res.message
@@ -1127,7 +1124,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                     ) { Text("Read timer here") }
                                 }
                                 if (timerMessage.isNotEmpty()) {
-                                    Text(timerMessage, style = MaterialTheme.typography.bodySmall)
+                                    Spacer(Modifier.height(8.dp))
+                                    InfoNote(timerMessage, kind = kindOfMessage(timerMessage))
                                 }
                                 val debugPicture = timerDebug
                                 if (debugPicture != null) {
@@ -1140,16 +1138,21 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
 
                                 Spacer(Modifier.height(12.dp))
                                 Text("2. Buffers around the solve", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "Before the solve: ${"%.1f".format(beforePad)} s  (used when the scramble is left out: the clip starts this long " +
-                                            "before the timer started, worked out from the time on the timer)",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Before the solve: ${"%.1f".format(beforePad)} s", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                    InfoButton(
+                                        "Before the solve",
+                                        listOf("Used when the scramble is left out.", "The clip starts this long before the timer started.")
+                                    )
+                                }
                                 Slider(value = beforePad, onValueChange = { beforePad = it }, valueRange = 0f..8f, steps = 15)
-                                Text(
-                                    "After the solve: ${"%.1f".format(afterPad)} s  (every clip ends this long after the first frame that shows the time)",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("After the solve: ${"%.1f".format(afterPad)} s", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                    InfoButton(
+                                        "After the solve",
+                                        listOf("Every clip ends this long after the final time first shows.")
+                                    )
+                                }
                                 Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
                                 // (the scramble switch for all clips is no longer here: it sits above the list, next to the check filter)
                             }
@@ -1189,7 +1192,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                             Spacer(Modifier.height(6.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "Reading the timer along the video. You can switch to another app - a notification shows the progress.",
+                                    "You can switch apps. A notification shows progress.",
                                     style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -1202,18 +1205,18 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
 
 
                 if (videoUri == null) {
-                    Text("Import a video to begin.", style = MaterialTheme.typography.bodySmall)
+                    InfoNote("Import a video to begin.", Modifier.padding(vertical = 6.dp))
                 } else if (timerEngine == null && cuts.isEmpty() && !analyzing) {
-                    Text(
-                        "Set up the timer in the box above (use a frame that shows an actual time after a solve, not 0.000), then press Find solves.",
-                        style = MaterialTheme.typography.bodyMedium,
+                    InfoNote(
+                        title = "Set up the timer",
+                        text = "Use the box above, then press Find solves.",
                         modifier = Modifier.padding(vertical = 6.dp)
                     )
                 } else if (cuts.isEmpty() && !analyzing && report == null) {
-                    Text(
-                        "Timer ready. Press Find solves: CubeCut reads the timer along the whole video (about $estMin min for this video) " +
-                                "and cuts at the first frame of each final time.",
-                        style = MaterialTheme.typography.bodyMedium
+                    InfoNote(
+                        title = "Timer ready",
+                        text = "Press Find solves. About $estMin min for this video.",
+                        modifier = Modifier.padding(vertical = 6.dp)
                     )
                 }
 
@@ -1221,57 +1224,59 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 if (report != null && !analyzing) {
                     val readablePct = (report.readableFraction * 100).toInt()
                     if (report.solves.isEmpty()) {
-                        Card(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp)
-                        ) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(
-                                    highlightCheck(
-                                        "check: no stopped time was found, so nothing was cut. The timer could be read on $readablePct% of the frames looked at."
-                                    ),
-                                    style = MaterialTheme.typography.bodyMedium
+                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            InfoNote(
+                                kind = NoteKind.CHECK,
+                                title = "No solves found",
+                                text = "The timer was readable on $readablePct% of the frames."
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text("What to try", style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.height(4.dp))
+                            BulletLines(
+                                listOf(
+                                    "Set up again on a frame right after a solve.",
+                                    "Use Read timer here on a few moments after solves.",
+                                    "Or put the playhead on a final time and tap + Cut at playhead."
                                 )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    "What to try: Set up again on a frame right after a solve (the stopped time showing, no hand in front), " +
-                                            "then use Read timer here on a few moments after solves to see whether it reads them. " +
-                                            "Or cut by hand: put the playhead on a frame where a final time is showing and tap + Cut at playhead.",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
+                            )
                         }
                     } else if (report.readableFraction < 0.25) {
-                        Text(
-                            highlightCheck(
-                                "check: the timer could be read on only $readablePct% of the frames looked at, so some solves may be missing. " +
-                                        "Make sure it stays in view and that the setup was done on a clear frame."
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
+                        InfoNote(
+                            kind = NoteKind.CHECK,
+                            title = "Some solves may be missing",
+                            text = "The timer was readable on only $readablePct% of the frames. Keep it in view and set up on a clear frame.",
                             modifier = Modifier.padding(vertical = 4.dp)
                         )
                     }
                     if (report.solves.isNotEmpty()) {
-                        Text(
-                            highlightCheck(
-                                "check: make sure every solve was captured. If one is missing, put the playhead on the END of that solve " +
-                                        "(the first frame that shows the final time) and tap + Cut at playhead."
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
+                        InfoNote(
+                            text = "Missing a solve? Put the playhead on the first frame of its final time and tap + Cut at playhead.",
                             modifier = Modifier.padding(vertical = 4.dp)
                         )
                     }
                 }
 
                 if (cuts.isNotEmpty()) {
-                    Text(
-                        "One card per solve. Tap a card to jump to just before the time first appears. The arrows button puts the scramble " +
-                                "in or out of that clip (blue = in). Edit fixes a time or a position, View shows its clip, " +
-                                "the red bin deletes a cut that isn't a solve (Undo brings it back). Cards marked check need a look: fix them, " +
-                                "or tap It's fine. To export, select clips in the Gallery.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Tap a solve to jump to it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        InfoButton(
+                            "Solve cards",
+                            listOf(
+                                "Arrows: put the scramble in or out of this clip (blue = in).",
+                                "Edit: fix the time or move the cut.",
+                                "View: open the clip in the Gallery.",
+                                "Red bin: delete a cut that isn't a solve. Undo brings it back.",
+                                "Check: needs a look. Fix it, or tap It's fine.",
+                                "To export, choose clips in the Gallery."
+                            )
+                        )
+                    }
                 }
                 // ===== one switch for the scramble of ALL clips: a setting for the whole video, like the buffers =====
                 // (flipping it sets every clip; each card's arrows button can then change one clip again)
@@ -1411,10 +1416,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                     }
                                     // what needs a look, under the line, full width
                                     if (item.timeText.isEmpty()) {
-                                        Text(highlightCheck("no time yet: tap Add time to type it"), style = MaterialTheme.typography.bodySmall)
+                                        Text(highlightCheck("No time yet. Tap Add time."), style = MaterialTheme.typography.bodySmall)
                                     }
                                     if (isLeftover(item)) {
-                                        Text("Left over from before the video, so it isn't a clip.", style = MaterialTheme.typography.bodySmall,
+                                        Text("Left over from before the video. Not a clip.", style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     val warning = checks.warnings[index]
@@ -1444,7 +1449,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                     val unknownCount = clips.count { it.timeText.isBlank() }
                     if (unknownCount > 0) {
                         Text(
-                            "$unknownCount solves have no time yet (their clips are named \"unknown\"; use Add time).",
+                            "$unknownCount solves have no time. Use Add time to name their clips.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1482,7 +1487,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "${(importProgress * 100).toInt()}%  -  please wait, a long video can take a minute or two.",
+                            "${(importProgress * 100).toInt()}%. Long videos can take a minute or two.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1498,10 +1503,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 onDismissRequest = { showClearChecks = false },
                 title = { Text("Mark all as checked?") },
                 text = {
-                    Text(
-                        "The $n solves marked check are marked as looked at and stop being flagged, here and in the Gallery. " +
-                                "A solve that is too close to the one before it stays flagged, because it has no clip until you delete or move one of them.",
-                        style = MaterialTheme.typography.bodyMedium
+                    BulletLines(
+                        listOf(
+                            "$n solves stop being flagged, here and in the Gallery.",
+                            "A solve too close to the one before stays flagged. It has no clip until you delete or move one of them."
+                        )
                     )
                 },
                 confirmButton = {
@@ -1525,19 +1531,17 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 title = { Text("Find solves?") },
                 text = {
                     Column {
-                        Text(
-                            "CubeCut reads the timer along the whole video and cuts at the first frame where each final time appears. " +
-                                    "This may take a few minutes (roughly $estMin min for this video - only an estimate). " +
-                                    "You can switch to another app while it works - a notification will show the progress, and there is a Cancel button. " +
-                                    "Keep CubeCut in your recent apps (don't swipe it away) until it is done."
+                        LeadAndBullets(
+                            "CubeCut reads the timer along the whole video. About $estMin min (an estimate).",
+                            listOf(
+                                "You can switch apps. A notification shows progress.",
+                                "Don't swipe CubeCut away until it's done.",
+                                "You can cancel any time."
+                            )
                         )
                         if (cuts.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "You already have a saved list of solves for this video. Solves you changed or exported stay exactly as they are; " +
-                                        "solves you haven't touched are updated, and any solves found for the first time are added.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
+                            Spacer(Modifier.height(12.dp))
+                            InfoNote("Solves you changed or exported stay as they are. The rest are updated, and new ones are added.")
                         }
                     }
                 },
@@ -1576,15 +1580,21 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                         OutlinedTextField(
                             value = text,
                             onValueChange = { text = it.filter { c -> c.isDigit() || c == '.' || c == ':' } },
-                            label = { Text("Time on the timer, e.g. 12.412 (empty = unknown)") },
+                            label = { Text("Time, e.g. 12.412") },
+                            supportingText = { Text("Leave empty if unknown") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "Cut point (first frame that shows the time): ${"%.2f".format(item.stopSec)} s  (${formatTime((item.stopSec * 1000).toLong())})",
+                            "Cut at ${"%.2f".format(item.stopSec)} s  (${formatTime((item.stopSec * 1000).toLong())})",
                             style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            "The first frame that shows the time",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         val tight = PaddingValues(horizontal = 8.dp)
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1636,7 +1646,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                             timerEngine?.release()
                             timerEngine = newEngine
                             val zeroWarning = if (typed.any { it.isDigit() } && typed.all { !it.isDigit() || it == '0' })
-                                "\nWarning: a zero doesn't teach the timer much. For best results use Set up again on a frame right after a solve, when the stopped time is showing."
+                                "\nA zero doesn't teach the timer much. Set up again on a frame that shows a finished time."
                             else ""
                             timerMessage = res.message + zeroWarning
                             timerDebug = null
@@ -1652,9 +1662,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                         e.message ?: e.javaClass.simpleName
                                     }
                                 }
-                                timerMessage += if (problem.isEmpty()) "\nThis setup is remembered for this video." else "\nCouldn't remember this setup: $problem"
+                                timerMessage += if (problem.isEmpty()) "\nSaved for this video." else "\nCouldn't save this setup: $problem"
                             } else {
-                                timerMessage += "\nThis setup can't be remembered: the video has no saved session yet."
+                                timerMessage += "\nNot saved: this video has no saved session yet."
                             }
                         } else {
                             setupMessage = res.message
