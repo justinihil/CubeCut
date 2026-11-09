@@ -28,9 +28,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -565,26 +563,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
             undoCut = null
         }
     }
-    // after a delete (or an undo) the row now in that place flashes amber twice and is selected, so you can see where you are
-    var flashCut by remember { mutableStateOf(-1) }
-    var flashTick by remember { mutableStateOf(0) }
-    val flashLevel = remember { Animatable(0f) }
-    LaunchedEffect(flashTick) {
-        if (flashTick > 0) {
-            flashLevel.snapTo(0f)
-            repeat(2) {
-                flashLevel.animateTo(1f, tween(180))
-                flashLevel.animateTo(0f, tween(420))
-            }
-            flashCut = -1
-        }
-    }
-    fun flashRow(i: Int) {
+    // after a delete (or an undo) the solve now in that place is selected and the playhead jumps to it, so you can see where you are
+    fun selectAfterChange(i: Int) {
         if (i !in cuts.indices) return
         selectedCut = i
         seekToSec(cuts[i].stopSec - 0.5)
-        flashCut = i
-        flashTick++
     }
     fun deleteCut(index: Int) {
         if (index !in cuts.indices) return
@@ -596,7 +579,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
         selectedCut = -1
         // the next solve has moved up into this place (or, after the last one, the one before it)
         val next = (index until cuts.size).firstOrNull { !onlyCheck || needsCheck(it) } ?: (index - 1)
-        flashRow(next)
+        selectAfterChange(next)
     }
     fun undoDelete() {
         val u = undoCut ?: return
@@ -605,7 +588,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
         val at = u.first.coerceIn(0, cuts.size)
         cuts.add(at, u.second)
         rowBoxes.clear()
-        flashRow(at)
+        selectAfterChange(at)
     }
 
     // jump to cut number [target] (used by the Prev / Next buttons)
@@ -1209,7 +1192,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                             Modifier
                                 .fillMaxWidth()
                                 .background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
-                                .background(if (index == flashCut) CHECK_COLOR.copy(alpha = 0.55f * flashLevel.value) else Color.Transparent)
                                 .padding(vertical = 2.dp)
                                 .onGloballyPositioned { rowBoxes[index] = it },
                             verticalAlignment = Alignment.CenterVertically
