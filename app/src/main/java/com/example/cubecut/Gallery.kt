@@ -59,6 +59,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -82,6 +83,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -1972,11 +1975,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }) { Text("Export clips...") }
                         if (menuFootage.trashedMs > 0) {
                             TextButton(onClick = { footageMenu = null; startTrash(PendingTrash(menuFootage, null, false)) }) { Text("Restore video") }
-                        } else if (canOpenIt && Build.VERSION.SDK_INT >= 30) {
-                            TextButton(onClick = { footageMenu = null; confirmTrashFootage = menuFootage }) { Text("Delete video") }
                         }
                         TextButton(onClick = { renaming = menuFootage; footageMenu = null }) { Text("Rename") }
-                        TextButton(onClick = { forgetting = menuFootage; footageMenu = null }) { Text("Forget this session") }
+
+                        // the two that remove things: apart, at the bottom, in red (each one warns first)
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(10.dp))
+                        if (menuFootage.trashedMs == 0L && canOpenIt && Build.VERSION.SDK_INT >= 30) {
+                            DangerButton("Delete video") { footageMenu = null; confirmTrashFootage = menuFootage }
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        DangerButton("Forget this session") { forgetting = menuFootage; footageMenu = null }
                     }
                 },
                 confirmButton = { Button(onClick = { footageMenu = null }) { Text("Close") } }
@@ -1986,31 +1996,32 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         // ===== warning before the original video is deleted (moved to the phone's trash: it can be restored) =====
         val trashingFootage = confirmTrashFootage
         if (trashingFootage != null) {
-            val stats = statsById[trashingFootage.id]
+            val its = d?.clipsOf(trashingFootage.id).orEmpty()
+            val exportedN = its.count { it.exported != null }
+            val notExportedN = its.count { it.cut.included && it.exported == null && !it.exportOnly }
             AlertDialog(
                 onDismissRequest = { confirmTrashFootage = null },
                 title = { Text("Delete the original video?") },
                 text = {
-                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        FootageHeader(trashingFootage, d?.openable?.get(trashingFootage.id) == true)
+                        Spacer(Modifier.height(12.dp))
+                        if (exportedN > 0) EffectLine(Effect.STAYS, "${clipsText(exportedN, "exported clip")} ${if (exportedN == 1) "stays and keeps" else "stay and keep"} playing")
+                        if (notExportedN > 0) EffectLine(Effect.GOES, "${clipsText(notExportedN, "clip")} not exported ${if (notExportedN == 1) "leaves" else "leave"} the Gallery")
+                        EffectLine(Effect.UNDO, "Restore it within about 30 days. After that it's gone for good.")
+                        Spacer(Modifier.height(8.dp))
                         Text(
-                            "\"${trashingFootage.title}\" (${trashingFootage.displayName}, ${formatTime(trashingFootage.durationMs)}) is the original recording. " +
-                                    "It goes to the phone's trash and leaves your gallery and Files apps. Android asks you to confirm next.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Text("What happens", style = MaterialTheme.typography.labelLarge)
-                        Spacer(Modifier.height(4.dp))
-                        BulletLines(
-                            listOf(
-                                "Exported clips stay in the Gallery and keep playing.",
-                                "The ${(stats?.solves ?: 0)} solves you didn't export leave the Gallery until the video is back. Their cuts and notes stay saved.",
-                                "Restore it from Recently deleted within about 30 days. After that it's gone for good, and clips you didn't export can't be made."
-                            )
+                            "It goes to the phone's trash. Android asks you to confirm next.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
                 confirmButton = {
-                    Button(onClick = { confirmTrashFootage = null; startTrash(PendingTrash(trashingFootage, null, true)) }) { Text("Delete") }
+                    Button(
+                        onClick = { confirmTrashFootage = null; startTrash(PendingTrash(trashingFootage, null, true)) },
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.danger, contentColor = Color.White)
+                    ) { Text("Delete") }
                 },
                 dismissButton = { TextButton(onClick = { confirmTrashFootage = null }) { Text("Cancel") } }
             )
@@ -2113,19 +2124,26 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
 
         val forgetTarget = forgetting
         if (forgetTarget != null) {
+            val its = d?.clipsOf(forgetTarget.id).orEmpty()
+            val exportedN = its.count { it.exported != null }
             AlertDialog(
                 onDismissRequest = { forgetting = null },
                 title = { Text("Forget this session?") },
                 text = {
-                    BulletLines(
-                        listOf(
-                            "\"${forgetTarget.title}\" and its ${forgetTarget.cutCount} saved cuts are removed from CubeCut, with its export list.",
-                            "The video and the exported clip files are not touched."
-                        )
-                    )
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        FootageHeader(forgetTarget, d?.openable?.get(forgetTarget.id) == true)
+                        Spacer(Modifier.height(12.dp))
+                        if (forgetTarget.cutCount > 0) EffectLine(Effect.GOES, "${clipsText(forgetTarget.cutCount, "saved solve")}, with your fixes and notes")
+                        else EffectLine(Effect.GOES, "The session (it has no solves yet)")
+                        if (exportedN > 0) EffectLine(Effect.GOES, "${clipsText(exportedN, "exported clip")} ${if (exportedN == 1) "leaves" else "leave"} the Clips list")
+                        EffectLine(Effect.STAYS, "The video stays on your phone")
+                        if (exportedN > 0) EffectLine(Effect.STAYS, "The exported files stay in Movies/CubeCut")
+                        Spacer(Modifier.height(10.dp))
+                        InfoNote(kind = NoteKind.PROBLEM, title = "Can't be undone", text = "Importing the video again starts from zero.")
+                    }
                 },
                 confirmButton = {
-                    Button(onClick = {
+                    Button(colors = ButtonDefaults.buttonColors(containerColor = AppColors.danger, contentColor = Color.White), onClick = {
                         forgetting = null
                         scope.launch {
                             val problem = withContext(Dispatchers.IO) {
@@ -2240,6 +2258,78 @@ private fun SwipeUpHint(modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** A full-width red button, for the actions that remove something (they always warn first). */
+@Composable
+private fun DangerButton(label: String, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(containerColor = AppColors.danger, contentColor = Color.White),
+        modifier = Modifier.fillMaxWidth()
+    ) { Text(label) }
+}
+
+/** The video a warning is about: its picture, title and length, so it is clear at a glance which one it is. */
+@Composable
+private fun FootageHeader(f: Footage, openable: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Thumb(
+            footageThumbKey(f), if (openable) Uri.parse(f.uri) else null, f.durationMs / 10,
+            Modifier
+                .width(96.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(6.dp))
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(f.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                formatTime(f.durationMs) + "  |  " + f.displayName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/** What a warning line says will happen: something stays (green tick), goes (red cross) or can be brought back (circle arrow). */
+private enum class Effect { STAYS, GOES, UNDO }
+
+/** One line of a warning: a coloured round badge, then a short sentence. */
+@Composable
+private fun EffectLine(effect: Effect, text: String) {
+    val color = when (effect) {
+        Effect.STAYS -> AppColors.keep
+        Effect.GOES -> AppColors.danger
+        Effect.UNDO -> MaterialTheme.colorScheme.primary
+    }
+    Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(22.dp)
+                .background(color, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                when (effect) {
+                    Effect.STAYS -> "\u2713"
+                    Effect.GOES -> "\u2715"
+                    Effect.UNDO -> "\u21BA"
+                },
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** "1 exported clip", "5 exported clips" */
+private fun clipsText(n: Int, thing: String): String = if (n == 1) "1 $thing" else "$n ${thing}s"
 
 /**
  * One button of the action row in a clip's details: an icon above a short label. Greyed out when [enabled] is false, so the row always

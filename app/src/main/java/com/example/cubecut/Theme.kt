@@ -101,11 +101,16 @@ object AppColors {
     var check by mutableStateOf(Color(0xFFFFB74D))
         private set
 
+    /** "This stays / is kept": green ticks in the delete and forget warnings, darker in light mode so it stays readable on white. */
+    var keep by mutableStateOf(Color(0xFF66BB6A))
+        private set
+
     /** Delete buttons. */
     val danger = Color(0xFFD93025)
 
     internal fun use(dark: Boolean) {
         check = if (dark) Color(0xFFFFB74D) else Color(0xFFB06000)
+        keep = if (dark) Color(0xFF66BB6A) else Color(0xFF2E7D32)
     }
 }
 
@@ -128,4 +133,4 @@ fun CubeCutTheme(mode: ThemeMode, content: @Composable () -> Unit) {
         }
     }
     MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, content = content)
-}
+}
