@@ -35,13 +35,12 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
@@ -57,6 +56,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -116,6 +116,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -123,6 +124,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -396,6 +398,69 @@ private fun Modifier.pinchColumns(onStep: (Int) -> Unit, onScale: (Float) -> Uni
     }
 }
 
+/** What a hold-and-drag selection is doing right now. Kept outside the screen state, because it changes with every finger move. */
+private class DragSelect {
+    var longPressed = false              // a long-press is in progress: the tap that Android sends when the finger lifts is ignored
+    var anchor = -1                      // the clip (index in the shown list) the long-press landed on; -1 = not dragging
+    var last = -1                        // the clip the finger is over now
+    var ticking = true                   // true = the drag ticks clips; false = it unticks them (it started on a ticked clip)
+    var base: Set<String> = emptySet()   // the ticked clips from before the drag
+    var finger = Offset.Zero             // where the finger is, in the list's own coordinates
+}
+
+/**
+ * Hold a clip, then drag over others to tick (or untick) all of them at once, like the phone's own gallery. Put on the list or grid
+ * itself, not on the clips, so the drag can go on from one clip to the next. [indexAt] says which clip is under a point (null = none);
+ * [onStart] gets the clip the long-press landed on and returns false if it can't be ticked (then the drag does nothing); [onOver]
+ * gets the clip the finger has moved onto; [onSpeed] gets how fast to scroll (pixels per step; 0 = stop) while the finger is near
+ * the top or bottom edge; [onEnd] is called when the finger lifts. [key] restarts the gesture when the list changes.
+ */
+private fun Modifier.dragToSelect(
+    key: Any?,
+    drag: DragSelect,
+    indexAt: (Offset) -> Int?,
+    viewportHeight: () -> Int,
+    onStart: (Int) -> Boolean,
+    onOver: (Int) -> Unit,
+    onSpeed: (Float) -> Unit,
+    onEnd: () -> Unit
+): Modifier = pointerInput(key) {
+    val edge = 72.dp.toPx()
+    fun finish() {
+        drag.anchor = -1
+        drag.longPressed = false
+        onSpeed(0f)
+        onEnd()
+    }
+    detectDragGesturesAfterLongPress(
+        onDragStart = { pos ->
+            drag.longPressed = true
+            drag.finger = pos
+            val i = indexAt(pos)
+            if (i == null || !onStart(i)) drag.anchor = -1
+        },
+        onDrag = { change, _ ->
+            if (drag.anchor >= 0) {
+                change.consume()
+                drag.finger = change.position
+                val y = change.position.y
+                val h = viewportHeight().toFloat()
+                onSpeed(
+                    when {
+                        y > h - edge -> ((y - (h - edge)) / edge * 24f).coerceAtMost(24f)
+                        y < edge -> -((edge - y) / edge * 24f).coerceAtMost(24f)
+                        else -> 0f
+                    }
+                )
+                val i = indexAt(change.position)
+                if (i != null && i != drag.last) onOver(i)
+            }
+        },
+        onDragEnd = { finish() },
+        onDragCancel = { finish() }
+    )
+}
+
 /**
  * Makes sure item [index] of a grid is fully on screen. If it has to scroll, the item ends up roughly in the middle. Waits (up to about a
  * second) for the grid to be laid out first, because it may only just have appeared.
@@ -588,12 +653,12 @@ private fun Modifier.flashRow(level: Float, blue: Color): Modifier =
 /**
  * One solve as a picture, with its time at the upper right. [columns] tells how crowded the grid is, so small cells show less text.
  * While clips are being chosen ([selecting]) the cell shows its selection mark and a button to watch it full screen ([onPreview]).
+ * A long-press is not handled here but by the list around it (dragToSelect), so a drag can go on over the next clips.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ClipCell(
     clip: GalleryClip, openable: Map<Long, Boolean>, columns: Int, selecting: Boolean, selected: Boolean, modifier: Modifier = Modifier,
-    highlight: Float = 0f, onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, onPreview: () -> Unit, onClick: () -> Unit
 ) {
     val canPick = selectable(clip, openable)
     Box(
@@ -602,7 +667,7 @@ private fun ClipCell(
             .aspectRatio(THUMB_ASPECT)
             .clip(RoundedCornerShape(10.dp))
             .then(if (selecting && selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)) else Modifier)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .clickable(onClick = onClick)
     ) {
         Thumb(clipPictureKey(clip), clipPictureUri(clip, openable), clipPictureMs(clip), Modifier.fillMaxSize())
         if (!clip.cut.included || (selecting && !canPick)) Box(Modifier.fillMaxSize().background(Color(0x88000000)))
@@ -656,19 +721,21 @@ private fun ClipCell(
     }
 }
 
-/** One solve as a list row: small picture, title, a line about where it comes from, and its time. While choosing: mark and preview. */
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * One solve as a list row: small picture, title, a line about where it comes from, and its time. While choosing: mark and preview.
+ * A long-press is handled by the list around it (dragToSelect), like in the grid.
+ */
 @Composable
 private fun ClipRow(
     clip: GalleryClip, openable: Map<Long, Boolean>, selecting: Boolean, selected: Boolean,
-    highlight: Float = 0f, onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, onPreview: () -> Unit, onClick: () -> Unit
 ) {
     val canPick = selectable(clip, openable)
     Row(
         Modifier
             .fillMaxWidth()
             .flashRow(highlight, MaterialTheme.colorScheme.primary)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .clickable(onClick = onClick)
             .alpha(if (selecting && !canPick) 0.45f else 1f)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -733,7 +800,7 @@ private fun FootageCell(
                 if (f.trashedMs > 0) Badge("In trash", RED) else if (!openable) Badge("Video deleted", RED)
                 if ((stats?.check ?: 0) > 0) Badge("${stats?.check} to check", AMBER, Color.Black)
                 if (f.lastScanMs == 0L && f.cutCount == 0) Badge("Not scanned", GREY)
-                if (hidden) Badge("Hidden in Clips", GREY)
+                if (hidden) Badge("Not shown in Clips", GREY)
             }
             Column(
                 Modifier
@@ -780,7 +847,7 @@ private fun FootageRow(
                         (if (stats?.best != null) "  |  best ${stats.bestText}" else "") +
                         (if ((stats?.check ?: 0) > 0) "  |  ${stats?.check} to check" else "") +
                         (if (f.trashedMs > 0) "  |  in trash" else if (!openable) "  |  video deleted" else "") +
-                        (if (hidden) "  |  hidden in Clips" else ""),
+                        (if (hidden) "  |  not shown in Clips" else ""),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2
             )
@@ -839,6 +906,30 @@ private fun LevelPicker(title: String, current: ClipKey?, allowNone: Boolean, en
                 }
             }
         }
+    }
+}
+
+/** One active filter on the Clips tab, shown as a small rounded chip with a cross. Tapping it removes that filter. */
+@Composable
+private fun ActiveFilterChip(label: String, onClear: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .clickable(onClick = onClear)
+            .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 220.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("\u2715", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -941,6 +1032,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var flashRun by remember { mutableStateOf(0) }                      // goes up for every new light-up
     var flashKey by remember { mutableStateOf("") }                     // which cell is lit: "c_<clip listKey>" or "f_<video id>"
     var flashLevel by remember { mutableStateOf(0f) }                   // how strongly (0 = not at all, 1 = fully)
+    // ---- hold and drag to tick several clips (see dragToSelect) ----
+    val drag = remember { DragSelect() }
+    var dragging by remember { mutableStateOf(false) }                  // a drag is ticking clips: the list doesn't scroll by finger
+    var autoScroll by remember { mutableStateOf(0f) }                   // the list scrolls by itself while the finger is near an edge
+    val haptics = LocalHapticFeedback.current
 
     // keep the screen awake while a batch export runs
     val view = LocalView.current
@@ -1138,7 +1234,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         } catch (e: Exception) {
                         }
                     }
-                    message = if (p.trashing) "Moved \"${p.name}\" to trash. You can bring it back from Recently deleted."
+                    message = if (p.trashing) "Deleted \"${p.name}\". You can bring it back from Recently deleted."
                     else "Restored \"${p.name}\"."
                     ui.refresh++
                 }
@@ -1149,12 +1245,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     }
     fun startTrash(p: PendingTrash) {
         if (Build.VERSION.SDK_INT < 30) {
-            message = "Moving to trash needs Android 11 or newer."
+            message = "Deleting from CubeCut needs Android 11 or newer."
             return
         }
         val media = SessionStore.mediaStoreUriOf(p.uriString)
         if (media == null) {
-            message = "Can't move \"${p.name}\" to trash. It was picked from a folder view, and Android only allows this for videos " +
+            message = "Can't delete \"${p.name}\" from here. It was picked from a folder view, and Android only allows this for videos " +
                     "picked from the Videos list. Delete it in your Files app instead."
             return
         }
@@ -1255,7 +1351,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     TextButton(onClick = { exitSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
                     Column(Modifier.weight(1f)) {
                         Text("${ui.selected.size} selected", style = MaterialTheme.typography.titleLarge)
-                        Text("Tap to tick, corner arrows to watch", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Tap or hold and drag to tick, arrows to watch", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     TextButton(onClick = { ui.selected = if (allOn) ui.selected - pickable else ui.selected + pickable }) {
                         Text(if (allOn) "None" else "All")
@@ -1330,13 +1426,58 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             if (ui.tab == 0) {
                 Text(
                     "Sorted by " + ui.clipKeys.joinToString(", then ") { it.short } +
-                            (if (ui.filterActive) "  |  filtered" else "") +
                             (if (ui.clipsGrid) "  |  pinch the grid to resize" else ""),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
+                // ===== what the Clips tab is filtered by: one chip per filter, tap a chip to remove that filter =====
+                if (d != null && ui.filterActive) {
+                    val known = d.footage.map { it.id }
+                    val shownVideos = known.filter { it !in ui.hidden }
+                    val videoLabel = when {
+                        ui.hidden.isEmpty() -> null
+                        shownVideos.isEmpty() -> "No videos"
+                        shownVideos.size == 1 -> "Video: " + (d.footage.firstOrNull { it.id == shownVideos[0] }?.title ?: "1 video")
+                        else -> "${shownVideos.size} of ${known.size} videos"
+                    }
+                    val exportLabel = when (ui.exportFilter) {
+                        ExportFilter.ALL -> null
+                        ExportFilter.EXPORTED -> "Exported only"
+                        ExportFilter.NOT_EXPORTED -> "Not exported only"
+                    }
+                    val active = listOfNotNull(videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null).size
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (videoLabel != null) ActiveFilterChip(videoLabel) { ui.hidden = emptySet(); ui.save() }
+                        if (exportLabel != null) ActiveFilterChip(exportLabel) { ui.exportFilter = ExportFilter.ALL; ui.save() }
+                        if (ui.checkOnly) ActiveFilterChip("Needs a check") { ui.checkOnly = false; ui.save() }
+                        if (active >= 2) {
+                            Text(
+                                "Clear all",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable {
+                                        ui.hidden = emptySet()
+                                        ui.exportFilter = ExportFilter.ALL
+                                        ui.checkOnly = false
+                                        ui.save()
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
             }
             if (message.isNotEmpty()) {
                 InfoNote(
@@ -1380,21 +1521,76 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         )
                     } else if (page == 0) {
                         val shown = shownClips
-                        // tap: watch it (or, while choosing, tick it); long-press: start choosing; the corner arrows: watch it while choosing
-                        val onTap: (GalleryClip) -> Unit = { clip -> if (ui.selecting) toggleSelect(clip, d.openable) else ui.openViewer(shown, clip) }
-                        val onLong: (GalleryClip) -> Unit = { clip ->
-                            if (ui.selecting) {
-                                toggleSelect(clip, d.openable)
-                            } else if (selectable(clip, d.openable)) {
-                                ui.selected = setOf(clip.listKey)
-                                ui.selecting = true
-                            } else {
+                        // tap: watch it (or, while choosing, tick it); the corner arrows: watch it while choosing.
+                        // Long-press (and drag) is handled by the grid or list itself: see dragToSelect.
+                        // (the tap Android sends when the finger lifts after a long-press is ignored)
+                        val onTap: (GalleryClip) -> Unit = { clip ->
+                            if (!drag.longPressed) {
+                                if (ui.selecting) toggleSelect(clip, d.openable) else ui.openViewer(shown, clip)
+                            }
+                        }
+                        val onPreview: (GalleryClip) -> Unit = { clip -> if (!drag.longPressed) ui.openViewer(shown, clip) }
+                        // which clip is under a point of the grid or list (null = none, e.g. the gap between two pictures)
+                        fun indexAt(pos: Offset): Int? = if (ui.clipsGrid) {
+                            clipsGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                pos.x >= info.offset.x && pos.x < info.offset.x + info.size.width &&
+                                        pos.y >= info.offset.y && pos.y < info.offset.y + info.size.height
+                            }?.index
+                        } else {
+                            clipsListState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                pos.y >= info.offset && pos.y < info.offset + info.size
+                            }?.index
+                        }
+                        fun viewportHeight(): Int =
+                            if (ui.clipsGrid) clipsGridState.layoutInfo.viewportSize.height else clipsListState.layoutInfo.viewportSize.height
+                        // the finger is over clip [to]: every clip from the first one to [to] is ticked (or unticked); going back undoes it
+                        fun dragOver(to: Int) {
+                            val a = drag.anchor
+                            if (a < 0) return
+                            drag.last = to
+                            val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { shown.getOrNull(it) }
+                                .filter { selectable(it, d.openable) }.map { it.listKey }.toSet()
+                            ui.selected = if (drag.ticking) drag.base + range else drag.base - range
+                        }
+                        // a long-press on clip [i]: start choosing (or carry on), and tick it, or untick it if it was ticked
+                        fun dragStart(i: Int): Boolean {
+                            val clip = shown.getOrNull(i) ?: return false
+                            if (!selectable(clip, d.openable)) {
                                 message = notSelectableReason(clip, d.openable)
+                                return false
+                            }
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (!ui.selecting) {
+                                ui.selected = emptySet()
+                                ui.selecting = true
+                            }
+                            drag.base = ui.selected
+                            drag.ticking = clip.listKey !in ui.selected
+                            drag.anchor = i
+                            dragging = true
+                            dragOver(i)
+                            return true
+                        }
+                        val dragModifier = Modifier.dragToSelect(
+                            key = shown, drag = drag,
+                            indexAt = { indexAt(it) }, viewportHeight = { viewportHeight() },
+                            onStart = { dragStart(it) }, onOver = { dragOver(it) },
+                            onSpeed = { autoScroll = it }, onEnd = { dragging = false }
+                        )
+                        // while the finger rests near the top or bottom edge, the list keeps scrolling and the ticked range follows it
+                        LaunchedEffect(autoScroll) {
+                            if (autoScroll != 0f) {
+                                while (true) {
+                                    if (ui.clipsGrid) clipsGridState.scrollBy(autoScroll) else clipsListState.scrollBy(autoScroll)
+                                    val i = indexAt(drag.finger)
+                                    if (i != null && i != drag.last) dragOver(i)
+                                    delay(16)
+                                }
                             }
                         }
                         if (shown.isEmpty()) {
                             Text(
-                                if (ui.filterActive) "No clips match the filter. Tap Filter to change it."
+                                if (ui.filterActive) "No clips match the filter. Remove a filter above, or tap Filter."
                                 else "No clips yet. Open a session in the editor and press Find solves.",
                                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp)
                             )
@@ -1405,23 +1601,29 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 contentPadding = PaddingValues(bottom = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(if (ui.clipsColumns >= 5) 4.dp else 8.dp),
-                                modifier = Modifier.fillMaxSize()
+                                userScrollEnabled = !dragging,
+                                modifier = Modifier.fillMaxSize().then(dragModifier)
                             ) {
                                 gridItems(shown, key = { it.listKey }) { clip ->
                                     ClipCell(
                                         clip, d.openable, ui.clipsColumns, ui.selecting, clip.listKey in ui.selected, Modifier.animateItem(),
                                         highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
-                                        onLongClick = { onLong(clip) }, onPreview = { ui.openViewer(shown, clip) }
+                                        onPreview = { onPreview(clip) }
                                     ) { onTap(clip) }
                                 }
                             }
                         } else {
-                            LazyColumn(Modifier.fillMaxSize(), state = clipsListState, contentPadding = PaddingValues(bottom = 8.dp)) {
+                            LazyColumn(
+                                Modifier.fillMaxSize().then(dragModifier),
+                                state = clipsListState,
+                                contentPadding = PaddingValues(bottom = 8.dp),
+                                userScrollEnabled = !dragging
+                            ) {
                                 listItems(shown, key = { it.listKey }) { clip ->
                                     ClipRow(
                                         clip, d.openable, ui.selecting, clip.listKey in ui.selected,
                                         highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
-                                        onLongClick = { onLong(clip) }, onPreview = { ui.openViewer(shown, clip) }
+                                        onPreview = { onPreview(clip) }
                                     ) { onTap(clip) }
                                 }
                             }
@@ -1665,7 +1867,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             Text("Only clips that need a check", style = MaterialTheme.typography.bodyMedium)
                         }
                         Spacer(Modifier.height(10.dp))
-                        Text("From these videos", style = MaterialTheme.typography.labelLarge)
+                        Text("Show clips from these videos", style = MaterialTheme.typography.labelLarge)
                         Row {
                             TextButton(onClick = { ui.hidden = emptySet(); ui.save() }) { Text("All") }
                             TextButton(onClick = { ui.hidden = d.footage.map { it.id }.toSet(); ui.save() }) { Text("None") }
@@ -1706,7 +1908,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         if (menuFootage != null && d != null) {
             val canOpenIt = d.openable[menuFootage.id] == true
             val st = statsById[menuFootage.id]
-            val isHidden = menuFootage.id in ui.hidden
             AlertDialog(
                 onDismissRequest = { footageMenu = null },
                 title = { Text(menuFootage.title) },
@@ -1729,17 +1930,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             )
                         }
                         Spacer(Modifier.height(8.dp))
+                        // the Clips tab then shows only this video's clips; the "Video: ..." chip there undoes it
                         TextButton(onClick = {
                             ui.hidden = d.footage.map { it.id }.filter { it != menuFootage.id }.toSet()
                             ui.save()
                             ui.tab = 0
                             footageMenu = null
-                        }) { Text("Show only its clips") }
-                        TextButton(onClick = {
-                            ui.hidden = if (isHidden) ui.hidden - menuFootage.id else ui.hidden + menuFootage.id
-                            ui.save()
-                            footageMenu = null
-                        }) { Text(if (isHidden) "Show its clips in the Clips tab" else "Hide its clips in the Clips tab") }
+                        }) { Text("See its clips") }
                         if (!canOpenIt) {
                             TextButton(onClick = {
                                 relinkFor = menuFootage
@@ -1749,16 +1946,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                         TextButton(enabled = canOpenIt, onClick = {
                             footageMenu = null
-                            onOpenEditor(EditorRequest(Uri.parse(menuFootage.uri), null))
-                        }) { Text("Open in editor") }
-                        TextButton(enabled = canOpenIt, onClick = {
-                            footageMenu = null
                             selectSession(menuFootage.id, d)
                         }) { Text("Export clips...") }
                         if (menuFootage.trashedMs > 0) {
-                            TextButton(onClick = { footageMenu = null; startTrash(PendingTrash(menuFootage, null, false)) }) { Text("Restore video from trash") }
+                            TextButton(onClick = { footageMenu = null; startTrash(PendingTrash(menuFootage, null, false)) }) { Text("Restore video") }
                         } else if (canOpenIt && Build.VERSION.SDK_INT >= 30) {
-                            TextButton(onClick = { footageMenu = null; confirmTrashFootage = menuFootage }) { Text("Move video to trash") }
+                            TextButton(onClick = { footageMenu = null; confirmTrashFootage = menuFootage }) { Text("Delete video") }
                         }
                         TextButton(onClick = { renaming = menuFootage; footageMenu = null }) { Text("Rename") }
                         TextButton(onClick = { forgetting = menuFootage; footageMenu = null }) { Text("Forget this session") }
@@ -1768,18 +1961,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             )
         }
 
-        // ===== warning before the original video is moved to the trash =====
+        // ===== warning before the original video is deleted (moved to the phone's trash: it can be restored) =====
         val trashingFootage = confirmTrashFootage
         if (trashingFootage != null) {
             val stats = statsById[trashingFootage.id]
             AlertDialog(
                 onDismissRequest = { confirmTrashFootage = null },
-                title = { Text("Move the original video to trash?") },
+                title = { Text("Delete the original video?") },
                 text = {
                     Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                         Text(
                             "\"${trashingFootage.title}\" (${trashingFootage.displayName}, ${formatTime(trashingFootage.durationMs)}) is the original recording. " +
-                                    "It leaves your gallery and Files apps. Android asks you to confirm next.",
+                                    "It goes to the phone's trash and leaves your gallery and Files apps. Android asks you to confirm next.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(Modifier.height(10.dp))
@@ -1795,7 +1988,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }
                 },
                 confirmButton = {
-                    Button(onClick = { confirmTrashFootage = null; startTrash(PendingTrash(trashingFootage, null, true)) }) { Text("Move to trash") }
+                    Button(onClick = { confirmTrashFootage = null; startTrash(PendingTrash(trashingFootage, null, true)) }) { Text("Delete") }
                 },
                 dismissButton = { TextButton(onClick = { confirmTrashFootage = null }) { Text("Cancel") } }
             )
@@ -2021,6 +2214,70 @@ private fun SwipeUpHint(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)
         )
+    }
+}
+
+/**
+ * One button of the action row in a clip's details: an icon above a short label. Greyed out (and not tappable) when [enabled] is false,
+ * so the row always has the same three buttons in the same places.
+ */
+@Composable
+private fun SheetAction(
+    label: String, background: Color, content: Color, enabled: Boolean, modifier: Modifier = Modifier,
+    icon: @Composable (Color) -> Unit, onClick: () -> Unit
+) {
+    val fg = if (enabled) content else content.copy(alpha = 0.38f)
+    Column(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (enabled) background else background.copy(alpha = 0.5f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        icon(fg)
+        Spacer(Modifier.height(4.dp))
+        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+/** An arrow going down into a tray: "export", drawn by CubeCut. */
+@Composable
+private fun ExportIcon(color: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val sw = w * 0.09f
+        drawLine(color, Offset(w * 0.5f, h * 0.12f), Offset(w * 0.5f, h * 0.60f), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, Offset(w * 0.30f, h * 0.40f), Offset(w * 0.5f, h * 0.60f), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, Offset(w * 0.70f, h * 0.40f), Offset(w * 0.5f, h * 0.60f), strokeWidth = sw, cap = StrokeCap.Round)
+        val tray = Path().apply {
+            moveTo(w * 0.15f, h * 0.62f)
+            lineTo(w * 0.15f, h * 0.86f)
+            lineTo(w * 0.85f, h * 0.86f)
+            lineTo(w * 0.85f, h * 0.62f)
+        }
+        drawPath(tray, color, style = Stroke(width = sw, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+/** A pencil: "edit", drawn by CubeCut. */
+@Composable
+private fun EditIcon(color: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val sw = w * 0.09f
+        val body = Path().apply {
+            moveTo(w * 0.68f, h * 0.14f)
+            lineTo(w * 0.86f, h * 0.32f)
+            lineTo(w * 0.36f, h * 0.82f)
+            lineTo(w * 0.14f, h * 0.86f)
+            lineTo(w * 0.18f, h * 0.64f)
+            close()
+        }
+        drawPath(body, color, style = Stroke(width = sw, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawLine(color, Offset(w * 0.58f, h * 0.24f), Offset(w * 0.76f, h * 0.42f), strokeWidth = sw, cap = StrokeCap.Round)
     }
 }
 
@@ -2675,6 +2932,36 @@ fun ClipViewer(
                         )
                     }
                     Text(current.title, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+
+                    // ===== what you can do with this clip: export it, open it in the editor, delete its exported file =====
+                    // (all three always show, greyed out when they can't be used, so the row never changes shape)
+                    val canDeleteFile = exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SheetAction(
+                            if (exporting) "Exporting..." else if (exportedFile != null) "Export again" else "Export",
+                            MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary,
+                            enabled = editable && !exporting, modifier = Modifier.weight(1f),
+                            icon = { c -> ExportIcon(c, 22.dp) }
+                        ) { if (exportedFile != null) confirmReexport = true else doExport() }
+                        SheetAction(
+                            "Editor",
+                            MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurface,
+                            enabled = editable, modifier = Modifier.weight(1f),
+                            icon = { c -> EditIcon(c, 22.dp) }
+                        ) { scope.launch { flushNotes(); onOpenEditor(current) } }
+                        SheetAction(
+                            "Delete file",
+                            MaterialTheme.colorScheme.surfaceContainerHighest, AppColors.danger,
+                            enabled = canDeleteFile, modifier = Modifier.weight(1f),
+                            icon = { c -> TrashIcon(c, 22.dp) }
+                        ) { confirmTrash = true }
+                    }
+                    if (exportMessage.isNotEmpty()) {
+                        Text(exportMessage, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    Spacer(Modifier.height(8.dp))
+
                     Text(
                         if (exportedFile != null) "Exported as ${exportedFile.fileName} on ${formatDate(exportedFile.exportedMs)}"
                         else "Not exported yet",
@@ -2722,19 +3009,6 @@ fun ClipViewer(
                                 "Your exported file stays as it is. Exporting again makes a new file.",
                                 style = MaterialTheme.typography.labelSmall
                             )
-                        }
-                    }
-
-                    // ===== export =====
-                    if (editable) {
-                        Spacer(Modifier.height(10.dp))
-                        Button(
-                            onClick = { if (exportedFile != null) confirmReexport = true else doExport() },
-                            enabled = !exporting,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (exporting) "Exporting..." else if (exportedFile != null) "Export this clip again" else "Export this clip") }
-                        if (exportMessage.isNotEmpty()) {
-                            Text(exportMessage, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
                         }
                     }
 
@@ -2806,14 +3080,8 @@ fun ClipViewer(
                         }
                     }
 
-                    Spacer(Modifier.height(10.dp))
-                    Button(
-                        onClick = { scope.launch { flushNotes(); onOpenEditor(current) } },
-                        enabled = editable,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Open in editor at this solve") }
                     if (!sourceOk) {
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(10.dp))
                         OutlinedButton(
                             onClick = { scope.launch { flushNotes(); onReconnect(footage) } },
                             modifier = Modifier.fillMaxWidth()
@@ -2824,22 +3092,6 @@ fun ClipViewer(
                             modifier = Modifier.padding(top = 4.dp)
                         )
                     }
-
-                    // the exported file can be moved to the phone's trash: a small trash icon at the very bottom
-                    if (exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30) {
-                        Spacer(Modifier.height(18.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Box(
-                                Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .clickable { confirmTrash = true }
-                                    .padding(12.dp)
-                            ) {
-                                TrashIcon(MaterialTheme.colorScheme.onSurface, 24.dp)
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -2848,17 +3100,17 @@ fun ClipViewer(
         if (confirmTrash && trashTarget != null) {
             AlertDialog(
                 onDismissRequest = { confirmTrash = false },
-                title = { Text("Move this exported clip to trash?") },
+                title = { Text("Delete this exported file?") },
                 text = {
                     BulletLines(
                         listOf(
-                            "${trashTarget.fileName} (in Movies/CubeCut) leaves your gallery apps. Android asks you to confirm next.",
+                            "${trashTarget.fileName} (in Movies/CubeCut) goes to the phone's trash and leaves your gallery apps. Android asks you to confirm next.",
                             "Restore it from Recently deleted within about 30 days. After that it's gone for good.",
                             "The solve, its cut and your note stay in CubeCut."
                         )
                     )
                 },
-                confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Move to trash") } },
+                confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Delete") } },
                 dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Cancel") } }
             )
         }
