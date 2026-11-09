@@ -1351,7 +1351,17 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     TextButton(onClick = { exitSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
                     Column(Modifier.weight(1f)) {
                         Text("${ui.selected.size} selected", style = MaterialTheme.typography.titleLarge)
-                        Text("Tap or hold and drag to tick, arrows to watch", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        // how many of the ticked clips were exported before (they would be exported again), else how to tick
+                        val tickedBefore = d.clips.count { it.listKey in ui.selected && it.exported != null }
+                        if (tickedBefore > 0) {
+                            Text(
+                                "$tickedBefore already exported",
+                                style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = AppColors.check,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                        } else {
+                            Text("Tap or hold and drag to tick, arrows to watch", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                     TextButton(onClick = { ui.selected = if (allOn) ui.selected - pickable else ui.selected + pickable }) {
                         Text(if (allOn) "None" else "All")
@@ -1543,16 +1553,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                         fun viewportHeight(): Int =
                             if (ui.clipsGrid) clipsGridState.layoutInfo.viewportSize.height else clipsListState.layoutInfo.viewportSize.height
-                        // the finger is over clip [to]: every clip from the first one to [to] is ticked (or unticked); going back undoes it.
-                        // Ticking skips clips that are already exported (the clip the drag started on is always ticked; tap an exported
-                        // clip to tick it on its own). Unticking unticks everything in the range.
+                        // the finger is over clip [to]: every clip from the first one to [to] is ticked (or unticked); going back undoes it
                         fun dragOver(to: Int) {
                             val a = drag.anchor
                             if (a < 0) return
                             drag.last = to
                             val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { shown.getOrNull(it) }
                                 .filter { selectable(it, d.openable) }
-                                .filter { !drag.ticking || it.exported == null || it === shown.getOrNull(a) }
                                 .map { it.listKey }.toSet()
                             ui.selected = if (drag.ticking) drag.base + range else drag.base - range
                         }
@@ -1724,32 +1731,43 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     d.clips.filter { it.listKey in ui.selected && selectable(it, d.openable) && it !in shownClips }
             val again = chosen.count { it.exported != null }
             val fresh = chosen.filter { it.exported == null }
-            val example = chosen.firstOrNull()
+            // Nothing exported before: a plain "Export N clips?". Some exported before: the title says so, a note says what exporting
+            // again does, and the choices are stacked buttons, the new clips only first.
             AlertDialog(
                 onDismissRequest = { askExport = false },
-                title = { Text("Export ${chosen.size} clips?") },
-                text = {
-                    BulletLines(
-                        buildList {
-                            add("Saved in Movies/CubeCut.")
-                            add(
-                                "Named after their video" +
-                                        (if (example != null) ", like \"${ClipExporter.safeTitle(example.footage.title)}_Solve_${"%02d".format(example.index + 1)}_...\"" else "") + "."
-                            )
-                            add("Each clip uses its own scramble setting.")
-                            if (again > 0) add("$again were exported before. Exporting them again makes a second file. The first stays.")
+                title = {
+                    Text(
+                        when {
+                            again == 0 -> "Export ${chosen.size} ${if (chosen.size == 1) "clip" else "clips"}?"
+                            fresh.isEmpty() -> "${if (again == 1) "This clip was" else "All $again were"} exported before"
+                            else -> "$again of ${chosen.size} were exported before"
                         }
                     )
                 },
-                confirmButton = {
-                    Button(onClick = { askExport = false; runBatchExport(chosen) }, enabled = chosen.isNotEmpty()) {
-                        Text(if (again > 0) "Export all ${chosen.size}" else "Export")
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (again > 0) {
+                            InfoNote(
+                                kind = NoteKind.CHECK,
+                                text = "Exporting again makes a second copy. The first files stay."
+                            )
+                        }
+                        Text("Saved in Movies/CubeCut.", style = MaterialTheme.typography.bodyMedium)
                     }
                 },
-                dismissButton = {
-                    Row {
-                        if (again > 0 && fresh.isNotEmpty()) {
-                            TextButton(onClick = { askExport = false; runBatchExport(fresh) }) { Text("Only the ${fresh.size} new") }
+                confirmButton = {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp), horizontalAlignment = Alignment.End) {
+                        if (again == 0) {
+                            Button(onClick = { askExport = false; runBatchExport(chosen) }, enabled = chosen.isNotEmpty()) { Text("Export") }
+                        } else {
+                            if (fresh.isNotEmpty()) {
+                                Button(onClick = { askExport = false; runBatchExport(fresh) }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Export only the ${fresh.size} new")
+                                }
+                            }
+                            OutlinedButton(onClick = { askExport = false; runBatchExport(chosen) }, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (fresh.isEmpty()) "Export again" else "Export all ${chosen.size}, $again again")
+                            }
                         }
                         TextButton(onClick = { askExport = false }) { Text("Cancel") }
                     }
