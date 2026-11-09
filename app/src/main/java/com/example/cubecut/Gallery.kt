@@ -1966,14 +1966,14 @@ fun ClipViewer(
                             if (stillAlpha > 0.01f) {
                                 Thumb(
                                     stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c), Modifier.fillMaxSize().alpha(stillAlpha),
-                                    ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
+                                    ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black, placeholderKey = clipPictureKey(c)
                                 )
                             }
                         }
                     } else {
                         Thumb(
                             stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c), Modifier.fillMaxSize(),
-                            ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
+                            ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black, placeholderKey = clipPictureKey(c)
                         )
                         if (page == activePage && !playable) {
                             Text(

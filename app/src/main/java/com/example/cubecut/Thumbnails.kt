@@ -137,14 +137,19 @@ object ThumbCache {
 @Composable
 fun Thumb(
     key: String, uri: Uri?, timeMs: Long, modifier: Modifier = Modifier,
-    contentScale: ContentScale = ContentScale.Crop, height: Int = 360, background: Color = Color(0xFF26262B)
+    contentScale: ContentScale = ContentScale.Crop, height: Int = 360, background: Color = Color(0xFF26262B),
+    placeholderKey: String? = null
 ) {
     val context = LocalContext.current
     val picture by produceState<ImageBitmap?>(initialValue = null, key, uri, height) {
         value = ThumbCache.get(context, key, uri, timeMs, height)?.asImageBitmap()
     }
+    // a picture that is already made (e.g. the grid's small one) is shown while the wanted one is still being made, so there is no empty frame
+    val placeholder by produceState<ImageBitmap?>(initialValue = null, placeholderKey) {
+        value = if (placeholderKey == null) null else ThumbCache.get(context, placeholderKey, null, 0L)?.asImageBitmap()
+    }
     Box(modifier.background(background)) {
-        val p = picture
+        val p = picture ?: placeholder
         if (p != null) {
             Image(
                 bitmap = p,
