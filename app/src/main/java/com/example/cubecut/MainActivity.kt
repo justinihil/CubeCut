@@ -1176,12 +1176,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
-                        if (canClear > 0) TextButton(onClick = { showClearChecks = true }) { Text("Clear all") }
                         Switch(
                             checked = onlyCheck,
                             onCheckedChange = { onlyCheck = it; rowBoxes.clear() },
                             enabled = toCheck > 0 || onlyCheck
                         )
+                    }
+                    // on its own line, so it isn't mistaken for part of the filter switch
+                    if (canClear > 0) {
+                        OutlinedButton(onClick = { showClearChecks = true }) { Text("Mark all $canClear as checked") }
                     }
                     // one row per cut: tap the row to jump there, Edit to fix or delete it, Gallery to see its clip
                     cuts.forEachIndexed { index, item ->
@@ -1314,7 +1317,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
             val n = cuts.indices.count { needsCheck(it) && !cuts[it].reviewed }
             AlertDialog(
                 onDismissRequest = { showClearChecks = false },
-                title = { Text("Clear all checks?") },
+                title = { Text("Mark all as checked?") },
                 text = {
                     Text(
                         "The $n solves marked check are marked as looked at and stop being flagged, here and in the Gallery. " +
@@ -1327,7 +1330,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                         showClearChecks = false
                         for (i in cuts.indices) if (needsCheck(i) && !cuts[i].reviewed) markChecked(i)
                         onlyCheck = false
-                    }) { Text("Clear all") }
+                    }) { Text("Mark as checked") }
                 },
                 dismissButton = { TextButton(onClick = { showClearChecks = false }) { Text("Cancel") } }
             )
