@@ -33,8 +33,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -44,7 +42,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import kotlin.math.max
 
 /** What one exported clip covers, for drawing: [startSec]..[solveStartSec] is the scramble part, [solveStartSec]..[endSec] the solve part. */
 class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Double)
@@ -56,7 +53,7 @@ class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Doubl
  * markerStates: 1 = a solve (green), anything else (2) = a cut left over from before the video began, which makes no clip (grey).
  * A cut marker sits on the FIRST frame that shows the final time (the moment the timer stopped).
  * clipBars: dim green = scramble part of a clip, bright green = the solve part (solve with its buffers).
- * position: where the playhead is, in ms. It is a function, read only while drawing the red line (and by the zoom follow below),
+ * position: where the playhead is, in ms. It is a function, read only while drawing the red line,
  * so the playhead moving redraws just that line: the film strip, the clip bars, the markers and the rest of the editor stay as
  * they are.
  */
@@ -83,22 +80,8 @@ fun Timeline(
             .background(Color(0xFF1B1B1F))
     ) {
         val viewportWidth = maxWidth
-        val viewportPx = constraints.maxWidth
-        val contentPx = viewportPx * zoom
 
-        // when zoomed in, keep the playhead on screen
-        // (checked every 0.4 s of video, without redrawing the timeline for it)
-        LaunchedEffect(zoom, contentPx, durationMs) {
-            snapshotFlow { position() / 400 }.collect {
-                if (zoomed && durationMs > 0) {
-                    val x = (contentPx * fraction()).toInt()
-                    val left = scrollState.value
-                    if (x < left + viewportPx * 0.1f || x > left + viewportPx * 0.9f) {
-                        scrollState.scrollTo(max(0, x - viewportPx / 2))
-                    }
-                }
-            }
-        }
+        // (keeping the playhead on screen when zoomed in is done by the editor, in keepTimelineOn: it knows when the playhead jumps)
 
         Box(
             Modifier

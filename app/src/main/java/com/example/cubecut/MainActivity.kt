@@ -603,10 +603,25 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     // rough time Find solves needs: about 0.3 s of work per second of video (an estimate)
     val estMin = maxOf(1, Math.round(durationMs / 1000.0 * 0.3 / 60.0).toInt())
 
+    // When the timeline is zoomed in, keep the playhead on screen: if it is near or past an edge, the timeline scrolls so the
+    // playhead is in the middle. Runs on every playhead tick while playing, after every jump (a solve tapped, Prev / Next) and
+    // when the zoom changes. Not after a tap on the timeline itself: that spot is on screen already.
+    val timelineWidth = remember { IntArray(1) }                 // the timeline's visible width in pixels
+    fun keepTimelineOn(ms: Long) {
+        val viewPx = timelineWidth[0]
+        if (zoom <= 1.01f || viewPx <= 0 || durationMs <= 0) return
+        val x = (viewPx * zoom * (ms.toDouble() / durationMs)).toInt()
+        val left = timelineScroll.value
+        if (x < left + viewPx * 0.05f || x > left + viewPx * 0.95f) {
+            scope.launch { timelineScroll.scrollTo(maxOf(0, x - viewPx / 2)) }
+        }
+    }
+
     fun seekToSec(sec: Double) {
         val ms = (sec * 1000).toLong().coerceIn(0L, if (durationMs > 0) durationMs else Long.MAX_VALUE)
         exoPlayer.seekTo(ms)
         positionMs = ms
+        keepTimelineOn(ms)
     }
 
     // opens the full-screen "Set up timer" helper on the picture under the playhead
@@ -769,13 +784,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         selectAfterChange(at)
     }
 
-    // jump to cut number [target] (used by the Prev / Next buttons)
-    fun goToCut(target: Int) {
-        if (cuts.isEmpty()) return
-        val i = target.coerceIn(0, cuts.size - 1)
-        selectedCut = i
-        seekToSec(cuts[i].stopSec - 0.5)
-        // scroll the list so the selected row is visible (only when it is not already fully in view)
+    // scroll the list so solve [i]'s card is visible (only when it is not already fully in view)
+    fun scrollListTo(i: Int) {
         val rowBox = rowBoxes[i]
         val areaBox = listBox[0]
         if (rowBox != null && areaBox != null && rowBox.isAttached && areaBox.isAttached) {
@@ -786,6 +796,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 scope.launch { listScroll.animateScrollTo(maxOf(0, target)) }
             }
         }
+    }
+
+    // jump to cut number [target] (used by the Prev / Next buttons)
+    fun goToCut(target: Int) {
+        if (cuts.isEmpty()) return
+        val i = target.coerceIn(0, cuts.size - 1)
+        selectedCut = i
+        seekToSec(cuts[i].stopSec - 0.5)
+        scrollListTo(i)
     }
 
     // Prev / Next: step through the rows the list shows (only the ones to check while that filter is on)
@@ -832,14 +851,20 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
     }
 
-    // ---- the selected solve follows the playhead while the video plays or you scrub the timeline ----
-    // It is the solve whose clip (its scramble part or its solve part) contains the playhead; between clips nothing is selected.
-    // The list does not scroll by itself (so the switches above it never move away); the review bar and the white ring on the
-    // timeline always show which solve it is. Tapping a card, Prev / Next and Undo choose the solve themselves and are not overruled.
-    val latestClips by rememberUpdatedState(clips)
+    // ---- the selected solve follows the playhead while the video plays or you tap / scrub the timeline ----
+    // Each solve owns the stretch from the end of the clip before it to the end of its own clip: its scramble and its solve,
+    // even when its clip leaves the scramble out. While "Only solves to check" is on, a solve the list hides is never selected.
+    // When the selection changes, the list scrolls so its card is in view. Tapping a card, Prev / Next and Undo choose the
+    // solve themselves and are not overruled.
     fun solveUnder(ms: Long): Int {
         val t = ms / 1000.0
-        for (c in latestClips) if (t >= c.startSec && t < c.endSec) return c.cutIndex
+        var zoneStart = 0.0
+        for (c in clips) {                                       // clips are in time order
+            if (t >= minOf(zoneStart, c.startSec) && t < c.endSec) {
+                return if (!onlyCheck || needsCheck(c.cutIndex)) c.cutIndex else -1
+            }
+            zoneStart = c.endSec
+        }
         return -1
     }
     fun followPlayhead(ms: Long) {
@@ -847,9 +872,16 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         if (i == selectedCut) return
         // a leftover cut (from before the video began) makes no clip, so the playhead is never "in" it: keep it selected
         // until the playhead reaches a real clip, instead of dropping it straight after Prev / Next chose it
-        if (i < 0 && selectedCut in cuts.indices && latestClips.none { it.cutIndex == selectedCut }) return
+        if (i < 0 && selectedCut in cuts.indices && clips.none { it.cutIndex == selectedCut }) return
         selectedCut = i
+        if (i >= 0) scrollListTo(i)
     }
+    // the playhead loop below keeps running across screen updates, so it calls the newest version of these (with the newest cuts)
+    val followNow = rememberUpdatedState<(Long) -> Unit> { ms -> followPlayhead(ms) }
+    val keepTimelineNow = rememberUpdatedState<(Long) -> Unit> { ms -> keepTimelineOn(ms) }
+
+    // zooming the timeline keeps the playhead on screen
+    LaunchedEffect(zoom) { keepTimelineNow.value(positionMs) }
 
     // move the red playhead along while the video plays. Paused, nothing moves, so nothing runs (the phone isn't woken 30 times a
     // second for nothing). Only the timeline and the time text read the position, so only they redraw, not the whole screen.
@@ -860,7 +892,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 delay(33)
                 val ms = exoPlayer.currentPosition
                 positionMs = ms
-                followPlayhead(ms)
+                followNow.value(ms)
+                keepTimelineNow.value(ms)
             }
         }
     }
@@ -1032,22 +1065,25 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             }
 
             // ===== the timeline (film strip + what each clip will contain) =====
-            Timeline(
-                stops = cuts.map { it.stopSec },
-                markerStates = cuts.map { if (it.included) 1 else 2 },
-                selectedIndex = selectedCut,
-                clipBars = clips.map { ClipBar(it.startSec, it.solveStartSec, it.endSec) },
-                thumbs = thumbs,
-                position = { positionMs },
-                durationMs = durationMs,
-                zoom = zoom,
-                scrollState = timelineScroll,
-                onSeek = { ms ->
-                    exoPlayer.seekTo(ms)
-                    positionMs = ms
-                    followPlayhead(ms)          // scrubbing or tapping the timeline selects the solve under the playhead
-                }
-            )
+            // (the box measures how wide the timeline is on screen, for keepTimelineOn)
+            Box(Modifier.fillMaxWidth().onGloballyPositioned { timelineWidth[0] = it.size.width }) {
+                Timeline(
+                    stops = cuts.map { it.stopSec },
+                    markerStates = cuts.map { if (it.included) 1 else 2 },
+                    selectedIndex = selectedCut,
+                    clipBars = clips.map { ClipBar(it.startSec, it.solveStartSec, it.endSec) },
+                    thumbs = thumbs,
+                    position = { positionMs },
+                    durationMs = durationMs,
+                    zoom = zoom,
+                    scrollState = timelineScroll,
+                    onSeek = { ms ->
+                        exoPlayer.seekTo(ms)
+                        positionMs = ms
+                        followPlayhead(ms)          // scrubbing or tapping the timeline selects the solve under the playhead
+                    }
+                )
+            }
 
             // ===== review bar: step through the solves and switch each one on/off without scrolling =====
             if (cuts.isNotEmpty()) {
