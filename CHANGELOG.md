@@ -6,7 +6,45 @@ All notable changes to CubeCut are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)** and **Phase 2 (the Gallery, with the full-screen clip viewer)**, both built and tested on the phone. **Phase 3 is not started** (see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change.
+Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. Phases 1, 2 and 3a are tested on the phone; 3b and 3c are being tested (see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change.
+
+### Phase 3c: the new look
+
+**Added**
+- **Dark mode you can switch:** Gallery, ⋮, Settings, **Appearance**: *Same as the phone* (default), *Light* or *Dark*. The status bar icons follow.
+- `Theme.kt`: all the app's colours in one place.
+
+**Changed**
+- **Colours:** only white (near-black in dark mode), greys and the **logo blue** (`#02A3F6`; a slightly deeper `#0288D1` for buttons and blue text in light mode, so it stays readable on white). The purple of the default theme is gone. The *check* amber is darker in light mode.
+- **Editor solve list:** every solve is a **compact card with a grey border** (blue border and a light blue tint when selected): the number and the time in bold, one grey line (`at 3:41 · clip 3:20–3:46 · with scramble`), and **Edit** (grey), **View** (blue, was *Gallery*) and a **red delete button with a bin icon**, side by side. The *Checked* button is now a small outlined **✓ It's fine** under the check lines.
+- **Footage tab:** tapping a video **opens it in the editor straight away**; the options (show its clips, export clips, rename, forget, reconnect, trash) moved to a round **⋮ button** at the bottom right of its picture (and at the end of a list row). A video that can't be opened still shows its options when tapped, so it can be reconnected.
+
+### Phase 3b: the editor finds solves, the Gallery exports them; checks
+
+**Added**
+- **Choose and export clips in the Gallery.** **Long-press** a clip to start choosing: tap clips to tick them, **All / None** (for the clips shown), a switch that sets **the scramble for all selected clips** at once, **Export** (asks first; offers *Only the N new* when some were exported before; a progress window keeps the screen on), ✕ or Back to stop. Clips whose video is gone and solves with no clip can't be ticked (a message says why).
+- **Watch while choosing:** the arrows in a clip's corner open the full-screen player; at the top right it has the **tick circle** and a **Scramble: on/off** button, and swiping keeps the selection.
+- **Export clips...** in a video's ⋮ options on the Footage tab ticks that video's clips that aren't exported yet.
+- **Exported file names start with the video's title** and use the Gallery's solve number, for example `Sunday practice_Solve_03_11.263s.mp4`, so clips from different videos never clash (single exports from the player too).
+- **Delete straight from a solve's row** (no warning), with an **Undo** bar under the Prev/Next bar for about 8 seconds. The row slides away and the solve that moves into its place is selected (the playhead jumps to it).
+- **Timing checks** (`checkCuts`): solves **too close** to each other (the second one gets no clip) and solves that would have **started before the previous one stopped** are flagged *check*, **both solves of the pair**, in the editor and the Gallery.
+- **Only show solves to check** switch above the list (Prev / Next then step through those only), and an **Only clips that need a check** box in the Gallery's Filter.
+- **Mark a check as looked at** (database version 6, `cuts.reviewed`): **It's fine** on a card, **Mark all N as checked** (with a confirmation), and *It's fine: mark as checked* in the player's details. A solve with no clip stays flagged until one of the pair is deleted or moved. With the check filter on, the card slides away and the next solve to check is selected.
+
+**Changed**
+- **The editor is for finding the real solves only.** The export switch and the *Include scramble* tick box are gone from the rows, the review bar has no switch, and there is **no export button** in the editor. Solves that were switched off by hand (or by the scan for a reason other than "left over from before the video") are now normal solves; only *left over* cuts stay out.
+- **"Include the scramble in all clips"** moved from the pinned area into the Setup box (**3. Scramble**), next to the buffers.
+
+### Phase 3a: re-scans keep your edits
+
+**Added**
+- **Find solves on a video that already has saved cuts merges instead of replacing** (`RescanMerge.kt`, database version 5, `cuts.user_edited`). A found solve and a saved cut are the same solve when their **solve parts** (timer start to stop, worked out from the time) overlap; the scramble isn't used for matching.
+  - Cuts you **changed** (time, position, switches, scramble, notes, added by hand, marked as checked) or **exported** stay exactly as they are.
+  - Cuts you never touched take the new scan's values.
+  - New solves are added.
+  - Untouched cuts the new scan didn't find again are kept and get the note *not found again by the last Find solves - check it*.
+- The status line says what happened: "Re-scan done in 95s: 2 new, 1 updated, 12 kept as you left them, 1 not found again (check them)". The Find solves window explains this instead of warning that edits are lost.
+- On upgrade, older cuts that clearly show a change (a note, added by hand, switched off, scramble different from the video's setting) are counted as changed.
 
 ### Phase 2j: the last viewer fixes (Phase 2 is finished and tested on the phone)
 
