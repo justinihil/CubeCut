@@ -1,0 +1,115 @@
+/*
+ * CubeCut - cuts a speedcubing session video into one clip per solve.
+ * Copyright (C) 2026 DadCuber
+ *
+ * This program is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU General Public License as published by the Free Software Foundation, version 3 of the License,
+ * with the additional terms in NOTICE.md (GPL section 7): the author credit must stay in the app's
+ * About window, and changed versions must be marked as changed.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+ * even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
+ * Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with this program (the
+ * LICENSE file). If not, see <https://www.gnu.org/licenses/>.
+ */
+package com.example.cubecut
+
+// ---------------------------------------------------------------------------------------
+// Running Find solves again on a video that already has saved cuts.
+//
+// The new scan does not replace the saved list. Each solve it finds is matched to a saved cut when their SOLVE parts
+// (timer start to stop, worked out from the time shown) overlap; the scramble and inspection are not used for matching,
+// because a missed solve can sit inside the next solve's scramble.
+//  - A saved cut you changed (switch, scramble tick, time, position, note, added by hand) or exported stays exactly as it is.
+//  - A saved cut you never touched takes the new scan's values.
+//  - A new solve that matches no saved cut is added.
+//  - A saved cut the new scan did not find again is kept; an untouched one gets a note so it can be checked.
+// ---------------------------------------------------------------------------------------
+
+/** The note given to an untouched cut that the latest scan did not find again. */
+const val NOT_FOUND_AGAIN_NOTE = "not found again by the last Find solves - check it"
+
+private const val EXPORT_MATCH_SEC = 0.05          // the same tolerance SessionStore uses to link an exported file to its cut
+private const val SLACK_SEC = 0.3                  // both times known: the solve parts may be this far apart and still match
+private const val SLACK_UNKNOWN_SEC = 1.5          // a time unknown: only the stop moments can be compared, so allow more
+
+/** What a re-scan did to the saved cuts. */
+class RescanResult(val cuts: List<CutItem>, val added: Int, val updated: Int, val kept: Int, val notFound: Int) {
+    /** "2 new, 1 updated, 12 kept as you left them, 1 not found again (check them)" */
+    fun summary(): String {
+        val parts = ArrayList<String>()
+        if (added > 0) parts.add("$added new")
+        if (updated > 0) parts.add("$updated updated")
+        if (kept > 0) parts.add("$kept kept as you left them")
+        if (notFound > 0) parts.add("$notFound not found again (check them)")
+        return if (parts.isEmpty()) "nothing changed" else parts.joinToString(", ")
+    }
+}
+
+/** Where the solve part of a cut runs: from (stop - time on the timer) to the stop. Just the stop moment if the time is unknown. */
+private fun solveSpan(c: CutItem): Pair<Double, Double> {
+    val t = parseTimeSeconds(c.timeText)
+    return if (t != null) Pair(c.stopSec - t, c.stopSec) else Pair(c.stopSec, c.stopSec)
+}
+
+/** True if the two cuts are the same solve: their solve parts overlap. */
+private fun sameSolve(a: CutItem, b: CutItem): Boolean {
+    val (aStart, aEnd) = solveSpan(a)
+    val (bStart, bEnd) = solveSpan(b)
+    val slack = if (parseTimeSeconds(a.timeText) == null || parseTimeSeconds(b.timeText) == null) SLACK_UNKNOWN_SEC else SLACK_SEC
+    return aStart <= bEnd + slack && bStart <= aEnd + slack
+}
+
+/**
+ * Combines the [saved] cuts with the solves a new scan [found]. [exportedStops] are the stop times of every clip exported from this
+ * video (an exported cut is kept as it is, so its link to the exported file is never lost).
+ */
+fun mergeRescan(saved: List<CutItem>, found: List<CutItem>, exportedStops: List<Double>): RescanResult {
+    fun keepAsIs(c: CutItem) = c.edited || exportedStops.any { Math.abs(it - c.stopSec) < EXPORT_MATCH_SEC }
+
+    val matched = BooleanArray(saved.size)
+    val out = ArrayList<CutItem>()
+    var added = 0
+    var updated = 0
+    for (n in found.sortedBy { it.stopSec }) {
+        val same = saved.indices.filter { sameSolve(saved[it], n) }
+        if (same.isEmpty()) {
+            out.add(n)                                  // a solve the saved list doesn't have
+            added++
+            continue
+        }
+        // the closest saved cut not matched yet; if they are all matched already, this is a second find of the same solve: ignore it
+        val best = same.filter { !matched[it] }.minByOrNull { Math.abs(saved[it].stopSec - n.stopSec) } ?: continue
+        matched[best] = true
+        val old = saved[best]
+        if (keepAsIs(old)) {
+            out.add(old)
+        } else {
+            out.add(n)
+            val changed = Math.abs(n.stopSec - old.stopSec) > 0.0005 || n.timeText != old.timeText ||
+                    n.included != old.included || n.note != old.note
+            if (changed) updated++
+        }
+    }
+    var notFound = 0
+    for (i in saved.indices) {
+        if (matched[i]) continue
+        val old = saved[i]
+        if (keepAsIs(old)) {
+            out.add(old)
+            continue
+        }
+        // untouched and not found again: keep it (it may still be a real solve), but say so
+        val note = when {
+            old.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START) || old.note.contains(NOT_FOUND_AGAIN_NOTE) -> old.note
+            old.note.isEmpty() -> NOT_FOUND_AGAIN_NOTE
+            else -> "${old.note}; $NOT_FOUND_AGAIN_NOTE"
+        }
+        out.add(old.copy(note = note))
+        notFound++
+    }
+    val kept = saved.count { keepAsIs(it) }
+    return RescanResult(out.sortedBy { it.stopSec }, added, updated, kept, notFound)
+}

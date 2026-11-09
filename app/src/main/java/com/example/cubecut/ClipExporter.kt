@@ -43,7 +43,8 @@ data class CutItem(
     val included: Boolean,                // true = this cut is exported as a clip
     val note: String,                     // why it needs a look, or "added by you"
     val includeScramble: Boolean = true,  // true = clip runs from the end of the previous clip (scramble included); false = the solve only
-    val userNote: String = ""             // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
+    val userNote: String = "",            // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
+    val edited: Boolean = false           // true once you changed this cut yourself (switch, scramble tick, time, position, note) or added it: Find solves then leaves it alone
 )
 
 /** One video file that will be exported. */

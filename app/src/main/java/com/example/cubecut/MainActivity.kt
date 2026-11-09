@@ -504,21 +504,32 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             isCancelled = { cancelScan || !isActive }
                         )
                     }
+                    // a re-scan keeps what you changed: see mergeRescan (RescanMerge.kt)
+                    val saved = cuts.toList()
+                    val found = report.solves.map { r -> CutItem(r.stopSec, r.timeText, r.include, r.note, scrambleAll) }
+                    val exportedStops: List<Double> = footageId?.let { id ->
+                        withContext(Dispatchers.IO) {
+                            try { SessionStore.loadExports(context, id).map { it.stopSec } } catch (e: Exception) { emptyList() }
+                        }
+                    } ?: emptyList()
+                    val merged = mergeRescan(saved, found, exportedStops)
                     cuts.clear()
                     rowBoxes.clear()
                     selectedCut = -1
-                    for (r in report.solves) {
-                        cuts.add(CutItem(r.stopSec, r.timeText, r.include, r.note, scrambleAll))
-                    }
+                    cuts.addAll(merged.cuts)
                     scanReport = report
                     footageId?.let { id ->
                         withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
                     }
                     val seconds = (System.currentTimeMillis() - started) / 1000
-                    analysisStatus = "Done in ${seconds}s: ${report.solves.count { it.include && it.note.isEmpty() }} solves found, " +
-                            "${report.solves.count { it.note.isNotEmpty() }} to check"
+                    analysisStatus = if (saved.isEmpty()) {
+                        "Done in ${seconds}s: ${report.solves.count { it.include && it.note.isEmpty() }} solves found, " +
+                                "${report.solves.count { it.note.isNotEmpty() }} to check"
+                    } else {
+                        "Re-scan done in ${seconds}s: " + merged.summary()
+                    }
                     finishedText = analysisStatus
-                    setupExpanded = report.solves.isEmpty()      // fold the Setup box away once it has done its job
+                    setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ScanCancelled) {
@@ -764,7 +775,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     TextButton(onClick = { goToCut(if (selValid) sel + 1 else 0) }) { Text("Next \u203A") }
                     Switch(
                         checked = selValid && cuts[sel].included,
-                        onCheckedChange = { on -> if (selValid) cuts[sel] = cuts[sel].copy(included = on) },
+                        onCheckedChange = { on -> if (selValid) cuts[sel] = cuts[sel].copy(included = on, edited = true) },
                         enabled = selValid
                     )
                 }
@@ -806,7 +817,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 }
                                 var position = cuts.indexOfFirst { it.stopSec > stop }
                                 if (position < 0) position = cuts.size
-                                cuts.add(position, CutItem(stop, text, true, note, scrambleAll))
+                                cuts.add(position, CutItem(stop, text, true, note, scrambleAll, edited = true))
                                 selectedCut = position
                                 analysisStatus = if (text.isNotEmpty()) "Cut added at the first frame that shows $text. Use Edit to adjust it."
                                 else "Cut added. Use Edit to fix its time or move it."
@@ -1095,7 +1106,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         ) {
                             Switch(
                                 checked = item.included,
-                                onCheckedChange = { on -> cuts[index] = cuts[index].copy(included = on) }
+                                onCheckedChange = { on -> cuts[index] = cuts[index].copy(included = on, edited = true) }
                             )
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
@@ -1134,7 +1145,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Checkbox(
                                         checked = item.includeScramble,
-                                        onCheckedChange = { on -> cuts[index] = cuts[index].copy(includeScramble = on) }
+                                        onCheckedChange = { on -> cuts[index] = cuts[index].copy(includeScramble = on, edited = true) }
                                     )
                                     Text("Include scramble", style = MaterialTheme.typography.bodySmall)
                                 }
@@ -1289,7 +1300,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         if (cuts.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "You already have a saved list of solves for this video. Continuing replaces it, including any edits you made.",
+                                "You already have a saved list of solves for this video. Solves you changed or exported stay exactly as they are; " +
+                                        "solves you haven't touched are updated, and any solves found for the first time are added.",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -1319,7 +1331,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             var text by remember(editIndex) { mutableStateOf(item.timeText) }
             // moves the cut and shows the frame it now points at
             fun nudge(delta: Double) {
-                cuts[editIndex] = cuts[editIndex].copy(stopSec = (cuts[editIndex].stopSec + delta).coerceAtLeast(0.0))
+                cuts[editIndex] = cuts[editIndex].copy(stopSec = (cuts[editIndex].stopSec + delta).coerceAtLeast(0.0), edited = true)
                 seekToSec(cuts[editIndex].stopSec)
             }
             AlertDialog(
@@ -1356,7 +1368,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 },
                 confirmButton = {
                     Button(onClick = {
-                        cuts[editIndex] = cuts[editIndex].copy(timeText = text.trim())
+                        val newText = text.trim()
+                        if (newText != cuts[editIndex].timeText) cuts[editIndex] = cuts[editIndex].copy(timeText = newText, edited = true)
                         editIndex = -1
                     }) { Text("Save") }
                 },

@@ -38,7 +38,7 @@ import java.util.TimeZone
 //
 // What is stored is NOT video. For every raw session video ("footage") the app keeps one small record
 // (where the file is, what it is called, how long it is, the buffer settings) and one small record per cut
-// (the same five things a CutItem already holds). The clips themselves are worked out from the cuts by
+// (the same things a CutItem already holds). The clips themselves are worked out from the cuts by
 // computeClips() whenever they are needed, so 1000 solves are only a few dozen KB.
 //
 // Plain Android SQLite is used on purpose (no extra libraries, nothing to add to the Gradle files).
@@ -78,7 +78,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 4
+    private const val DB_VERSION = 5
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -114,7 +114,8 @@ object SessionStore {
                         "included INTEGER NOT NULL, " +
                         "note TEXT NOT NULL, " +
                         "include_scramble INTEGER NOT NULL, " +
-                        "user_note TEXT NOT NULL DEFAULT '')"
+                        "user_note TEXT NOT NULL DEFAULT '', " +
+                        "user_edited INTEGER NOT NULL DEFAULT 0)"
             )
             db.execSQL("CREATE INDEX cuts_by_footage ON cuts(footage_id)")
             createExportsTable(db)
@@ -152,6 +153,15 @@ object SessionStore {
                 // version 4: when a video or an exported clip was moved to the phone's trash from CubeCut (0 = not in the trash)
                 db.execSQL("ALTER TABLE footage ADD COLUMN trashed_ms INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE exports ADD COLUMN trashed_ms INTEGER NOT NULL DEFAULT 0")
+            }
+            if (oldVersion < 5) {
+                // version 5: has the user changed this cut? (a re-scan with Find solves leaves changed cuts alone)
+                db.execSQL("ALTER TABLE cuts ADD COLUMN user_edited INTEGER NOT NULL DEFAULT 0")
+                // older cuts have no such record: count the ones that clearly show a change as changed, so a re-scan never undoes it
+                db.execSQL(
+                    "UPDATE cuts SET user_edited = 1 WHERE user_note <> '' OR note = 'added by you' OR (included = 0 AND note = '') " +
+                            "OR include_scramble <> (SELECT f.scramble_all FROM footage f WHERE f.id = cuts.footage_id)"
+                )
             }
         }
     }
@@ -329,12 +339,12 @@ object SessionStore {
 
     fun loadCuts(context: Context, footageId: Long): List<CutItem> =
         db(context).query(
-            "cuts", arrayOf("stop_sec", "time_text", "included", "note", "include_scramble", "user_note"),
+            "cuts", arrayOf("stop_sec", "time_text", "included", "note", "include_scramble", "user_note", "user_edited"),
             "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
         ).use { c ->
             val out = ArrayList<CutItem>()
             while (c.moveToNext()) {
-                out.add(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5)))
+                out.add(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1))
             }
             out
         }
@@ -361,6 +371,7 @@ object SessionStore {
                 v.put("note", cut.note)
                 v.put("include_scramble", if (cut.includeScramble) 1 else 0)
                 v.put("user_note", cut.userNote)
+                v.put("user_edited", if (cut.edited) 1 else 0)
                 d.insert("cuts", null, v)
             }
             d.setTransactionSuccessful()
@@ -447,6 +458,7 @@ object SessionStore {
     fun updateCutNote(context: Context, footageId: Long, stopSec: Double, userNote: String) {
         val v = ContentValues()
         v.put("user_note", userNote)
+        v.put("user_edited", 1)
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
@@ -502,6 +514,7 @@ object SessionStore {
         val v = ContentValues()
         v.put("included", if (included) 1 else 0)
         v.put("include_scramble", if (includeScramble) 1 else 0)
+        v.put("user_edited", 1)
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
@@ -509,6 +522,7 @@ object SessionStore {
     fun updateCutScramble(context: Context, footageId: Long, stopSec: Double, includeScramble: Boolean) {
         val v = ContentValues()
         v.put("include_scramble", if (includeScramble) 1 else 0)
+        v.put("user_edited", 1)
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
