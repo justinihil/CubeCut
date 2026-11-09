@@ -603,16 +603,23 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
     }
 
-    // where this video's exported clips are (read once when the video's record is open)
-    LaunchedEffect(footageId) {
+    // where this video's exported clips are: read when the video's record is open, and again each time the Edit window opens
+    // (a file can be deleted in another app meanwhile). Same rule as the Gallery: only files that are not in the trash and
+    // still open count, so the editor and the Gallery never disagree about "exported".
+    LaunchedEffect(footageId, editIndex) {
         val id = footageId ?: return@LaunchedEffect
-        exportedAt = withContext(Dispatchers.IO) {
+        if (editIndex < 0 && exportedAt.isNotEmpty()) return@LaunchedEffect      // (closing the window needs no new look)
+        val found = withContext(Dispatchers.IO) {
             try {
-                SessionStore.loadExports(context, id).filter { it.trashedMs == 0L }.map { it.stopSec }
+                SessionStore.loadExports(context, id)
+                    .filter { it.trashedMs == 0L && SessionStore.canOpen(context, Uri.parse(it.uri)) }
+                    .map { it.stopSec }
             } catch (e: Exception) {
                 emptyList()
             }
         }
+        // cuts moved but not saved yet: the saved records are still at the old spots, so follow the moves here
+        exportedAt = found.map { at -> pendingMoves.entries.firstOrNull { Math.abs(it.key - at) < 0.05 }?.value ?: at }
     }
     fun isExported(i: Int): Boolean {
         val c = cuts.getOrNull(i) ?: return false
