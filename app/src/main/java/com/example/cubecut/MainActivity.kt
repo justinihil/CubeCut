@@ -42,6 +42,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -311,6 +312,27 @@ private fun ArrowButton(left: Boolean, onClick: () -> Unit) {
     }
 }
 
+/** The round "+" on the "Add a missed solve" button: a filled blue circle with a white plus. */
+@Composable
+private fun PlusBadge(enabled: Boolean) {
+    val back = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    val fore = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.surface
+    Box(
+        Modifier
+            .size(22.dp)
+            .background(back, CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(12.dp)) {
+            val w = this.size.width
+            val h = this.size.height
+            val sw = w * 0.2f
+            drawLine(fore, Offset(w * 0.5f, h * 0.08f), Offset(w * 0.5f, h * 0.92f), strokeWidth = sw, cap = StrokeCap.Round)
+            drawLine(fore, Offset(w * 0.08f, h * 0.5f), Offset(w * 0.92f, h * 0.5f), strokeWidth = sw, cap = StrokeCap.Round)
+        }
+    }
+}
+
 /**
  * "1:23.4 / 5:00.0" next to Play. It reads the playhead itself (position is a function), so while the video plays only this
  * text is redrawn, not the editor around it.
@@ -375,8 +397,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var showAbout by remember { mutableStateOf(false) }          // the About window (author credit and licence notice)
     var showClearChecks by remember { mutableStateOf(false) }    // the "Clear all checks?" window
     var showFindConfirm by remember { mutableStateOf(false) }    // the "this may take a couple of minutes" window
-    var addCutAt by remember { mutableStateOf<Double?>(null) }    // "+ Cut at playhead": where the new solve stops (its time window is open)
-    var cutBlockedBy by remember { mutableStateOf(-1) }          // "+ Cut at playhead" on a spot inside this solve: the warning window
+    var addCutAt by remember { mutableStateOf<Double?>(null) }    // "Add a missed solve" (+ Cut at playhead): where the new solve stops (its time window is open)
+    var cutBlockedBy by remember { mutableStateOf(-1) }          // "Add a missed solve" (+ Cut at playhead) on a spot inside this solve: the warning window
     var cutBlockedAt by remember { mutableStateOf(0.0) }         // ...and where that spot was
     var analysisDone by remember { mutableStateOf(0) }           // progress of Find solves
     var analysisTotal by remember { mutableStateOf(0) }
@@ -953,7 +975,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
 
     /**
-     * The "+ Cut at playhead" button. Nothing is read from the video: the playhead is where the solve stopped (the first frame that
+     * The "Add a missed solve at the playhead" button (called "+ Cut at playhead" before).
+     * Nothing is read from the video: the playhead is where the solve stopped (the first frame that
      * shows the final time), and the window that opens asks for the solve time. A playhead inside an existing solve gets a warning
      * instead, because two solves can't overlap (see solveAtPlayhead in RescanMerge.kt).
      */
@@ -1255,17 +1278,36 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             }
             Spacer(Modifier.height(4.dp))
 
-            // ################ always at hand: + Cut at playhead and the two switches ################
+            // ################ always at hand: Add a missed solve and the two switches ################
             // (only once Find solves has run on this video: before that there is nothing to add to or switch, and the screen stays
             // simple: video, timeline, the Setup box and Find solves. A video with solves saved counts as run.)
             val showTools = videoUri != null && (scanned || cuts.isNotEmpty())
 
             if (showTools) {
-                OutlinedButton(
-                    onClick = { startManualCut() },
-                    enabled = durationMs > 0 && !analyzing,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("+ Cut at playhead") }
+                // says what it is for: adding a solve Find solves missed, at the playhead (the "i" explains where to put it)
+                val cutEnabled = durationMs > 0 && !analyzing
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = { startManualCut() },
+                        enabled = cutEnabled,
+                        border = BorderStroke(1.5.dp, if (cutEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        PlusBadge(enabled = cutEnabled)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Add a missed solve at the playhead", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    InfoButton(
+                        "Add a missed solve",
+                        listOf(
+                            "Find solves missed one? Add it by hand.",
+                            "Put the playhead on the first frame that shows its final time.",
+                            "Tap the button and type the time the timer shows.",
+                            "Not possible inside another solve: fix or delete that one first."
+                        )
+                    )
+                }
             }
 
             // the scramble for every clip (a card's own scramble button can then change one clip again), and the check filter
@@ -1308,7 +1350,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             }
 
             // ################ EVERYTHING BELOW SCROLLS TOGETHER: setup box, Find solves, status, the list ################
-            // (only the video, timeline, Prev/Next bar, + Cut at playhead and the two switches above stay put)
+            // (only the video, timeline, review bar, Add a missed solve and the two switches above stay put)
             Column(
                 Modifier
                     .weight(1f)
@@ -1436,7 +1478,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     )
                                 }
                                 Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
-                                // (the scramble switch for all clips is not here: it sits under + Cut at playhead, next to the check filter)
+                                // (the scramble switch for all clips is not here: it sits under Add a missed solve, next to the check filter)
                             }
                         }
                     }
@@ -1532,7 +1574,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 listOf(
                                     "Set up again on a frame right after a solve.",
                                     "Use Read timer here on a few moments after solves.",
-                                    "Or put the playhead on the first frame of a final time and tap + Cut at playhead."
+                                    "Or put the playhead on the first frame of a final time and tap Add a missed solve."
                                 )
                             )
                         }
@@ -1546,7 +1588,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     }
                     if (report.solves.isNotEmpty()) {
                         InfoNote(
-                            text = "Missing a solve? Put the playhead on the first frame of its final time and tap + Cut at playhead.",
+                            text = "Missing a solve? Put the playhead on the first frame of its final time and tap Add a missed solve.",
                             modifier = Modifier.padding(vertical = 4.dp)
                         )
                     }
@@ -1806,7 +1848,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
 
-        // ===== "+ Cut at playhead" on a spot inside an existing solve: no cut, look at that solve first =====
+        // ===== "Add a missed solve" on a spot inside an existing solve: no cut, look at that solve first =====
         if (cutBlockedBy in cuts.indices) {
             val n = cutBlockedBy + 1
             val other = cuts[cutBlockedBy]
@@ -1836,7 +1878,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
 
-        // ===== "+ Cut at playhead": type the solve time; a time that would overlap an earlier solve is refused =====
+        // ===== "Add a missed solve": type the solve time; a time that would overlap an earlier solve is refused =====
         val newCutAt = addCutAt
         if (newCutAt != null) {
             var text by remember(newCutAt) { mutableStateOf("") }
