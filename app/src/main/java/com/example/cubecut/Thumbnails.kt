@@ -21,6 +21,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -48,10 +49,15 @@ import kotlin.math.max
 // Gallery pictures. They are made the first time they are needed (a frame from the video, shrunk to 360 pixels high), kept as
 // small JPEG files in the app's cache folder and in memory while the app runs. They are never needed for the data to be
 // correct: if Android clears the cache, they are simply made again (as long as the video can still be opened).
+// The folder is kept under about 100 MB: when it grows past that, the pictures that were used longest ago are removed.
 // ---------------------------------------------------------------------------------------
 
 object ThumbCache {
     private const val TARGET_HEIGHT = 360
+    private const val DISK_LIMIT = 100L * 1024 * 1024        // above this the folder is trimmed...
+    private const val DISK_TRIM_TO = 80L * 1024 * 1024       // ...down to this, so it isn't trimmed again after every new picture
+    private const val TRIM_EVERY = 25                        // the folder is measured after this many new pictures (and once per app start)
+    private var madeSinceTrim = TRIM_EVERY                   // starts "due", so the first new picture after a start measures it
 
     // the memory part holds about 24 MB of pictures
     private val memory = object : LruCache<String, Bitmap>(24 * 1024) {
@@ -67,33 +73,35 @@ object ThumbCache {
         return d
     }
 
-    /**
-     * The picture for [key]. [uri] and [timeMs] say where to take it from if it doesn't exist yet
-     * (a null [uri] = the video can't be opened, so only an already made picture can be returned).
-     */
     /** The picture for [key] if it is already in memory, without waiting (so a picture that is ready is drawn in the very first frame). */
     fun peek(key: String, height: Int = TARGET_HEIGHT): Bitmap? = memory.get(nameOf(key, height))
 
     private fun nameOf(key: String, height: Int): String =
         if (height == TARGET_HEIGHT) key else "${key}_h$height"      // bigger pictures (for the full-screen viewer) are kept apart
 
+    /**
+     * The picture for [key]. [uri] and [timeMs] say where to take it from if it doesn't exist yet
+     * (a null [uri] = the video can't be opened, so only an already made picture can be returned).
+     */
     suspend fun get(context: Context, key: String, uri: Uri?, timeMs: Long, height: Int = TARGET_HEIGHT): Bitmap? {
         val name = nameOf(key, height)
         val cached = memory.get(name)
         if (cached != null) return cached
         return withContext(Dispatchers.IO) {
-            val file = File(dir(context), "$name.jpg")
-            var bmp: Bitmap? = if (file.exists()) BitmapFactory.decodeFile(file.path) else null
+            val folder = dir(context)
+            val file = File(folder, "$name.jpg")
+            var bmp: Bitmap? = null
+            if (file.exists()) {
+                bmp = BitmapFactory.decodeFile(file.path)
+                if (bmp != null) file.setLastModified(System.currentTimeMillis())   // "used just now", so trimming keeps it
+            }
             if (bmp == null && uri != null) {
                 gate.withPermit {
                     bmp = grab(context, uri, timeMs, height)
                     val made = bmp
                     if (made != null) {
-                        try {
-                            FileOutputStream(file).use { out -> made.compress(Bitmap.CompressFormat.JPEG, 80, out) }
-                        } catch (e: Exception) {
-                            // not saved: it will just be made again next time
-                        }
+                        save(made, folder, file)
+                        trimIfDue(folder)
                     }
                 }
             }
@@ -103,11 +111,57 @@ object ThumbCache {
         }
     }
 
-    /** Removes the pictures of one session (when it is forgotten). */
-    fun forgetFootage(context: Context, footageId: Long) {
+    /**
+     * Writes the picture to a temporary file first and only then gives it its real name, so a half-written picture (the app
+     * closed while saving, or the phone ran out of space) is never mistaken for a finished one.
+     */
+    private fun save(picture: Bitmap, folder: File, file: File) {
+        val temp = File(folder, file.name + ".tmp")
         try {
+            FileOutputStream(temp).use { out -> picture.compress(Bitmap.CompressFormat.JPEG, 80, out) }
+            if (!temp.renameTo(file)) {
+                file.delete()
+                if (!temp.renameTo(file)) temp.delete()
+            }
+        } catch (e: Exception) {
+            temp.delete()          // not saved: it will just be made again next time
+        }
+    }
+
+    /** Every [TRIM_EVERY] new pictures: if the folder is over [DISK_LIMIT], remove the pictures used longest ago. */
+    private fun trimIfDue(folder: File) {
+        synchronized(this) {
+            madeSinceTrim++
+            if (madeSinceTrim < TRIM_EVERY) return
+            madeSinceTrim = 0
+        }
+        try {
+            val files = folder.listFiles() ?: return
+            var total = files.sumOf { it.length() }
+            if (total <= DISK_LIMIT) return
+            for (f in files.sortedBy { it.lastModified() }) {
+                if (total <= DISK_TRIM_TO) break
+                val size = f.length()
+                if (f.delete()) total -= size
+            }
+        } catch (e: Exception) {
+            // trimming is housekeeping: if it fails, the pictures still work
+        }
+    }
+
+    /**
+     * Removes the pictures of one session (when it is forgotten): its video's picture (f_), its clips' grid pictures (c_) and
+     * viewer pictures (v_), and the pictures taken from its exported files (x_ and xv_, named by [exportIds]).
+     */
+    fun forgetFootage(context: Context, footageId: Long, exportIds: Collection<Long> = emptyList()) {
+        try {
+            val exportNames = exportIds.flatMap { id -> listOf("x_$id", "xv_$id") }.toSet()
             dir(context).listFiles()?.forEach { f ->
-                if (f.name.startsWith("c_${footageId}_") || f.name == "f_$footageId.jpg" || f.name.startsWith("f_${footageId}_h")) f.delete()
+                val n = f.name
+                val base = n.substringBefore(".jpg").substringBefore("_h")       // the name without "_h900" and ".jpg"
+                if (n.startsWith("c_${footageId}_") || n.startsWith("v_${footageId}_") ||
+                    n == "f_$footageId.jpg" || n.startsWith("f_${footageId}_h") || base in exportNames
+                ) f.delete()
             }
             memory.evictAll()
         } catch (e: Exception) {
@@ -118,7 +172,14 @@ object ThumbCache {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(context, uri)
-            val frame = retriever.getFrameAtTime(max(0L, timeMs) * 1000L, MediaMetadataRetriever.OPTION_CLOSEST)
+            val atUs = max(0L, timeMs) * 1000L
+            // Android 8.1 and newer: the phone shrinks the frame itself, so a full 4K picture (about 33 MB) is never handed to the
+            // app just to be shrunk. (The box is wide enough for any shape of video, so the height decides the size.)
+            val frame = if (Build.VERSION.SDK_INT >= 27) {
+                retriever.getScaledFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST, targetHeight * 4, targetHeight)
+            } else {
+                retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST)
+            }
             if (frame == null) {
                 null
             } else if (frame.height <= targetHeight) {

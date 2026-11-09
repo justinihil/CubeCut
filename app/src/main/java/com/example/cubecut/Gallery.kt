@@ -2130,8 +2130,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         scope.launch {
                             val problem = withContext(Dispatchers.IO) {
                                 try {
+                                    // (the exported files' ids are read first: deleting the session removes their records)
+                                    val exportIds = SessionStore.loadExports(context, forgetTarget.id).map { it.id }
                                     SessionStore.delete(context, forgetTarget)
-                                    ThumbCache.forgetFootage(context, forgetTarget.id)
+                                    ThumbCache.forgetFootage(context, forgetTarget.id, exportIds)
                                     ""
                                 } catch (e: Exception) {
                                     "Couldn't forget \"${forgetTarget.title}\": ${e.message ?: e.javaClass.simpleName}"
