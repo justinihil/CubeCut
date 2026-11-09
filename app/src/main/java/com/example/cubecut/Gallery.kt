@@ -854,22 +854,25 @@ fun AboutDialog(onDismiss: () -> Unit) {
                     .heightIn(max = 360.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                Text("Created by $AUTHOR_NAME", style = MaterialTheme.typography.bodyLarge)
-                Text(AUTHOR_FIND_ME, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(8.dp))
+                // sizes from biggest to smallest: the credit and where to find the author, the description, the licence terms
+                Text("Created by $AUTHOR_NAME", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(2.dp))
+                Text(AUTHOR_FIND_ME, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(12.dp))
                 Text(
                     "Cuts a session video into one clip per solve by reading the timer. " +
                             "Everything runs on this phone. Nothing is uploaded.",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
                 BulletLines(
                     listOf(
                         "Free software under the GNU General Public License, version 3, with no warranty.",
                         "If you share CubeCut or a changed version, you must also share the source code under the same licence.",
                         "Keep this credit in the app, and say clearly when a version is changed.",
                         "See LICENSE and NOTICE.md in the source code."
-                    )
+                    ),
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         },

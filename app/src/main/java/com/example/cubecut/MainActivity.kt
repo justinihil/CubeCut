@@ -132,7 +132,7 @@ const val DEFAULT_INCLUDE_SCRAMBLE = true
 // add their own name next to it). AUTHOR_FIND_ME is only shown in the About window; change it freely when more
 // platforms are added, it is not part of the licence terms.
 const val AUTHOR_NAME = "DadCuber"
-const val AUTHOR_FIND_ME = "Find me on TikTok and Facebook: DadCuber"
+const val AUTHOR_FIND_ME = "Find me on TikTok, Instagram and Facebook: DadCuber"
 
 // true once the image library (OpenCV) has loaded
 var openCvReady = false
@@ -322,6 +322,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var showAbout by remember { mutableStateOf(false) }          // the About window (author credit and licence notice)
     var showClearChecks by remember { mutableStateOf(false) }    // the "Clear all checks?" window
     var showFindConfirm by remember { mutableStateOf(false) }    // the "this may take a couple of minutes" window
+    var addCutAt by remember { mutableStateOf<Double?>(null) }    // "+ Cut at playhead": where the new solve stops (its time window is open)
+    var cutBlockedBy by remember { mutableStateOf(-1) }          // "+ Cut at playhead" on a spot inside this solve: the warning window
+    var cutBlockedAt by remember { mutableStateOf(0.0) }         // ...and where that spot was
     var analysisDone by remember { mutableStateOf(0) }           // progress of Find solves
     var analysisTotal by remember { mutableStateOf(0) }
     var cancelScan by remember { mutableStateOf(false) }         // the Cancel button of Find solves
@@ -346,7 +349,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var setupMessage by remember { mutableStateOf("") }
 
     // The timer engine holds OpenCV memory that the garbage collector can't see, so it is freed by hand when the editor closes.
-    // A background job that is still reading with it (Find solves, + Cut at playhead, Read timer here) must finish first, or it
+    // A background job that is still reading with it (Find solves, Read timer here) must finish first, or it
     // would read with freed memory: each one counts itself in and out here, and the last one out frees the engine.
     // (plain arrays, not screen state: only the main thread touches them, and changing them must not redraw anything)
     val engineUsers = remember { IntArray(1) }
@@ -766,6 +769,33 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         goToCut(target)
     }
 
+    /** Selects solve [i] and jumps to it (switching the "only show solves to check" filter off if it would hide that solve). */
+    fun showSolve(i: Int) {
+        if (i !in cuts.indices) return
+        if (onlyCheck && !needsCheck(i)) {
+            onlyCheck = false
+            rowBoxes.clear()
+        }
+        goToCut(i)
+    }
+
+    /**
+     * The "+ Cut at playhead" button. Nothing is read from the video: the playhead is where the solve stopped (the first frame that
+     * shows the final time), and the window that opens asks for the solve time. A playhead inside an existing solve gets a warning
+     * instead, because two solves can't overlap (see solveAtPlayhead in RescanMerge.kt).
+     */
+    fun startManualCut() {
+        exoPlayer.pause()
+        val at = exoPlayer.currentPosition.coerceAtLeast(0L) / 1000.0
+        val inside = solveAtPlayhead(cuts, at)
+        if (inside >= 0) {
+            cutBlockedAt = at
+            cutBlockedBy = inside
+        } else {
+            addCutAt = at
+        }
+    }
+
     // opened from a Gallery clip: once the list has been laid out, scroll so the selected row is in view
     LaunchedEffect(scrollToSelected) {
         if (!scrollToSelected) return@LaunchedEffect
@@ -1011,40 +1041,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     modifier = Modifier.weight(1f)
                 ) { Text(if (analyzing) "Working... ${if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0}%" else "Find solves") }
                 OutlinedButton(
-                    onClick = {
-                        val uri = videoUri
-                        val engine = timerEngine
-                        val at = positionMs / 1000.0
-                        val dur = durationMs
-                        if (uri != null) {
-                            scope.launch {
-                                analysisStatus = "Adding a cut at ${formatTime(positionMs)}..."
-                                var stop = at
-                                var text = ""
-                                var note = "added by you"
-                                if (engine != null) {
-                                    startUsing()
-                                    val found = try {
-                                        withContext(Dispatchers.Default) {
-                                            SolveAnalyzer.analyzeOne(context, uri, at, dur, engine)
-                                        }
-                                    } finally {
-                                        stopUsing(engine)
-                                    }
-                                    stop = found.stopSec
-                                    text = found.timeText
-                                    note = found.note
-                                }
-                                var position = cuts.indexOfFirst { it.stopSec > stop }
-                                if (position < 0) position = cuts.size
-                                cuts.add(position, CutItem(stop, text, true, note, scrambleAll, edited = true))
-                                selectedCut = position
-                                analysisStatus = if (text.isNotEmpty()) "Cut added for $text. Tap Edit to adjust it."
-                                else "Cut added. Tap Edit to set its time."
-                            }
-                        }
-                    },
-                    enabled = videoUri != null && !analyzing,
+                    onClick = { startManualCut() },
+                    enabled = videoUri != null && durationMs > 0 && !analyzing,
                     modifier = Modifier.weight(1f)
                 ) { Text("+ Cut at playhead") }
             }
@@ -1261,7 +1259,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 listOf(
                                     "Set up again on a frame right after a solve.",
                                     "Use Read timer here on a few moments after solves.",
-                                    "Or put the playhead on a final time and tap + Cut at playhead."
+                                    "Or put the playhead on the first frame of a final time and tap + Cut at playhead."
                                 )
                             )
                         }
@@ -1575,6 +1573,110 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 dismissButton = {
                     TextButton(onClick = { showFindConfirm = false }) { Text("Cancel") }
                 }
+            )
+        }
+
+        // ===== "+ Cut at playhead" on a spot inside an existing solve: no cut, look at that solve first =====
+        if (cutBlockedBy in cuts.indices) {
+            val n = cutBlockedBy + 1
+            val other = cuts[cutBlockedBy]
+            val otherTime = parseTimeSeconds(other.timeText)
+            fun at(sec: Double) = formatTime((sec * 1000.0).toLong())
+            AlertDialog(
+                onDismissRequest = { cutBlockedBy = -1 },
+                title = { Text("This spot is inside solve $n") },
+                text = {
+                    BulletLines(
+                        listOf(
+                            if (otherTime != null) "Solve $n (${other.timeText} s) runs from ${at(other.stopSec - otherTime)} to ${at(other.stopSec)}."
+                            else "Solve $n stops at ${at(other.stopSec)}.",
+                            "Two solves can't overlap, so no cut was added at ${at(cutBlockedAt)}.",
+                            "If solve $n isn't a real solve, delete it first. Then add your cut."
+                        )
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val i = cutBlockedBy
+                        cutBlockedBy = -1
+                        showSolve(i)
+                    }) { Text("Go to solve $n") }
+                },
+                dismissButton = { TextButton(onClick = { cutBlockedBy = -1 }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== "+ Cut at playhead": type the solve time; a time that would overlap an earlier solve is refused =====
+        val newCutAt = addCutAt
+        if (newCutAt != null) {
+            var text by remember(newCutAt) { mutableStateOf("") }
+            var overlapWith by remember(newCutAt) { mutableStateOf(-1) }      // the solve the typed time overlaps (-1 = none)
+            val typed = text.trim().trimEnd('.')
+            val seconds = parseTimeSeconds(typed)
+            fun at(sec: Double) = formatTime((sec * 1000.0).toLong())
+            AlertDialog(
+                onDismissRequest = { addCutAt = null },
+                title = { Text("Add a solve at ${at(newCutAt)}") },
+                text = {
+                    Column {
+                        Text(
+                            "The playhead should be on the first frame that shows the final time.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = text,
+                            onValueChange = { v ->
+                                text = v.filter { c -> c.isDigit() || c == '.' || c == ':' }
+                                overlapWith = -1
+                            },
+                            label = { Text("Solve time, e.g. 12.412") },
+                            supportingText = { Text("Needed: it sets where the solve starts") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        val o = overlapWith
+                        if (o in cuts.indices && seconds != null) {
+                            val other = cuts[o]
+                            Spacer(Modifier.height(8.dp))
+                            InfoNote(
+                                kind = NoteKind.PROBLEM,
+                                title = "Overlaps solve ${o + 1}",
+                                text = "A $typed s solve ending here would start at ${at(newCutAt - seconds)}, before solve ${o + 1} " +
+                                        "stopped at ${at(other.stopSec)}. Check the time. If solve ${o + 1} isn't a real solve, delete it first.",
+                                action = "Go to solve ${o + 1}",
+                                onAction = {
+                                    addCutAt = null
+                                    showSolve(o)
+                                }
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (seconds != null) {
+                                val o = solveOverlappedBy(cuts, newCutAt, seconds)
+                                if (o >= 0) {
+                                    overlapWith = o
+                                } else {
+                                    var position = cuts.indexOfFirst { it.stopSec > newCutAt }
+                                    if (position < 0) position = cuts.size
+                                    cuts.add(position, CutItem(newCutAt, typed, true, "added by you", scrambleAll, edited = true))
+                                    rowBoxes.clear()
+                                    addCutAt = null
+                                    selectedCut = position
+                                    analysisStatus = "Solve added at ${at(newCutAt)}: $typed s."
+                                }
+                            }
+                        },
+                        enabled = seconds != null
+                    ) { Text("Add") }
+                },
+                dismissButton = { TextButton(onClick = { addCutAt = null }) { Text("Cancel") } }
             )
         }
 

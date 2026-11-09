@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -143,14 +144,18 @@ fun InfoButton(title: String, lines: List<String>, modifier: Modifier = Modifier
     }
 }
 
-/** Short lines under each other, each with a bullet. Used in windows instead of one long paragraph. */
+/**
+ * Short lines under each other, each with a bullet. Used in windows instead of one long paragraph. [style] is the text size
+ * (normal body text unless given, e.g. smaller for the licence terms in the About window).
+ */
 @Composable
-fun BulletLines(lines: List<String>, modifier: Modifier = Modifier) {
+fun BulletLines(lines: List<String>, modifier: Modifier = Modifier, style: TextStyle? = null) {
+    val textStyle = style ?: MaterialTheme.typography.bodyMedium
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (line in lines) {
             Row {
-                Text("\u2022", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(16.dp))
-                Text(line, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text("\u2022", style = textStyle, modifier = Modifier.width(16.dp))
+                Text(line, style = textStyle, modifier = Modifier.weight(1f))
             }
         }
     }
@@ -169,4 +174,4 @@ fun LeadAndBullets(lead: String, lines: List<String>, modifier: Modifier = Modif
 fun kindOfMessage(text: String): NoteKind {
     val t = text.lowercase()
     return if (t.contains("couldn't") || t.contains("can't") || t.contains("failed") || t.contains("problems:") || t.contains("stopped:")) NoteKind.PROBLEM else NoteKind.INFO
-}
+}

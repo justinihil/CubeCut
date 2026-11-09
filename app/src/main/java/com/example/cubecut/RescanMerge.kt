@@ -167,4 +167,52 @@ fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
         prev = i
     }
     return CutChecks(found.mapValues { it.value.joinToString("; ") }, noClip)
-}
+}
+// ---------------------------------------------------------------------------------------
+// Checks for a cut added by hand ("+ Cut at playhead"). The user puts the playhead on the first frame of the final time and types the
+// solve time; the solve then runs from (playhead - time) to the playhead. Two solves can't overlap, so:
+//  - a playhead inside an existing solve can't take a new cut (that would be the same solve again, or one of the two isn't real);
+//  - a typed time that makes the new solve start before an earlier solve stopped is refused.
+// The same 0.3 s slack as checkCuts is used, so a cut added here is never flagged by checkCuts for overlapping, and nothing checkCuts
+// accepts is refused here.
+// ---------------------------------------------------------------------------------------
+
+/** Where the solve of cut [c] runs (from its start to its stop); just its stop moment if its time is unknown. */
+private fun solveRange(c: CutItem): Pair<Double, Double> {
+    val t = parseTimeSeconds(c.timeText)
+    return if (t != null) Pair(c.stopSec - t, c.stopSec) else Pair(c.stopSec, c.stopSec)
+}
+
+/**
+ * The index of the solve the playhead at [atSec] sits inside (its solve part, or within 0.3 s after its stop, which would be the same
+ * stop again), or -1 if the spot is free. Left-over cuts are ignored, like everywhere else.
+ */
+fun solveAtPlayhead(cuts: List<CutItem>, atSec: Double): Int {
+    var best = -1
+    for (i in cuts.indices) {
+        val c = cuts[i]
+        if (isLeftover(c)) continue
+        val (start, stop) = solveRange(c)
+        val inside = if (stop > start) atSec > start + SLACK_SEC && atSec < stop + SLACK_SEC else Math.abs(atSec - stop) < SLACK_SEC
+        if (inside && (best < 0 || Math.abs(cuts[best].stopSec - atSec) > Math.abs(c.stopSec - atSec))) best = i
+    }
+    return best
+}
+
+/**
+ * The index of an existing solve that a new solve of [timeSec] seconds, stopping at [stopSec], would overlap, or -1 if there is none.
+ * When several would overlap, the one that stops closest to [stopSec] is returned (normally the solve just before it).
+ */
+fun solveOverlappedBy(cuts: List<CutItem>, stopSec: Double, timeSec: Double): Int {
+    val newStart = stopSec - timeSec
+    var best = -1
+    for (i in cuts.indices) {
+        val c = cuts[i]
+        if (isLeftover(c)) continue
+        val (start, stop) = solveRange(c)
+        val overlaps = if (stop > start) newStart < stop - SLACK_SEC && start < stopSec - SLACK_SEC
+        else stop > newStart + SLACK_SEC && stop < stopSec + SLACK_SEC
+        if (overlaps && (best < 0 || Math.abs(cuts[best].stopSec - stopSec) > Math.abs(c.stopSec - stopSec))) best = i
+    }
+    return best
+}

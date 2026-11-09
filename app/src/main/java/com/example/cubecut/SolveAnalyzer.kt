@@ -35,9 +35,6 @@ class ScanResult(
     val readableFraction: Double            // 0..1: how many of the sampled frames had a readable timer
 )
 
-/** A cut added by hand ("+ Cut at playhead"), moved to the first frame that shows the time. */
-class ManualCut(val stopSec: Double, val timeText: String, val note: String)
-
 /** Thrown inside the scan when the user pressed Cancel. */
 class ScanCancelled : Exception("cancelled")
 
@@ -56,7 +53,7 @@ class ScanCancelled : Exception("cancelled")
  *  3. REFINE: walk backwards from there in finer and finer steps (0.5 s, 0.1 s, one frame) to the first frame that
  *     shows that time.
  *
- * The decision logic lives in [scan] / [firstAppearance] / [locate] and only needs a function "digits shown at second t",
+ * The decision logic lives in [scan] / [firstAppearance] and only needs a function "digits shown at second t",
  * so it was tested on a computer with simulated, noisy readings before being written here.
  */
 object SolveAnalyzer {
@@ -79,7 +76,6 @@ object SolveAnalyzer {
     const val FINE_STEP = 1.0 / 60.0    // one frame of 60 fps video
     const val FINE_WINDOW = 0.12        // the one-frame search never goes further back than this
     const val BACK_MAX_SEC = 4.0        // automatic scan: look back at most this far for the first frame
-    const val MANUAL_BACK_MAX_SEC = 30.0 // "+ Cut at playhead": the playhead may sit anywhere in the hold
 
     // ---------------------------------------------------------------------------------------
     // small helpers on the digit strings
@@ -336,37 +332,6 @@ object SolveAnalyzer {
         )
     }
 
-    /**
-     * "+ Cut at playhead": looks at the display from the playhead onwards (the playhead may be a little before the stop
-     * or anywhere while the time is held), finds the time and moves the cut back to the first frame that shows it.
-     */
-    fun locate(read: (Double) -> String?, atSec: Double, durationSec: Double, decimals: Int): ManualCut {
-        val reads = ArrayList<Pair<Double, String>>()
-        for (k in 0..12) {
-            val t = atSec + 0.25 * k
-            if (t > durationSec) break
-            val v = read(t)
-            if (v != null && !isZero(v)) reads.add(Pair(t, v))
-        }
-        if (reads.isEmpty()) {
-            return ManualCut(atSec, "", "added by you - couldn't read a time here (is the timer in view? is it set up?)")
-        }
-        val counts = HashMap<String, Int>()
-        for (r in reads) counts[r.second] = (counts[r.second] ?: 0) + 1
-        val steady = counts.filter { it.value >= 2 }
-        if (steady.isEmpty()) {
-            return ManualCut(atSec, "", "added by you - no steady time here: put the playhead on a frame where the stopped time is showing")
-        }
-        val top = steady.maxByOrNull { it.value }!!.key
-        val w = pickWinner(steady, top)
-        var startT = Double.MAX_VALUE
-        for (r in reads) if (similar(r.second, w) && r.first < startT) startT = r.first
-        val lower = max(0.0, startT - MANUAL_BACK_MAX_SEC)
-        val (earliest, _) = firstAppearance(read, w, startT, lower)
-        val text = TimerVision.formatDigits(w, decimals)
-        return ManualCut(earliest, text, "added by you")
-    }
-
     // ---------------------------------------------------------------------------------------
     // glue to the real video and timer reader
     // ---------------------------------------------------------------------------------------
@@ -410,17 +375,6 @@ object SolveAnalyzer {
         try {
             val read = memoReader(source, engine)
             return scan(read, durationMs / 1000.0, engine.decimals, onProgress, isCancelled)
-        } finally {
-            source.close()
-        }
-    }
-
-    /** Checks one moment chosen by the user ("+ Cut at playhead"). */
-    fun analyzeOne(context: Context, uri: Uri, atSec: Double, durationMs: Long, engine: TimerEngine): ManualCut {
-        val source = RetrieverSource(context, uri, durationMs)       // only a few reads: the simple way is fine
-        try {
-            val read = memoReader(source, engine)
-            return locate(read, atSec, durationMs / 1000.0, engine.decimals)
         } finally {
             source.close()
         }
