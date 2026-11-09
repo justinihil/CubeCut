@@ -28,7 +28,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -79,6 +83,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -569,17 +574,48 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
         selectedCut = i
         seekToSec(cuts[i].stopSec - 0.5)
     }
-    fun deleteCut(index: Int) {
+    /** The first row the list shows at or after [start] (or, if there is none, the last one it shows); -1 = it shows none. */
+    fun shownFrom(start: Int): Int {
+        val shown = cuts.indices.filter { !onlyCheck || needsCheck(it) }
+        return shown.firstOrNull { it >= start } ?: shown.lastOrNull() ?: -1
+    }
+    // a row being removed: it slides away first (about a quarter of a second), then the change is made
+    var leavingCut by remember { mutableStateOf<CutItem?>(null) }
+    fun slideOut(c: CutItem, then: () -> Unit) {
+        if (leavingCut != null) return
+        leavingCut = c
+        scope.launch {
+            delay(280)
+            leavingCut = null
+            then()
+        }
+    }
+    fun deleteNow(index: Int) {
         if (index !in cuts.indices) return
         undoCut = Pair(index, cuts[index])
         undoVideo = videoUri
         cuts.removeAt(index)
         rowBoxes.clear()
-        editIndex = -1
         selectedCut = -1
-        // the next solve has moved up into this place (or, after the last one, the one before it)
-        val next = (index until cuts.size).firstOrNull { !onlyCheck || needsCheck(it) } ?: (index - 1)
-        selectAfterChange(next)
+        selectAfterChange(shownFrom(index))       // the next solve has moved up into this place
+    }
+    /** Delete button: the row slides away, then the solve after it is selected. */
+    fun deleteCut(index: Int) {
+        val c = cuts.getOrNull(index) ?: return
+        editIndex = -1
+        slideOut(c) { deleteNow(cuts.indexOf(c)) }
+    }
+    /** Checked button: the flag goes, and the next solve in the list is selected (the row slides away if only solves to check are shown). */
+    fun checkCut(index: Int) {
+        val c = cuts.getOrNull(index) ?: return
+        val done = {
+            val i = cuts.indexOf(c)
+            if (i >= 0) {
+                markChecked(i)
+                selectAfterChange(shownFrom(i + 1))
+            }
+        }
+        if (onlyCheck) slideOut(c, done) else done()
     }
     fun undoDelete() {
         val u = undoCut ?: return
@@ -1191,72 +1227,80 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                         if (onlyCheck && !needsCheck(index)) return@forEachIndexed
                         val clip = clipByCut[index]
                         val isSelected = index == selectedCut
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
-                                .padding(vertical = 2.dp)
-                                .onGloballyPositioned { rowBoxes[index] = it },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Spacer(Modifier.width(6.dp))
-                            Column(Modifier.weight(1f)) {
-                                Column(
-                                    Modifier.clickable {
-                                        selectedCut = index
-                                        seekToSec(item.stopSec - 0.5)
-                                    }
+                        // the row slides away when it is deleted, or when it is marked as checked while only solves to check are shown
+                        key(item) {
+                            AnimatedVisibility(
+                                visible = leavingCut != item,
+                                exit = shrinkVertically(tween(260)) + fadeOut(tween(200))
+                            ) {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                                        .padding(vertical = 2.dp)
+                                        .onGloballyPositioned { rowBoxes[index] = it },
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        highlightCheck(
-                                            "${index + 1}.  " + (if (item.timeText.isNotEmpty()) "${item.timeText} s" else "time unknown") +
-                                                    "   (time first shows at ${formatTime((item.stopSec * 1000).toLong())})"
-                                        ),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                    val unknownHint = if (item.timeText.isEmpty()) " - no time yet: tap Add time to type it" else ""
-                                    val line = when {
-                                        clip != null -> {
-                                            val mode = when {
-                                                clip.noTime -> "full clip (no time yet, so the scramble can't be cut out)"
-                                                clip.withScramble -> "with scramble"
-                                                else -> "solve only"
+                                    Spacer(Modifier.width(6.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Column(
+                                            Modifier.clickable {
+                                                selectedCut = index
+                                                seekToSec(item.stopSec - 0.5)
                                             }
-                                            "clip: ${formatTime((clip.startSec * 1000).toLong())} - ${formatTime((clip.endSec * 1000).toLong())}  |  $mode" + unknownHint
+                                        ) {
+                                            Text(
+                                                highlightCheck(
+                                                    "${index + 1}.  " + (if (item.timeText.isNotEmpty()) "${item.timeText} s" else "time unknown") +
+                                                            "   (time first shows at ${formatTime((item.stopSec * 1000).toLong())})"
+                                                ),
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            val unknownHint = if (item.timeText.isEmpty()) " - no time yet: tap Add time to type it" else ""
+                                            val line = when {
+                                                clip != null -> {
+                                                    val mode = when {
+                                                        clip.noTime -> "full clip (no time yet, so the scramble can't be cut out)"
+                                                        clip.withScramble -> "with scramble"
+                                                        else -> "solve only"
+                                                    }
+                                                    "clip: ${formatTime((clip.startSec * 1000).toLong())} - ${formatTime((clip.endSec * 1000).toLong())}  |  $mode" + unknownHint
+                                                }
+                                                isLeftover(item) -> "not a clip (left over from before the video)"
+                                                else -> ""                                  // no clip: the warning below says why
+                                            }
+                                            if (line.isNotEmpty()) Text(highlightCheck(line), style = MaterialTheme.typography.bodySmall)
+                                            val warning = checks.warnings[index]
+                                            if (warning != null) Text(highlightCheck("check: $warning"), style = MaterialTheme.typography.bodySmall)
+                                            if (!item.reviewed && item.note.isNotEmpty() && item.note != "added by you") {
+                                                Text(highlightCheck("check: ${item.note}"), style = MaterialTheme.typography.bodySmall)
+                                            }
                                         }
-                                        isLeftover(item) -> "not a clip (left over from before the video)"
-                                        else -> ""                                  // no clip: the warning below says why
                                     }
-                                    if (line.isNotEmpty()) Text(highlightCheck(line), style = MaterialTheme.typography.bodySmall)
-                                    val warning = checks.warnings[index]
-                                    if (warning != null) Text(highlightCheck("check: $warning"), style = MaterialTheme.typography.bodySmall)
-                                    if (!item.reviewed && item.note.isNotEmpty() && item.note != "added by you") {
-                                        Text(highlightCheck("check: ${item.note}"), style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                val tight = PaddingValues(horizontal = 8.dp)
-                                Row {
-                                    TextButton(onClick = {
-                                        selectedCut = index
-                                        editIndex = index
-                                    }, contentPadding = tight) {
-                                        Text(if (item.timeText.isEmpty()) "Add time" else "Edit")
-                                    }
-                                    // not a solve: delete it at once (the Undo bar at the top brings it back)
-                                    TextButton(onClick = { deleteCut(index) }, enabled = !analyzing, contentPadding = tight) {
-                                        Text("Delete", color = Color(0xFFEF5350))
-                                    }
-                                }
-                                // go straight to this solve's page in the Gallery (your edits are saved first)
-                                TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && footageId != null, contentPadding = tight) {
-                                    Text("Gallery")
-                                }
-                                // it was looked at and is fine: stop flagging it
-                                if (needsCheck(index) && !item.reviewed) {
-                                    TextButton(onClick = { markChecked(index) }, contentPadding = tight) {
-                                        Text("Checked \u2713", color = CHECK_COLOR)
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        val tight = PaddingValues(horizontal = 8.dp)
+                                        Row {
+                                            TextButton(onClick = {
+                                                selectedCut = index
+                                                editIndex = index
+                                            }, contentPadding = tight) {
+                                                Text(if (item.timeText.isEmpty()) "Add time" else "Edit")
+                                            }
+                                            // not a solve: delete it at once (the Undo bar at the top brings it back)
+                                            TextButton(onClick = { deleteCut(index) }, enabled = !analyzing, contentPadding = tight) {
+                                                Text("Delete", color = Color(0xFFEF5350))
+                                            }
+                                        }
+                                        // go straight to this solve's page in the Gallery (your edits are saved first)
+                                        TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && footageId != null, contentPadding = tight) {
+                                            Text("Gallery")
+                                        }
+                                        // it was looked at and is fine: stop flagging it
+                                        if (needsCheck(index) && !item.reviewed) {
+                                            TextButton(onClick = { checkCut(index) }, contentPadding = tight) {
+                                                Text("Checked \u2713", color = CHECK_COLOR)
+                                            }
+                                        }
                                     }
                                 }
                             }
