@@ -21,7 +21,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.view.LayoutInflater
+import android.app.Activity
 import android.os.Build
+import android.provider.MediaStore
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -34,6 +36,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -350,6 +353,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var analyzing by remember { mutableStateOf(false) }
     var analysisStatus by remember { mutableStateOf("") }
     var editIndex by remember { mutableStateOf(-1) }             // which cut is open in the edit window (-1 = none)
+    // deleting an exported solve asks first: the solve and its export (null = not asking); the one waiting for Android's answer
+    var deleteAsk by remember { mutableStateOf<Pair<CutItem, ExportedClip>?>(null) }
+    var fileDeleting by remember { mutableStateOf<Pair<CutItem, ExportedClip>?>(null) }
     // cuts moved since the last save: where each was saved -> where it is now (the save moves their export records along)
     val pendingMoves = remember { HashMap<Double, Double>() }
     // where this video's exported clips are (to say "Already exported" in the Edit window); moves follow them
@@ -816,6 +822,73 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
         if (onlyCheck) slideOut(c, done) else done()
     }
+    /**
+     * The red bin and the Edit window's Delete cut. A solve that was not exported goes at once (Undo brings it back). An exported
+     * one asks first: keep its file (the Gallery then shows it as "Solve deleted") or delete the file too. Whether it was exported is
+     * looked up fresh, with the Gallery's rule (the file must still be there), so a file deleted in another app doesn't ask.
+     */
+    fun requestDelete(index: Int) {
+        val c = cuts.getOrNull(index) ?: return
+        val id = footageId
+        if (id == null) {
+            deleteCut(index)
+            return
+        }
+        scope.launch {
+            val export = withContext(Dispatchers.IO) {
+                try {
+                    SessionStore.loadExports(context, id)
+                        .filter { it.trashedMs == 0L && Math.abs(it.stopSec - c.stopSec) < 0.05 && SessionStore.canOpen(context, Uri.parse(it.uri)) }
+                        .maxByOrNull { it.exportedMs }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (export == null) {
+                deleteCut(cuts.indexOf(c))
+            } else {
+                editIndex = -1
+                deleteAsk = c to export
+            }
+        }
+    }
+
+    // "Delete solve and file": Android asks to confirm moving the file to the phone's trash, then the solve goes too
+    val fileTrashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val p = fileDeleting
+        fileDeleting = null
+        if (p != null) {
+            if (result.resultCode == Activity.RESULT_OK) {
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        try { SessionStore.setExportTrashed(context, p.second.id, System.currentTimeMillis()) } catch (e: Exception) { }
+                    }
+                    exportedAt = exportedAt.filter { Math.abs(it - p.first.stopSec) >= 0.05 }
+                    deleteCut(cuts.indexOf(p.first))
+                    status = "Deleted the solve and its file. The file can be restored from Recently deleted in the Gallery."
+                }
+            } else {
+                status = "Nothing was deleted."
+            }
+        }
+    }
+    fun deleteSolveAndFile(c: CutItem, e: ExportedClip) {
+        if (Build.VERSION.SDK_INT < 30) return
+        val media = SessionStore.mediaStoreUriOf(e.uri)
+        if (media == null) {
+            status = "Can't delete \"${e.fileName}\" from here. Delete it in your Files app instead."
+            return
+        }
+        try {
+            val request = MediaStore.createTrashRequest(context.contentResolver, listOf(media), true)
+            fileDeleting = c to e
+            fileTrashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        } catch (ex: Exception) {
+            fileDeleting = null
+            status = "Couldn't ask Android: ${ex.message ?: ex.javaClass.simpleName}"
+        }
+    }
+
     fun undoDelete() {
         val u = undoCut ?: return
         undoCut = null
@@ -1581,8 +1654,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                                 "View", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary,
                                                 enabled = !analyzing && footageId != null
                                             ) { leaveToGallery(index) }
-                                            // not a solve: delete it at once (the Undo bar at the top brings it back)
-                                            DeleteButton(enabled = !analyzing) { deleteCut(index) }
+                                            // not a solve: delete it at once (the Undo bar at the top brings it back); an exported one asks first
+                                            DeleteButton(enabled = !analyzing) { requestDelete(index) }
                                         }
                                     }
                                     // what needs a look, under the line, full width
@@ -1829,6 +1902,68 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
 
+        // ===== deleting a solve that was exported: keep its file, or delete the file too =====
+        val asking = deleteAsk
+        if (asking != null) {
+            val (askCut, askExport) = asking
+            val number = cuts.indexOf(askCut) + 1
+            val stopMs = Math.round(askCut.stopSec * 1000.0)
+            AlertDialog(
+                onDismissRequest = { deleteAsk = null },
+                title = { Text(if (number > 0) "Delete solve $number?" else "Delete this solve?") },
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        // the same picture as in the Gallery, with the solve time on it
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(120.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        ) {
+                            Thumb("c_${footageId}_$stopMs", videoUri, stopMs, Modifier.fillMaxSize())
+                            Text(
+                                if (askCut.timeText.isBlank()) "time unknown" else "${askCut.timeText} s",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(6.dp)
+                                    .background(Color(0xCC000000), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        EffectLine(Effect.GOES, "The solve leaves the editor. Undo brings it back.")
+                        EffectLine(Effect.STAYS, "It was exported: its file is in Movies/CubeCut.")
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton("Delete solve, keep file") {
+                            deleteAsk = null
+                            deleteCut(cuts.indexOf(askCut))
+                        }
+                        Text(
+                            "The Gallery shows the file as \"Solve deleted\".",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 8.dp)
+                        )
+                        if (Build.VERSION.SDK_INT >= 30) {
+                            DangerButton("Delete solve and file") {
+                                deleteAsk = null
+                                deleteSolveAndFile(askCut, askExport)
+                            }
+                            Text(
+                                "The file goes to the phone's trash. Android asks you to confirm.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { deleteAsk = null }) { Text("Cancel") } }
+            )
+        }
+
         // ===== the edit window for one cut =====
         if (editIndex in cuts.indices) {
             val item = cuts[editIndex]
@@ -1951,7 +2086,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 },
                 dismissButton = {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TextButton(onClick = { deleteCut(editIndex) }) { Text("Delete cut") }
+                        TextButton(onClick = { requestDelete(editIndex) }) { Text("Delete cut") }
                         TextButton(onClick = { editIndex = -1 }) { Text("Close") }
                     }
                 }

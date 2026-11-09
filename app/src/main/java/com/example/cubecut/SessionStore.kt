@@ -410,7 +410,8 @@ object SessionStore {
 
     /**
      * Everything the Gallery shows. The rules:
-     *  - the video can still be opened: every cut of the session is shown, each tagged exported or not;
+     *  - the video can still be opened: every cut of the session is shown, each tagged exported or not, plus every exported file whose
+     *    solve was deleted in the editor (tagged "Solve deleted", so CubeCut never loses sight of a file it made);
      *  - the video is gone: only the clips that were exported (and whose exported file still exists) are shown.
      */
     fun loadGallery(context: Context): GalleryData {
@@ -428,6 +429,12 @@ object SessionStore {
                 for ((i, c) in cuts.withIndex()) {
                     val e = exports.filter { Math.abs(it.stopSec - c.stopSec) < 0.05 }.maxByOrNull { it.exportedMs }
                     clips.add(GalleryClip(f, i, cuts.size, c, e, false, checks.warnings[i] ?: "", i in checks.noClip))
+                }
+                // exported files whose solve is gone (deleted in the editor): shown from the file, newest export per spot
+                val orphans = exports.filter { e -> cuts.none { Math.abs(it.stopSec - e.stopSec) < 0.05 } }
+                    .groupBy { Math.round(it.stopSec * 20.0) }.map { entry -> entry.value.maxByOrNull { it.exportedMs }!! }
+                for (e in orphans) {
+                    clips.add(GalleryClip(f, -1, cuts.size, CutItem(e.stopSec, e.timeText, true, "", true), e, true, solveDeleted = true))
                 }
             } else {
                 val latestPerStop = exports.sortedBy { it.stopSec }.groupBy { Math.round(it.stopSec * 20.0) }.map { entry -> entry.value.maxByOrNull { it.exportedMs }!! }
@@ -651,12 +658,13 @@ class ExportedClip(
  * numbering as "Solve n of N" in the editor; -1 = the cut was removed or moved since the export). [exported] is the file it was exported
  * to, if any. [exportOnly] = the session's video is gone and only this exported file is left. [warning] = a timing problem found by
  * checkCuts ("" = none); [noClip] = the solve is too close to the one before it, so no clip can be made of it.
+ * [solveDeleted] = an exported file whose solve was deleted in the editor while the video is still here (it plays from the file).
  * A cut has no number of its own in the database (the cuts of a session are saved as one list), so a picture is identified by its
  * session and the moment the clip stops: [key].
  */
 class GalleryClip(
     val footage: Footage, val index: Int, val total: Int, val cut: CutItem, val exported: ExportedClip?, val exportOnly: Boolean,
-    val warning: String = "", val noClip: Boolean = false
+    val warning: String = "", val noClip: Boolean = false, val solveDeleted: Boolean = false
 ) {
     val key: String get() = "${footage.id}_${Math.round(cut.stopSec * 1000.0)}"
     val listKey: String get() = if (exportOnly && exported != null) "x${exported.id}" else "${footage.id}:$index"

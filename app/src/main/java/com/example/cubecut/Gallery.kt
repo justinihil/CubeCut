@@ -278,7 +278,7 @@ fun sortClips(list: List<GalleryClip>, keys: List<ClipKey>): List<GalleryClip> {
 class FootageStats(val bestText: String, val best: Double?, val solves: Int, val check: Int)
 
 fun statsOf(clips: List<GalleryClip>): FootageStats {
-    val on = clips.filter { it.cut.included }
+    val on = clips.filter { it.cut.included && !it.solveDeleted }        // (a file whose solve was deleted is not a solve any more)
     val best = on.filter { it.seconds != null }.minByOrNull { it.seconds ?: Double.MAX_VALUE }
     return FootageStats(best?.cut?.timeText ?: "", best?.seconds, on.size, clips.count { it.needsCheck })
 }
@@ -537,6 +537,7 @@ private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
     !c.exportOnly && c.index >= 0 && !c.noClip && openable[c.footage.id] == true
 
 private fun notSelectableReason(c: GalleryClip, openable: Map<Long, Boolean>): String = when {
+    c.solveDeleted -> "This solve was deleted in the editor, so it can't be exported again."
     c.exportOnly || openable[c.footage.id] != true -> "This clip's original video is missing, so it can't be exported again."
     c.noClip -> "This solve is too close to the one before. Fix it in the editor first."
     else -> "This clip can't be exported."
@@ -679,7 +680,10 @@ private fun ClipCell(
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 if (selecting && canPick) SelectMark(selected, 24.dp)
                 // the clip itself still works (it plays from its exported file), so this tag is not red
-                if (clip.exportOnly) Badge("Export only", GREEN)
+                if (clip.solveDeleted) {
+                    Badge("Exported", GREEN)
+                    Badge("Solve deleted", GREY)
+                } else if (clip.exportOnly) Badge("Export only", GREEN)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
                 if (!clip.cut.included) Badge("Left over", GREY)
@@ -756,7 +760,7 @@ private fun ClipRow(
             Text(
                 formatDate(dateOf(clip.footage)) +
                         (if (clip.index >= 0) "  |  Solve ${clip.index + 1} of ${clip.total}" else "") +
-                        (if (clip.exportOnly) "  |  export only (raw footage gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
+                        (if (clip.solveDeleted) "  |  exported, solve deleted" else if (clip.exportOnly) "  |  export only (raw footage gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
                         (if (!clip.cut.included) "  |  left over" else "") +
                         (if (clip.needsCheck) "  |  check" else "") +
                         (if (clip.sharedList.isNotEmpty()) "  |  " + clip.sharedList.joinToString(", ") else ""),
@@ -2259,9 +2263,9 @@ private fun SwipeUpHint(modifier: Modifier = Modifier) {
     }
 }
 
-/** A full-width red button, for the actions that remove something (they always warn first). */
+/** A full-width red button, for the actions that remove something (they always warn first). Also used by the editor. */
 @Composable
-private fun DangerButton(label: String, onClick: () -> Unit) {
+fun DangerButton(label: String, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         colors = ButtonDefaults.buttonColors(containerColor = AppColors.danger, contentColor = Color.White),
@@ -2295,11 +2299,11 @@ private fun FootageHeader(f: Footage, openable: Boolean) {
 }
 
 /** What a warning line says will happen: something stays (green tick), goes (red cross) or can be brought back (circle arrow). */
-private enum class Effect { STAYS, GOES, UNDO }
+enum class Effect { STAYS, GOES, UNDO }
 
-/** One line of a warning: a coloured round badge, then a short sentence. */
+/** One line of a warning: a coloured round badge, then a short sentence. Also used by the editor. */
 @Composable
-private fun EffectLine(effect: Effect, text: String) {
+fun EffectLine(effect: Effect, text: String) {
     val color = when (effect) {
         Effect.STAYS -> AppColors.keep
         Effect.GOES -> AppColors.danger
@@ -3053,7 +3057,8 @@ fun ClipViewer(
                     // (all three always show, greyed out when they can't be used, so the row never changes shape)
                     val canDeleteFile = exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30
                     // what a tap on a greyed-out button says (short, and says what to do instead)
-                    val noVideoHint = if (!sourceOk) "The original video is missing. Tap Reconnect video below to use it again."
+                    val noVideoHint = if (current.solveDeleted) "This solve was deleted in the editor. Only its exported file is left."
+                    else if (!sourceOk) "The original video is missing. Tap Reconnect video below to use it again."
                     else "This clip no longer matches a solve. Open the video in the editor from the Footage tab."
                     val noFileHint = if (exportedFile == null) "Not exported yet, so there's no file to delete.\nWrong solve? Tap Editor to fix or delete it."
                     else "Deleting files needs Android 11 or newer."
