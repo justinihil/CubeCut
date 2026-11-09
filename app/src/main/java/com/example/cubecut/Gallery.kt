@@ -847,13 +847,25 @@ private fun LevelPicker(title: String, current: ClipKey?, allowNone: Boolean, en
 fun AboutDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("CubeCut") },
+        title = {
+            // the logo, about the height of the title text, then the app's name
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.Image(
+                    painter = painterResource(R.drawable.cubecut_logo),
+                    contentDescription = "CubeCut logo",
+                    modifier = Modifier.size(32.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("CubeCut")
+            }
+        },
         text = {
             Column(
                 Modifier
                     .heightIn(max = 360.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                Spacer(Modifier.height(8.dp))      // a little room between the title and the credit
                 // sizes from biggest to smallest: the credit and where to find the author, the description, the licence terms
                 Text("Created by $AUTHOR_NAME", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(2.dp))
@@ -2866,4 +2878,4 @@ fun ClipViewer(
             )
         }
     }
-}
+}
