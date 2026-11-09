@@ -6,7 +6,128 @@ All notable changes to CubeCut are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)** and **Phase 2 (the Gallery, with the full-screen clip viewer)**, both built and tested on the phone. **Phase 3 is not started** (see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change.
+
+### Phase 2j: the last viewer fixes (Phase 2 is finished and tested on the phone)
+
+**Fixed**
+- **The black flash when a swipe settles on a clip** (found frame by frame in a 120 fps screen recording: exactly one black frame in the video area, just before playback). Cause: when a page became the playing one, the viewer threw its still picture away and drew a new one, which had to load again, so for one frame there was nothing to show. Now every page keeps **one still picture for its whole life** (on top of the player; it fades out once the player has drawn its first picture and is never removed), and `Thumb` draws a picture that is already in memory **in the very first frame** instead of after a load (`ThumbCache.peek`).
+- While a clip's full-size still is still being made for the first time, the viewer shows the grid's small picture of that clip instead of black (`placeholderKey` in `Thumb`).
+
+**Changed**
+- **The *Export only* tag is now the same green as *Exported*** (it was yellow-green). The yellow-green colour is gone.
+
+### Phase 2i: smoother start of a clip
+
+**Fixed**
+- **The picture shown before a clip starts playing is now the clip's own first picture** (it used to be the frame where the final time first shows, which is later in the clip), so when the video takes over there is no jump. The still also waits 0.15 s after the player's first picture before fading, so the player's picture has reached the screen.
+- **The tag for a clip whose raw video is gone is now *Export only*** (yellow-green here; green since Phase 2j), which is shorter and says what the clip is.
+
+### Phase 2h: swiping between clips
+
+**Fixed**
+- **Black flashes while holding a swipe near the middle:** the playing clip now only changes once a swipe has come to rest. Before, wobbling around the halfway point switched the clip back and forth and restarted the player each time. During a swipe the current clip keeps playing and the next one shows its still picture.
+- **The clip tag for a clip whose raw video isn't available is now *Raw unavailable*** (yellow-green), whether the video was deleted or is in the trash.
+
+### Phase 2g: flicker and tag colours
+
+**Fixed**
+- **The black flash between the still picture and the playing clip:** the still now covers the new clip from the very first frame of the page (before, it was one frame late, which showed black), and the still pictures of the neighbouring clips are prepared ahead of time.
+- **Tag colours:** *Raw deleted* / *Raw in trash* on a clip is now yellow-green (the clip still works); the Footage tab's tags are back to *In trash* and *Video deleted* (red).
+
+### Phase 2f: more viewer fixes
+
+**Fixed**
+- **No more black flash when a clip starts playing after its still picture:** the still stays in place until the player has really drawn its first picture and then fades away, and the player no longer paints black over it while starting.
+- **The controls no longer hide right after a skip.** Playback pauses and restarts by itself during a skip, and that was counted as "the clip started playing".
+- **The tag for a clip whose raw video is gone now reads *Raw deleted*** (or *Raw in trash*) instead of *No video*.
+
+### Phase 2e: viewer and Gallery polish
+
+**Added**
+- **Swipe left or right** on the Gallery to move between the Clips and Footage tabs (tapping a tab still works).
+- **Pinch animation:** the grid grows or shrinks under your fingers while you pinch, and the pictures glide to their new places when the number of columns changes (Clips and Footage).
+
+**Changed**
+- **Player controls stay for 4 seconds after the last tap or skip** (they still hide the moment a clip starts playing, and no longer hide right after a skip).
+- **The skip seconds are changed in the player only** (the *Skip* button above the seek bar); the Settings window no longer has it.
+- **Swiping between clips:** the picture of the next clip is now shown whole and in the same place as the video (it was cropped to the whole screen), is sharper, and the clip's own still stays in place until the player draws its first picture, so there is no black or mismatched flash.
+- **The trash button for an exported clip is now a small trash icon at the very bottom of the clip's sheet.**
+
+**Fixed**
+- **A video moved to the trash from CubeCut is now treated as deleted straight away** (only its exported clips stay in the Gallery, and it can't be opened in the editor). Before, Android still let CubeCut open it, so everything carried on as if it were there. *Recently deleted* has an *Already restored* button for items you brought back in another app.
+
+### Phase 2c: the full-screen clip viewer
+
+**Added**
+- **The viewer fills the screen and plays as soon as a clip is chosen.** The controls are drawn by CubeCut itself, as icons: skip back, play or pause, skip forward (with the seconds shown inside the arrows) and a seek bar. They are hidden while the clip plays, a tap on the picture shows them, and they come back when the clip ends. They no longer flash when swiping to another clip.
+- **Skip buttons jump by 5 seconds** (they were 15). The number can be changed right in the player (the small *Skip 5s* button above the seek bar) or in **Settings**: 1, 2, 3, 5, 10, 15 or 30 seconds.
+- **Swipe left and right** to move through the clips in the order the Gallery shows them (or through one session's solves when opened from the editor).
+- **Swipe up anywhere** on the picture (a short swipe is enough), or tap the handle, for the details sheet: the solve time and where it is in the video, the **Include the scramble** switch, **Export this clip**, the note with its Clear and social media buttons, the *From this video* card, and *Open in editor at this solve*. **Swipe down** anywhere on the picture or on the sheet (when its contents are scrolled to the top) to close it, again with a short swipe. A first-time arrow floating up the picture says "Swipe up anywhere for more"; Settings can show it again.
+- **The scramble switch** changes the saved cut immediately, so the editor shows the same choice, and the viewer re-plays the clip with its new start. The usual rules apply (a clip's scramble starts where the previous cut ended, whether or not that cut is on). A solve that is switched off in the editor can still be viewed and exported from here.
+- **Export this clip** exports just that solve with the same maths as the editor's export, records it as exported, and asks first if it was already exported (a second file would be made).
+- **The timer setup is remembered per video** (database version 3): where in the video it was set up, the four corners and the typed number. Opening that session again sets the timer up from them automatically, so Find solves is ready. The editor now says whether the setup was remembered, brought back, or why it couldn't be. If it can't be rebuilt, nothing is lost and the timer is set up again by hand.
+- **Move to trash and restore** (database version 4; Android 11 or newer). *Move video to trash* in a session's Footage options, and *Move the exported clip to trash* on a clip's sheet, each with a warning first and Android's own confirmation after. Nothing is deleted permanently by CubeCut. **Recently deleted** (the \u22EE menu) lists what was moved to the trash, with a *Restore* button for each; Android deletes trashed items for good after about 30 days. A trashed video behaves like a deleted one (only its exported clips stay in the Gallery) and everything returns when it is restored. Only videos picked from the file picker's Videos or Images lists (and the clips CubeCut exported) can be moved to trash this way.
+
+**Changed**
+- The old clip detail screen is replaced by the viewer.
+
+### Phase 2b: testing fixes and new Gallery features
+
+**Added**
+- **Exported tracking.** Every export now records which solves were written and where the files are (database version 2; an existing database is upgraded without losing anything). Clips show an **Exported** tag; the Filter can show only exported or only not-exported clips.
+- **When the original video is deleted,** the Gallery keeps only the clips that were exported (they play from the exported file, tagged *Video deleted*); the not-exported ones disappear from the Gallery (the saved cuts stay in the database, so importing the video again brings everything back). While the video exists, every found clip shows, exported or not.
+- **Sort by up to three things at once** (Sort window: *Sort by*, *Then by*, *Then by*): date (by calendar day, so one day's sessions tie), solve time fastest or slowest, session name, order in the video, needs check first, exported first, not exported first. Example: Date, then Fastest = each day's solves from fastest to slowest.
+- **Filter window:** choose which raw videos' clips are shown (tick or untick each video, All / None) and whether to show all, exported only or not exported only clips. The Footage tab can also hide or show one video's clips.
+- **Pinch to resize the grid** (two fingers, 2 to 6 columns, remembered separately for Clips and Footage). Small cells show less text.
+- **Notes with social media buttons** on the clip detail screen: a note box plus TikTok, Instagram, YouTube, Facebook, X and Reddit buttons. Pressing a button writes the platform's name into the note (pressing it again removes it). The platforms in a note also show on the clip's card and list row.
+- A message under the tabs when something fails (for example when forgetting a session).
+- **Reconnect video:** a session whose video is missing gets a *Reconnect video* button (in its Footage options and on its clip pages). Pick the video and it is attached to the saved session again, without leaving the Gallery. Needed when Android gives a restored or moved video a new link. The length must match.
+- **Gallery refreshes itself** every time you come back to the app (for example after deleting or restoring a video in another app), and there is a **Refresh** button.
+- **Clear button** on a clip's note.
+- **Gallery button on every solve row in the editor:** saves your edits, returns to the Gallery and opens that solve's page.
+- **Clip page player:** the controls are hidden from the start, show for 2 seconds after a tap, and hide the moment playback starts.
+
+**Fixed**
+- Sorting or filtering now **scrolls the list back to the top**.
+- Opening a clip in the editor now **scrolls the list to the selected solve**.
+- **Renaming the video file no longer creates a second, empty session.** A video is now recognised first by its link (which doesn't change when a file is renamed), then by file name, size and length, then by exact size and length.
+- **"Opened your saved session"** now stays visible in the editor's header instead of being overwritten.
+- **Forget session** now deletes the session, its cuts and its export records in one step and reports a problem if it fails.
+
+### Phase 2: the Gallery
+
+**Added**
+- **The Gallery is the first screen** (`Gallery.kt`). The editor opens from it and has a **Gallery** button (and the back button) to return; the latest edits are saved before it closes.
+- **Clips tab:** every solve of every saved session as a **grid of pictures** (the frame where the timer first shows the final time) with the **solve time at the upper right**, or as a **list** with the clip title (`Session title \u00B7 Solve 03 \u00B7 11.263s`), date and status. Badges: *Check* (the scan left a note), *Left out*, *No video*.
+- **Footage tab:** the raw session videos as a grid or list: picture, title, date filmed, length, number of solves on, best time, how many need a check. Tap one for: show its clips, open in editor, **rename**, **forget**.
+- **Sort** (remembered between runs). Clips: newest / oldest session, name A-Z, fastest, slowest, needs check first. Footage: newest, oldest, name, most solves, best time, longest video. Grid or list is remembered separately for each tab.
+- **Clip detail screen:** plays just that clip (the same start and end the export would use), shows the time, the solve number and where it is in the video, the status and note, and a **From this video** card (picture, title, date, length, file name; tap it to see all that session's clips). **Open in editor at this solve** jumps straight to it.
+- **Pictures are made on demand** (`Thumbnails.kt`): the first time a clip or session is shown, a frame is taken from the video and kept as a small JPEG in the app's cache folder (and in memory while the app runs). Nothing is made during Find solves. If Android clears the cache they are made again; without the video they show as grey.
+- **"No video" handling:** if a session's video can't be opened any more, its clips, times and notes stay visible, playback and *Open in editor* are disabled, and a note explains that importing the video again reconnects it.
+- The author credit line and About window are now shared (`AuthorCreditLine`, `AboutDialog`) and also appear at the bottom of the Gallery.
+
+**Changed**
+- The temporary *Sessions* window of Phase 1 is gone; the Footage tab replaces it.
+- Opening a session in the editor does not remember the timer setup yet, so Find solves on an old session needs the timer set up again.
+
+### Phase 1: saved sessions
+
+### Added
+- **Saved sessions.** Every imported video gets a small record on the phone (`SessionStore.kt`, plain Android SQLite, no new libraries): where the video is, its name, size and length, when it was filmed, the buffer settings, and one row per cut. No video or pictures are stored, only numbers and text, so even a thousand solves are a few dozen KB.
+- **Automatic saving.** Every change to the cuts, the buffers or the scramble switch is saved about 0.4 s after it happens, and the date of the last Find solves is kept.
+- **Opening a saved session.** Importing a video the app has seen before (same file name, size and length) brings back its saved cuts and settings, so the review and export work again without running Find solves. The timer only has to be set up again if you want to run Find solves again.
+- **Forgetting a session** removes only CubeCut's record; the video and exported clips are untouched.
+- **Source missing:** if a saved session's video was moved or deleted, a message says so; importing the video again re-links it to the saved cuts.
+
+### Changed
+- **Import video now uses the system file picker** instead of the photo picker, because Android lets the app keep its permission to read a video chosen that way (`takePersistableUriPermission`). The photo picker's link stops working after a restart, which would make saved sessions unopenable.
+- The Find solves warning now says the saved list for this video is replaced.
+
+### Notes
+- Written without a compiler and not yet run on a phone; test steps are in the pull request / commit notes.
+- Android limits how many videos an app can hold permission for (128 on older versions, 512 on newer ones). "Forget this session" releases the permission.
+- Still to come in later phases: review statuses and filters, merge on re-scan, saving the timer setup per session, multi-select, favourites, tags, backup.
 
 ## [2.0.2] - 2026-11-03
 

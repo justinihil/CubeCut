@@ -1,12 +1,14 @@
-# CubeCut – Project Guide and Hand-over (v2.0.2)
+# CubeCut – Project Guide and Hand-over (v2.0.2 released; v3.0.0 in development)
 
-*This edition (2.0.2, including the licence, author credit and documentation changes of 2026-11-06, which came with no version bump): version 2.0.2 limited OpenCV to `arm64-v8a` (smaller APK) and fixed audio going out of sync when exported clips are edited in some video editors (section 2.5). The project is now licensed under **GPL-3.0** with additional terms that keep the author credit (`LICENSE`, `NOTICE.md`; the app shows a small "CubeCut by DadCuber" line at the bottom of the main screen and has an About window), and the README and this guide now state exactly what has been tested: Samsung Galaxy S25 Ultra only, 1080p at 30 and 60 fps, fixed tripod, QiYi Bluetooth Timer LCD and csTimer's "Digital 2" font with "use small font after decimal point" off (sections 1 and 7). The app is shared as-is with no support promised (README, "Support").*
+*Edition of 2026-11-09: adds the **3.0.0 work on the `dev-v3.0.0` branch** (branched from `dev`): saved sessions (Phase 1) and the Gallery with a full-screen clip viewer (Phase 2, finished and tested on the phone). New section **2.8** describes it, 3.1 lists the three new files, section 5 has its decisions, 7 and 9 its limits and state, and **`docs/V3_HANDOVER.md`** is the short "where we are and what is next" note. Everything below about finding solves, reading digits and clip maths is unchanged. Statements elsewhere that "the timer setup is not saved" or "the picture comes from the photo picker" describe 2.0.2; in 3.0.0 the setup is saved per video and the video comes from the file picker.*
+
+*Earlier edition (2.0.2, including the licence, author credit and documentation changes of 2026-11-06, which came with no version bump): version 2.0.2 limited OpenCV to `arm64-v8a` (smaller APK) and fixed audio going out of sync when exported clips are edited in some video editors (section 2.5). The project is now licensed under **GPL-3.0** with additional terms that keep the author credit (`LICENSE`, `NOTICE.md`; the app shows a small "CubeCut by DadCuber" line at the bottom of the main screen and has an About window), and the README and this guide now state exactly what has been tested: Samsung Galaxy S25 Ultra only, 1080p at 30 and 60 fps, fixed tripod, QiYi Bluetooth Timer LCD and csTimer's "Digital 2" font with "use small font after decimal point" off (sections 1 and 7). The app is shared as-is with no support promised (README, "Support").*
 
 *Version 2.0.1 (this edition) is a clean-up and fix release on top of 2.0.0: Find solves now shows one progress card (with Cancel) and the Setup box folds as soon as it starts; actions that would collide with a running scan (importing a video, setting up the timer) are blocked; the scan stops when its coroutine is cancelled; export copes with very large keyframes; dead code was removed; native memory is freed properly; the screen does less work during playback. **How solves are found and how digits are read did not change.** See `CHANGELOG.md`, the decision log (section 5) and section 9.*
 
 *Updated for version 2.0.0 ("first-frame cuts", developed on the `dev` branch): the app no longer analyses sound; cuts now come from reading the timer along the whole video, clips can leave the scramble out, and the screen was reorganised around that. It builds on 1.1.0 (the 1.0.0 UI-polish milestone plus the timer-reading expansion), whose digit-reading code is unchanged. Supersedes the 1.1.0 guide. It also records the Find solves speed-up (one running MediaCodec decoder instead of a seek per frame, a binary search for the first frame, a wider step while the timer shows zero), which took a scan of the test session from about 107 s to about 27 s. Read this first if you are a person or an AI picking the project up again.*
 
-**Related files:** `README.md` (front page), `CHANGELOG.md` (what changed per version), `docs/GIT_WORKFLOW.md` (how to use Git and GitHub for this project), `docs/TIMER_READING_CHANGES.md` (detailed record and reasoning of the timer-reading changes), `docs/FIRST_FRAME_CUTS_CHANGES.md` (record of the 2.0.0 first-frame-cuts change), `pc_prototype/first_frame_scan_prototype.py` (the 2.0.0 logic in Python, with simulator and tests).
+**Related files:** `docs/V3_HANDOVER.md` (current state and next steps of the 3.0.0 work, read it first for v3), `README.md` (front page), `CHANGELOG.md` (what changed per version), `docs/GIT_WORKFLOW.md` (how to use Git and GitHub for this project), `docs/TIMER_READING_CHANGES.md` (detailed record and reasoning of the timer-reading changes), `docs/FIRST_FRAME_CUTS_CHANGES.md` (record of the 2.0.0 first-frame-cuts change), `pc_prototype/first_frame_scan_prototype.py` (the 2.0.0 logic in Python, with simulator and tests).
 
 ---
 
@@ -21,6 +23,7 @@
 * **Status at 2.0.1:** a code review of the whole project (unused code, leaks, bugs) was done and its three groups of findings were applied: bug fixes, dead-code removal, leak/bloat fixes (section 5, "Clean-up and bug-fix decisions"). The changes were written without a compiler and have since been built and run on the phone (section 9). Behaviour of the scan, the digit reader and the clip maths is unchanged.
 * **Status at 2.0.0 (dev):** the first-frame logic was prototyped in Python on simulated, noisy timer readings and then written in Kotlin; the user compiled it and tested it on the phone ("the logic works perfect"), then asked for the interface changes described in section 2.7. See section 9. The 1.1.0 features remain: logo, collapsible Setup box, confirmation and progress windows, background running with a notification, pinch zoom on the video, keyword highlighting, an export-finished window, QiYi/Stackmat-style LCDs **and** csTimer-style screens (seven-segment look). **The timer must still be set up again at every app start and every video import** (not saved).
 * **Speed (2.0.0 dev):** Find solves takes its pictures from **one running `MediaCodec` decoder** (`FrameSource.kt`) instead of asking `MediaMetadataRetriever` for every frame, and quietly falls back to the old way if the fast path doesn't match or fails (section 2.1b). On the user's test footage the scan went from **about 107 s to about 27 s**.
+* **Status at 3.0.0 (dev, branch `dev-v3.0.0`):** the app now **remembers** every imported video and its cuts (SQLite, `SessionStore.kt`) and opens on a **Gallery** (`Gallery.kt`) with a Clips tab, a Footage tab and a full-screen clip viewer; the editor (`EditorScreen`) opens from it. Phases 1 and 2 are built and tested on the phone; **Phase 3 (merge a re-scan with the user's edits, review statuses and filters) is not started.** See section 2.8 and `docs/V3_HANDOVER.md`.
 * Package / application ID: **`com.example.cubecut`** (the earlier `com.example.hellotest` name is gone; if a source file still has a `hellotest` package line, change it).
 
 ---
@@ -138,6 +141,8 @@ Settings: **before buffer** `beforePad` and **after buffer** `afterPad`, both 0�
 * **Limits:** swiping the app away from recent apps stops the job; some phone makers' battery savers still kill apps (set CubeCut to "Unrestricted" battery use); rotating the phone recreates the activity and loses all state. Export does not use the service.
 
 ### 2.7 The screen, top to bottom (`EditorScreen` in `MainActivity.kt`)
+*(In 3.0.0 this is the editor, which opens from the Gallery, section 2.8; it has a **Gallery** button and the back button returns there.)*
+
 The design rule since 2.0.0: **the solves list gets as much of the screen as possible.** Only what is needed while scrubbing the video stays pinned; everything else scrolls away with the list.
 
 **Pinned (never scrolls):**
@@ -164,13 +169,50 @@ The design rule since 2.0.0: **the solves list gets as much of the screen as pos
 
 ---
 
+### 2.8 Saved sessions and the Gallery (3.0.0 dev, `SessionStore.kt`, `Gallery.kt`, `Thumbnails.kt`)
+
+**What it is.** Since 3.0.0 the app opens on a Gallery of every solve of every video you have imported, still there next time. The Find-solves algorithm, the digit reader and `computeClips` are untouched; the Gallery only stores and shows their results.
+
+**Storage (`SessionStore`, plain Android SQLite, `cubecut_sessions.db`, DB version 4).** Only numbers and text, so a thousand solves are a few dozen KB. No video or picture is stored.
+* `footage` – one row per raw video: `uri`, `display_name`, `size_bytes`, `duration_ms`, `title` (editable), `date_taken_ms`, `added_ms`, `last_scan_ms`, `before_pad`, `after_pad`, `scramble_all`, the remembered timer setup (`timer_frame_ms`, `timer_corners`, `timer_typed`, since v3) and `trashed_ms` (v4; 0 = not in the trash).
+* `cuts` – one row per cut: `stop_sec`, `time_text`, `included`, `note` (the scan's note), `include_scramble`, `user_note` (v2; the user's own note with the social-media words).
+* `exports` (v2) – one row per exported clip: `stop_sec`, `time_text`, `uri`, `file_name`, `offset_sec` (where the solve is inside the exported file), `exported_ms`, `trashed_ms` (v4).
+* Upgrades use `ALTER TABLE ... ADD COLUMN`, so an older database is upgraded without losing anything. Deleting a footage row deletes its cuts and exports (foreign keys with `ON DELETE CASCADE`).
+* **Cuts are stored as numbers; clips are computed**, never stored: `computeClips(cuts, beforePad, afterPad, durSec)` gives each clip's start and end exactly as the editor and the export use them.
+
+**Recognising a video** (`openOrCreate`), in this order: the same `uri`; then file name + size + duration; then size + duration only (so renaming a file doesn't create a second session). *Reconnect video* (`relink`) attaches a new link to a saved session (the length must match).
+
+**Opening and keeping access.** *Import video* uses the system file picker (`OpenDocument`) and `takePersistableUriPermission`, so the link still works after a restart. (The photo picker's link does not survive; it was tried and reverted, as was a Videos-view hint, on the user's request.) Android limits persisted grants (128 older, 512 newer); *Forget* releases the grant.
+
+**The rules for what the Gallery shows** (`loadGallery`):
+* A video counts as *present* when it is not in CubeCut's trash list (`trashed_ms == 0`) **and** `canOpen` succeeds. The trashed flag wins, because Android still lets the app open a trashed video.
+* Raw video present: show **all** its clips, each tagged *Exported* or not.
+* Raw video gone or in the trash: show **only the exported clips** (they play from the exported file, tagged *Export only*); the not-exported ones disappear from the Gallery, but their cuts stay in the database, so importing the video again brings everything back.
+* Footage tags: *In trash* and *Video deleted* (red). Clip tags: *Exported* and *Export only* (both the same green, since Phase 2j), *Check*, *Left out*.
+
+**Gallery screen (`GalleryScreen`).** Two tabs in a `HorizontalPager` (swipe or tap). **Clips:** grid or list (remembered per tab); the solve time at the upper right of each picture; **Sort** by up to three levels (`ClipKey`: date by calendar day, fastest, slowest, session name, order in the video, needs check first, exported first, not exported first); **Filter** (tick which raw videos' clips show, All / None; all, exported only or not exported only); **pinch** changes the columns 2–6 (the grid scales under the fingers, `pinchColumns`, and cells glide with `animateItem()`); sorting or filtering scrolls to the top. **Footage:** raw videos with picture, title, date, length, solves, best time, how many need a check; tap for show clips, open in editor, rename, forget, *Reconnect video*, *Move video to trash*. The ⋮ menu has Refresh, *Recently deleted* and Settings; the About window opens from the credit line at the bottom. The Gallery refreshes on every `ON_RESUME`. UI choices are kept in `GalleryUiState` (SharedPreferences: grid/list, columns, sort keys, filters, hidden footage, skip seconds, swipe-hint flag).
+
+**Pictures (`Thumbnails.kt`).** `ThumbCache.get(context, key, uri, timeMs, height)` makes a frame on demand with `MediaMetadataRetriever` (at most two at a time), scales it, keeps it as a JPEG in `cacheDir/thumbs` and in a 24 MB `LruCache`. `ThumbCache.peek` returns a picture already in memory so `Thumb` can draw it in the first frame. Big pictures for the viewer (height 900) are kept apart (`<key>_h900`). Nothing is made during Find solves; if Android clears the cache the pictures are made again.
+
+**Full-screen clip viewer (`ClipViewer`).** Starts playing at once; shows the clip's own still first.
+* A `HorizontalPager` moves between clips in the Gallery's order (or one session's solves when opened from the editor). `activePage` follows the pager **only when it has stopped scrolling**, so wobbling around the halfway point does not restart the player. Only the active page owns the ExoPlayer (`ClippingConfiguration` gives the clip's start and end); the neighbours show stills (prefetched).
+* **The still-to-video handover (the flicker bug, fixed in Phase 2j).** Each page has one `Thumb` still **that is never removed**: over the player it stays at full alpha until `onRenderedFirstFrame` fires for this clip, then fades out (after 0.15 s). The still is the clip's **own first picture** (`stillMsFor` = clip start from `computeClips`, key `stillKeyFor`), not the frame where the timer stops. `PlayerView` comes from `res/layout/video_player_view.xml` with `useController = false`, `setShutterBackgroundColor(TRANSPARENT)` and `setKeepContentOnPlayerReset(true)`. If you touch this, **record a 120 fps screen recording and look at every frame** (ffmpeg can export them): a single black frame is invisible at 24 fps sampling.
+* Controls are drawn by CubeCut (`PlayerOverlay`, icons not text): skip back, play/pause, skip forward (seconds inside the arrows; default 5 s, changed in the player with the *Skip* button), seek bar. They hide when the clip plays, show on a tap and stay 4 s after the last tap or skip (a 1.5 s guard stops the pause/restart of a skip from counting as "started playing").
+* **Swipe up anywhere** (a short swipe is enough, `verticalSheetDrag`) or tap the handle: the details sheet with the solve time and position, the **Include the scramble** switch (writes the cut at once via `updateCutScramble`, so the editor agrees, and replays the clip), **Export this clip** (same maths as the editor, recorded in `exports`, asks first if already exported), the note with **Clear** and the social-media buttons (TikTok, Instagram, YouTube, Facebook, X, Reddit: pressing one writes/removes its name in the note), the **From this video** card, **Open in editor at this solve**, and at the bottom a small trash icon for an exported clip. Swipe down closes it. A first-time arrow says "Swipe up anywhere for more" (Settings can show it again).
+
+**Editor integration (`MainActivity.kt`, `AppRoot`).** Gallery ↔ `EditorScreen(request, onClose(footageId, solveSec))`. The editor autosaves about 0.4 s after any change, restores the remembered timer setup when a video opens (with a message saying whether it was remembered, brought back, or couldn't be rebuilt; if it can't, set it up by hand), scrolls to the selected solve, and has a **Gallery** button on every solve row (saves, returns, opens that solve's viewer). Exports are recorded with `SessionStore.recordExports`.
+
+**Trash (Android 11+).** `MediaStore.createTrashRequest` through an activity-result launcher; the user sees a warning from CubeCut first and Android's confirmation after. CubeCut **never deletes permanently**. *Recently deleted* lists what was trashed, with *Restore* (and *Already restored* for things brought back in another app); Android empties its trash after about 30 days. Only videos picked from the picker's Videos/Images lists and the clips CubeCut exported can be trashed this way (`mediaStoreUriOf`).
+
+---
+
 ## 3. Files in this project
 
 ### 3.1 Android source (`app/src/main/java/com/example/cubecut/`, package `com.example.cubecut`)
 
 | File | What it is for |
 |---|---|
-| **MainActivity.kt** (~1180 lines) | The app's front door. Also holds the author credit: the constants `AUTHOR_NAME` and `AUTHOR_FIND_ME`, the small "CubeCut by DadCuber" line at the bottom of the screen and the About window it opens (required by `NOTICE.md`; keep them if you change the screen). Starts OpenCV; builds the whole screen (`EditorScreen`, section 2.7) and all its windows; holds all on-screen state; runs import (with progress), Find solves (`runFindSolves`, with Cancel), add-cut (via `SolveAnalyzer.analyzeOne`), export; `openTimerSetup`; Prev/Next scrolling (`goToCut`); starts/stops the background service; the pinch-zoom gesture code; `highlightCheck` (amber keywords); `DEFAULT_INCLUDE_SCRAMBLE`. **Timer setup is session-only:** the engine is cleared whenever a video is chosen, nothing is saved after setup, and start-up only deletes old saved files. Since 2.0.1: the old timer engine is `release()`d when replaced or cleared, `clips` are remembered (with a by-cut lookup) instead of recomputed on every playhead update, `rowBoxes` is cleared with the list, and import / timer buttons are disabled while a job runs. |
+| **MainActivity.kt** (~1180 lines) | The app's front door. Also holds the author credit: the constants `AUTHOR_NAME` and `AUTHOR_FIND_ME`, the small "CubeCut by DadCuber" line at the bottom of the screen and the About window it opens (required by `NOTICE.md`; keep them if you change the screen). Starts OpenCV; builds the whole screen (`EditorScreen`, section 2.7) and all its windows; holds all on-screen state; runs import (with progress), Find solves (`runFindSolves`, with Cancel), add-cut (via `SolveAnalyzer.analyzeOne`), export; `openTimerSetup`; Prev/Next scrolling (`goToCut`); starts/stops the background service; the pinch-zoom gesture code; `highlightCheck` (amber keywords); `DEFAULT_INCLUDE_SCRAMBLE`. **Timer setup is session-only in 2.0.2 (in 3.0.0 the corners and typed number are also saved per video and the setup is rebuilt when the video opens; see 2.8):** the engine is cleared whenever a video is chosen, nothing is saved after setup, and start-up only deletes old saved files. Since 2.0.1: the old timer engine is `release()`d when replaced or cleared, `clips` are remembered (with a by-cut lookup) instead of recomputed on every playhead update, `rowBoxes` is cleared with the list, and import / timer buttons are disabled while a job runs. |
 | **AnalysisService.kt** | A foreground service whose only job is the "Find solves" notification (progress bar "Reading the timer along the video: N%", finished message) that keeps Android from putting the app to sleep. Helpers: `start`, `update`, `stop`, `notifyDone`. |
 | **MediaTools.kt** | Reading the video file: duration, film-strip thumbnails (`buildThumbnails`, optional progress callback), `grabFrame` (one exact picture), `formatTime`. **The audio decoding, waveform and sound-spike detector were removed in 2.0.0.** |
 | **Timeline.kt** | Draws the film strip, the clip strip (what each clip contains, from `ClipBar`), coloured markers, the white ring on the selected cut and the red playhead; tap to jump; drag to scrub at zoom 1; scrolls sideways when zoomed. 64 dp tall. |
@@ -180,6 +222,9 @@ The design rule since 2.0.0: **the solves list gets as much of the screen as pos
 | **SolveAnalyzer.kt** (~410 lines) | **Rewritten in 2.0.0.** The first-frame logic of section 2.1: `scan` (whole video), `firstAppearance` (backwards search to the first frame, ending in the binary search `bisect`), `locate` / `analyzeOne` (manual cut), `pickWinner` (vote with the 4/7-over-1 bias), `memoReader`, `analyze` (opens a `GraySource` with `openFrameSource`, runs `scan`). Result classes `FoundSolve` (stop, time text, note, include), `ScanResult` (solves, readable fraction), `ManualCut`, `ScanCancelled` (`UnreadableSpan` and the unreadable-stretch tracking were removed in 2.0.1). All tuning constants are at the top. The decision logic needs only a `read(t)` function, so it can be tested without a phone. |
 | **FrameSource.kt** (~420 lines) | New in the 2.0.0 speed-up. Where Find solves gets its pictures (section 2.1b): the `GraySource` interface, `RetrieverSource` (the slow, original way, also the fallback), `CodecSource` (one running `MediaCodec` decoder that reads the brightness plane directly), `calibrate` (checks the fast picture against the old one and finds the rotation) and `AutoSource` / `openFrameSource` (fast path with automatic fallback). Logs which source is used (`Frame source:`, tag `CubeCut`). Since 2.0.1 `CodecSource.moveTo` skips the keyframe probe when the next frame is just ahead of the decoder. |
 | **ClipExporter.kt** | The cut model (`CutItem`: `stopSec`, `timeText`, `included`, `note`, `includeScramble`; `manual` was removed in 2.0.1), `Clip`, `parseTimeSeconds`, `computeClips` (section 2.5: buffers, solve only / with scramble, previous-cut boundary), and the lossless exporter to `Movies/CubeCut`. File names: `Solve_NN_<time>s.mp4`, or `Solve_NN_unknown.mp4`. The export code is unchanged since 1.0 except, since 2.0.1, the reusable sample buffer that grows when a keyframe doesn't fit. |
+| **SessionStore.kt** (~670 lines) | New in 3.0.0 (Phase 1). All saved data: the SQLite helper (section 2.8), `Footage`, `ExportedClip`, `GalleryClip`, `GalleryData`, `openOrCreate` (video recognition), `saveSession`, `loadGallery` (the present / exported-only rules), `relink`, `recordExports`, `saveTimerSetup` / `timerCornersOf`, `updateCutNote` / `updateCutScramble` / `updateCutFlags`, trash helpers (`setFootageTrashed`, `setExportTrashed`, `loadTrash`, `mediaStoreUriOf`) and the social-media note helpers (`SOCIAL_PLATFORMS`, `togglePlatform`, `noteMentions`, `platformsIn`). |
+| **Gallery.kt** (~2250 lines) | New in 3.0.0 (Phase 2). `GalleryScreen` (tabs, grid/list, sort, filter, pinch, dialogs, Recently deleted, settings), `ClipViewer` (full-screen viewer, `PlayerOverlay`, swipe-up sheet), the cells and rows, `GalleryUiState`, sort functions, `Badge`, icons (`PlayerIcon`, `TrashIcon`), `AboutDialog` and `AuthorCreditLine` (moved here so the credit also shows in the Gallery). Constants at the top: tag colours (`GREEN`, `RED`), `VIEWER_PICTURE_HEIGHT` (900), `MIN_COLUMNS` / `MAX_COLUMNS`. |
+| **Thumbnails.kt** (~175 lines) | New in 3.0.0. `ThumbCache` (memory + file cache of pictures, `get`, `peek`, `forgetFootage`) and the `Thumb` composable (draws a picture, with an optional `placeholderKey` shown while the wanted picture is being made). |
 
 > `TimerReader.kt`, `TimerSetupScreen.kt` and `DisplayReaders.kt` come from the timer-reading expansion (1.1); `docs/TIMER_READING_CHANGES.md` is the detailed record. **The digit reading in them was not touched by the 2.0.0 change** (for the speed-up only `TimerEngine` gained `readDigitsGray` and the last-position shortcut). 2.0.0 changed `SolveAnalyzer.kt`, `ClipExporter.kt`, `MediaTools.kt`, `Timeline.kt`, `MainActivity.kt` and the wording in `AnalysisService.kt` (see `docs/FIRST_FRAME_CUTS_CHANGES.md`), and the speed-up added `FrameSource.kt`. 2.0.1 touched `MainActivity.kt`, `SolveAnalyzer.kt`, `ClipExporter.kt`, `FrameSource.kt`, `TimerReader.kt` (cleanup and memory only: the digit reading is unchanged; `prep` now always releases its temporary images) and comments in `DisplayReaders.kt`.
 
@@ -201,7 +246,8 @@ The design rule since 2.0.0: **the solves list gets as much of the screen as pos
 | `README.md` | GitHub front page. |
 | `LICENSE` | The full GNU General Public License v3.0 text (added 2026-11-06, part of 2.0.2). |
 | `NOTICE.md` | The additional terms under GPL section 7: the author credit must stay in the app's About window (`AUTHOR_NAME` and the `showAbout` dialog in `MainActivity.kt`), and changed versions must be marked as changed. Every `.kt` file starts with a short licence header that points to it (added with `add_license_headers.py`). |
-| `CHANGELOG.md` | What changed in each version (1.0.0 to 2.0.2; the entries before 2.0.1 were reconstructed from this guide in 2.0.1, and their dates were not recorded); keep `[Unreleased]` up to date while working. |
+| `docs/V3_HANDOVER.md` | Short hand-over for the 3.0.0 work: what is done, what is next, decisions, how to continue. |
+| `CHANGELOG.md` | What changed in each version (1.0.0 to 2.0.2, plus `[Unreleased]` for 3.0.0; the entries before 2.0.1 were reconstructed from this guide in 2.0.1, and their dates were not recorded); keep `[Unreleased]` up to date while working. |
 | `docs/CUBECUT_PROJECT_GUIDE.md` | This file. |
 | `docs/GIT_WORKFLOW.md` | Git/GitHub setup, branching, releases, best practices, undo, troubleshooting. |
 | `docs/TIMER_READING_CHANGES.md` | Detailed record and reasoning of the timer-reading changes in 1.1 (reader seam, digit finding, fixed-camera mode, setup screen, session-only setup, test results). |
@@ -228,7 +274,7 @@ CubeCut/
 │  ├─ build.gradle.kts
 │  └─ src/main/
 │     ├─ AndroidManifest.xml
-│     ├─ java/com/example/cubecut/   (the 10 .kt files)
+│     ├─ java/com/example/cubecut/   (the 13 .kt files: the 10 above plus `SessionStore.kt`, `Gallery.kt`, `Thumbnails.kt`)
 │     └─ res/   layout/  drawable/  mipmap-*/  values/
 ├─ gradle/  build.gradle.kts  settings.gradle.kts  gradle.properties  (Android Studio's own files)
 ```
@@ -247,7 +293,7 @@ CubeCut/
    implementation("androidx.media3:media3-ui:1.10.1")          // the player's picture view
    implementation("org.opencv:opencv:4.13.0")                  // image processing (OpenCV)
    ```
-4. **Permissions**: the video comes from the system photo picker and exports go through MediaStore, so no storage permission is needed. The manifest declares only the three notification/service permissions (section 3.2).
+4. **Permissions** (2.0.2; in 3.0.0 the video comes from the system file picker with a persisted read grant, and *Move to trash* asks Android through `MediaStore.createTrashRequest`): the video comes from the system photo picker and exports go through MediaStore, so no storage permission is needed. The manifest declares only the three notification/service permissions (section 3.2).
 5. **Phone**: Settings → About phone → tap *Build number* 7 times → Developer options → *USB debugging* (or *Wireless debugging* + "Pair devices using Wi-Fi" in Android Studio's Device Manager). Pick the phone in the device dropdown next to the green Run button.
 
 ### 4.2 Adding or replacing a source file
@@ -345,6 +391,20 @@ Right-click `res` → New → Android Resource Directory → choose the type (`l
 * **Native memory is released explicitly** (`ShapeFinder.release`, `TimerEngine.release`, `prep` in a try/finally, the temporary bitmap in `bitmapToGray`), because the garbage collector cannot see OpenCV's memory.
 * **Left alone on purpose:** the digit reader and the scan logic; the fact that ExoPlayer, `CodecSource` and the calibration retriever can each hold a hardware decoder at the same time (the fallback already copes; see section 7).
 
+
+**Saved sessions and the Gallery (3.0.0 dev; decisions made with the user while building):**
+* **Store cuts as numbers, compute clips.** Remembering a solve costs a few numbers; clips come from `computeClips` so the Gallery, editor and export always agree. Pictures are made on demand and cached, never stored in the database.
+* **Branch `dev-v3.0.0` off `dev`** (user's choice) so `main`/`dev` stay at the tested 2.0.2.
+* **Plain `OpenDocument` file picker, not the photo picker** (persisted permission survives restarts). The user disliked the file-manager look and asked to try the photo picker and a Videos-view hint; both were **reverted**, because re-picking bothered him more. Do not change the picker again unless asked.
+* **Rules for deleted raw footage:** exported clips stay, non-exported clips disappear from the Gallery (their cuts stay saved). With the raw present, everything shows with an Exported tag. A trashed video counts as deleted at once.
+* **Never delete permanently.** Only *move to trash* (with a warning first) and *Restore*; Android's own trash is the safety net. Deleting for good was explicitly ruled out.
+* **Sort by up to three levels; filter by raw video and exported state; pinch for columns; swipe between tabs** were all requested during testing of Phase 2.
+* **Viewer behaviour requested by the user:** full-screen, autoplay, swipe left/right between clips, swipe up (anywhere, short) for the details, icons not text for controls, skip seconds changed inside the player (not in Settings), controls do not hide right after a skip, the scramble switch lives in the sheet (the separate "include this solve" switch was removed), a first-time swipe hint, trash icon at the bottom of the sheet.
+* **Tag wording and colours** (several rounds): clip with its raw video gone = **Export only**, same green as **Exported** (Phase 2j); footage tags *In trash* / *Video deleted* in red; earlier wordings (*No video*, *Raw deleted*, *Raw unavailable*) were dropped as meaningless or too long.
+* **The flicker took five rounds** and was finally found by exporting every frame of a 120 fps screen recording. The earlier fixes (activePage only after the scroll settles, still = the clip's own first frame, delayed fade, transparent shutter) were each real but not the cause of the last flash; the cause was the still being re-created on the page that becomes active. Lesson: look at every frame before theorising.
+* **Remember the timer setup per video** (user request): the four corners, the frame it was set up on and the typed number are saved; opening the video rebuilds the setup, with a visible message if that fails.
+* **Offered but not yet asked for:** Phase 3 (merge a re-scan with the user's edits; review statuses and filters), multi-select, favourites, tags, backup.
+
 ---
 
 ## 6. Test footage and expected results ("known good")
@@ -389,10 +449,19 @@ The timing log line was removed again to keep the code small; the status line `D
 * Hands/watch covering the display, glare and very dim footage lower the read rate; the review screen and the "check every solve was captured" reminder are the safety net. Long stretches where the timer was unreadable are no longer pointed out (the tracking was removed in 2.0.1; showing them again would mean adding it back to `SolveAnalyzer.scan`).
 * A single keyframe larger than 64 MB cannot be exported (the clip fails with "a video frame is too large to copy"); not expected for phone footage.
 * Lossless cuts can start ~1 s early (most visible on solve-only clips); an exact re-encode option (Media3 Transformer) could be added.
-* Camera changes: big zoom/viewpoint changes need a fresh "Set up timer". **The timer setup is not saved**, so it must be redone at every app start and every video import (by design). In fixed-camera mode (plain screens) the camera must stay still and the window must not move or resize during the video. If tracking fails on a frame, that frame is skipped; there is no per-frame fallback to the saved corners yet.
-* Re-running **Find solves** replaces the list, so manual edits are lost (the confirmation window says so).
+* Camera changes: big zoom/viewpoint changes need a fresh "Set up timer". **In 2.0.2 the timer setup was not saved** (redone at every app start and video import). **In 3.0.0 it is saved per video** and rebuilt when the video opens; if the rebuild fails the user sets it up by hand. In fixed-camera mode (plain screens) the camera must stay still and the window must not move or resize during the video. If tracking fails on a frame, that frame is skipped; there is no per-frame fallback to the saved corners yet.
+* Re-running **Find solves** replaces the list, so manual edits are lost (the confirmation window says so). **Planned in Phase 3:** merge the new scan with the user's edits.
 * The "estimated minutes" in the Find solves window is a rough `0.3 × video length` from before the speed-up (`estMin`); it now overestimates and could be lowered.
 * `parseTimeSeconds` reads a plain `102.34` as 102.34 s, while the setup screen reads `102.34` as 1:02.34; use a colon (`1:02.34`) when typing a time of a minute or more in the Edit window.
+
+**3.0.0 Gallery (limitations and ideas)**
+* **Phase 3 not built:** merge on re-scan, review statuses and filters, multi-select, favourites, tags, backup/export of the database.
+* *Move to trash* needs Android 11+ and only works for videos picked from the picker's Videos/Images lists and for clips CubeCut exported (they must have a MediaStore link). Android permanently empties its trash after about 30 days.
+* Android caps persisted picker permissions (128 older / 512 newer phones); *Forget* releases one.
+* A video moved or renamed by another app can get a new link; the three-step recognition and *Reconnect video* cover it, but a video that changes size or length is treated as a new one.
+* Thumbnails depend on the video being openable; without it, only already-cached pictures show (grey otherwise). Large galleries make pictures lazily, two at a time.
+* The viewer re-prepares the player when the active clip changes; a phone that allows only one hardware decoder at once could behave differently (tested on the S25 Ultra only).
+* Written largely without a compiler; **each phase was then built and tested by the user on the S25 Ultra**, which is the only device used.
 
 **App structure**
 * **Rotating the phone** recreates the screen and loses the loaded video, cuts and settings (the timer setup is lost too, because it is session-only). Staying in portrait avoids it. Fix: a ViewModel or `configChanges`/portrait lock.
@@ -484,11 +553,22 @@ The timing log line was removed again to keep the code small; the status line `D
 * Layout sizes: video height factor `0.27f` in `MainActivity.kt`; timeline `64.dp` and film strip `38.dp` in `Timeline.kt`; zoom limits (1x–8x) in the `detectTransformGestures` block.
 * Highlighted words: `CHECK_KEYWORDS` at the top of `MainActivity.kt`.
 * Find solves time estimate: `durationMs / 1000.0 * 0.3 / 60.0` (`estMin`) in `MainActivity.kt`.
+* Gallery: tag colours `GREEN` / `RED` and `VIEWER_PICTURE_HEIGHT` at the top of `Gallery.kt`; viewer still fade (`delay(150)`, `stillFade`), control hide delay (4 s) and the 1.5 s skip guard in `ClipViewer` / `PlayerOverlay`; thumbnail size `TARGET_HEIGHT` (360), cache size and the two-at-a-time `Semaphore` in `Thumbnails.kt`; default skip 5 s, column limits `MIN_COLUMNS` / `MAX_COLUMNS`.
+* Gallery data: `DB_VERSION` and `onUpgrade` in `SessionStore.kt` (add a column with a new version step; never edit an old step); video recognition order in `openOrCreate`.
 
 
 ---
 
-## 9. State at 2.0.2 (`main` and `dev` are in sync)
+## 9. State of the project
+
+### 9a. 3.0.0 work (branch `dev-v3.0.0`, 2026-11-09)
+* **Phase 1 (saved sessions) and Phase 2 (Gallery + viewer, rounds 2b–2j) are built and tested by the user on the Galaxy S25 Ultra.** The last tests: the black flash found in the 120 fps recording is fixed ("perfect"); *Export only* is now green.
+* **Phase 3 is not started.** Next candidates: merge a re-scan with the user's edits, review statuses and filters (see `docs/V3_HANDOVER.md`).
+* Files changed in 3.0.0: new `SessionStore.kt`, `Gallery.kt`, `Thumbnails.kt`; changed `MainActivity.kt` (AppRoot, editor integration) and `ClipExporter.kt` (`userNote`, returns written files). Not touched: `SolveAnalyzer.kt`, `TimerReader.kt`, `DisplayReaders.kt`, `FrameSource.kt`, `Timeline.kt`, `TimerSetupScreen.kt`, `MediaTools.kt`, `AnalysisService.kt`.
+* `versionName` / `versionCode` still need to be raised when 3.0.0 is released (rename `[Unreleased]` in `CHANGELOG.md`).
+* Not verified: a signed release (R8) build with the Gallery; phones other than the S25 Ultra; Android below 11 for the trash feature; a large gallery (hundreds of clips) for memory and scroll speed.
+
+### 9b. State at 2.0.2 (`main` and `dev` are in sync)
 
 * **Phone testing:** the app has been built and run on the Samsung Galaxy S25 Ultra throughout development, including the 2.0.x versions.
 * **2.0.2:** OpenCV limited to `arm64-v8a`; exported clips no longer go out of sync in some video editors (`ClipExporter` finds the keyframe the picture really starts on and seeks the audio to that same moment).
@@ -508,8 +588,8 @@ The timing log line was removed again to keep the code small; the status line `D
 ## 10. How to restart with a fresh AI (copy-paste kit)
 
 ### 10.1 Attach these files
-1. `docs/CUBECUT_PROJECT_GUIDE.md` (this file), `docs/FIRST_FRAME_CUTS_CHANGES.md` for anything about cuts/clips/the scan, and, for anything about timer reading, `docs/TIMER_READING_CHANGES.md`
-2. All ten Android files: `MainActivity.kt`, `AnalysisService.kt`, `MediaTools.kt`, `Timeline.kt`, `TimerSetupScreen.kt`, `TimerReader.kt`, `DisplayReaders.kt`, `SolveAnalyzer.kt`, `ClipExporter.kt`, `FrameSource.kt` (or a zip).
+1. `docs/CUBECUT_PROJECT_GUIDE.md` (this file), **`docs/V3_HANDOVER.md` for anything about the Gallery / saved sessions**, `docs/FIRST_FRAME_CUTS_CHANGES.md` for anything about cuts/clips/the scan, and, for anything about timer reading, `docs/TIMER_READING_CHANGES.md`
+2. All thirteen Android files: `SessionStore.kt`, `Gallery.kt`, `Thumbnails.kt`, `MainActivity.kt`, `AnalysisService.kt`, `MediaTools.kt`, `Timeline.kt`, `TimerSetupScreen.kt`, `TimerReader.kt`, `DisplayReaders.kt`, `SolveAnalyzer.kt`, `ClipExporter.kt`, `FrameSource.kt` (or a zip).
 3. `AndroidManifest.xml`, `res/layout/video_player_view.xml`, and `app/build.gradle.kts` (shows the exact dependencies and SDK versions).
 4. `CHANGELOG.md`.
 5. `first_frame_scan_prototype.py` (the 2.0.0 scan, clip maths and simulator), and `cubecut.py`, `timer_reference.png`, `generic_reader_prototype.py` (only needed if the AI should run/compare Python tests on the digit reader).
@@ -522,8 +602,8 @@ I'm Justin. I'm building an Android app called CubeCut with your help (in earlie
 remember). It cuts a long speedcubing session video into one clip per solve and names each clip with the solve
 time read from the timer on the video. It runs offline on my phone with NO AI/machine learning – only
 OpenCV image processing and simple counting: it reads the timer along the whole video and cuts at the first
-frame that shows each final time (no sound analysis). It is at version 2.0.2 (main and dev are in sync), licensed GPL-3.0
-and lives in a Git repository.
+frame that shows each final time (no sound analysis). It is at version 2.0.2 (released; main and dev in sync), with version 3.0.0 (saved sessions + a Gallery) built on the dev-v3.0.0
+branch, licensed GPL-3.0 and living in a Git repository.
 
 I'm not a software developer but I'm technical and I follow logic. Please give me step-by-step instructions,
 complete files (not partial snippets) when code changes, and tell me honestly what you are unsure about.
@@ -554,6 +634,7 @@ What I want help with now: <DESCRIBE YOUR ISSUE / NEXT FEATURE HERE>
 * Libraries in the project may be older than the newest API (this already caused the `ServiceCompat.startForeground` build error). Prefer the plain, long-standing API when unsure.
 * The user works in Git branches; remind them to commit a clean state before pasting new files and to update `CHANGELOG.md`.
 * Never pkill by a pattern that matches your own command line, and keep single sandbox commands under ~300 s.
+* **Gallery (3.0.0):** cuts are stored as numbers and clips are computed (`computeClips`); never store pictures or clips in the database. Never delete files permanently, only move to trash. Keep the file picker as it is (user decided). Keep **one still per viewer page that is never removed** (flicker). When the user reports a visual glitch, ask for a screen recording and examine **every frame** (ffmpeg, `-fps_mode passthrough`) before theorising. Always end code changes with a **suggested commit message** (user's standing request).
 * The sandbox has Python, OpenCV 4.13, scipy, ffmpeg, Java; **no Kotlin compiler, no Android SDK, no internet**.
 
 ---

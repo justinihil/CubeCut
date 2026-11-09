@@ -8,16 +8,17 @@ CubeCut reads the timer display along the whole video. When a solve ends the tim
 * **No AI or machine learning.** Only classic OpenCV image processing and simple counting. No sound analysis.
 * A full **review screen**: switch each solve on or off, choose per solve (or for all at once) whether the scramble is kept, fix its time, nudge the cut point, add a missed cut by hand, then export.
 * Exports are **lossless** (no re-encoding), so they are fast and keep full quality.
+* **A Gallery of everything you have cut (new in 3.0.0, in development).** CubeCut remembers every video you import and the solves found in it, so the app opens on a **Gallery**: a **Clips** tab (a grid of pictures with the solve time at the upper right, or a list; sort by up to three things; filter by video and by exported or not; pinch to change the number of columns) and a **Footage** tab (your raw session videos). Tap a clip for a **full-screen viewer** that plays it straight away, swipe left or right for the next clip and up for the details (scramble switch, export, notes, the video it came from). Moving things to the phone's trash is possible, but CubeCut never deletes anything for good.
 * **Fast scan:** Find solves decodes the video with one running hardware decoder instead of seeking for every frame. On the developer's test session this took the scan from about 107 s to about 27 s. If the fast path can't be used on a phone or a video, it quietly falls back to the slower way.
 
-Current version: **2.0.2** (first-frame cuts, plus clean-up and bug fixes). See [CHANGELOG.md](CHANGELOG.md).
+Current released version: **2.0.2** (first-frame cuts, plus clean-up and bug fixes). **Version 3.0.0 (saved sessions and the Gallery) is being built on the `dev-v3.0.0` branch** and is not released yet. See [CHANGELOG.md](CHANGELOG.md).
 
 > **Please read "Tested setup" below before you try it.** CubeCut is a hobby project that has only been tried in a narrow setup. It may work well outside it, but that hasn't been checked.
 
 ## How it works, in short
 
-1. **Import** the session video.
-2. **Set up the timer** (this comes first, the app depends on it): pause on a frame that shows **an actual time after a solve** (the timer has stopped and shows its final time, **not 0.000**), tap the display, drag four dots onto its corners (a magnifier helps), type the number it shows. Do this again at every app start and every video import (the setup is not saved).
+1. **Import** the session video (from the Gallery's *Import video* button). If CubeCut has seen the video before, its saved cuts and settings come back, and so does the timer setup (3.0.0 dev).
+2. **Set up the timer** (this comes first, the app depends on it): pause on a frame that shows **an actual time after a solve** (the timer has stopped and shows its final time, **not 0.000**), tap the display, drag four dots onto its corners (a magnifier helps), type the number it shows. In 3.0.0 the setup is **remembered per video**: opening a video you have set up before sets the timer up again by itself. In 2.0.2 and earlier it has to be done again at every app start and every video import.
 3. **Find solves**: the app reads the timer along the whole video (about half a minute for the developer's test session on a recent phone, longer on slower phones or longer videos; it can be cancelled). One progress card shows how far it is and has the **Cancel** button, and the Setup box folds away while it runs; importing a video and changing the timer are blocked until it is done. A non-zero time that stays on the display is a finished solve, and the first frame showing it is the cut. A few solves may need a look; the app lists them with a note.
 4. **Review** the list, step through with Prev / Next (the list scrolls to the solve), fix anything. Check that every solve was captured: if one is missing, put the playhead on the first frame that shows its final time and tap **+ Cut at playhead**.
 5. **Choose what each clip contains**: tick *Include scramble* per solve, or use the switch for all clips. Without the scramble the clip is the solve only, plus a **before buffer** and an **after buffer** (2.5 s each by default, adjustable in the Setup box).
@@ -51,7 +52,7 @@ Everything below describes what has **actually been tried**. Anything not listed
 
 | | |
 |---|---|
-| Phone | Android 7.0 or newer (`minSdk 24`) **on a 64-bit (arm64) phone**. Since version 2.0.2 the app only includes the arm64 version of OpenCV to keep the download small, so very old 32-bit phones can't install it |
+| Phone | Android 7.0 or newer (`minSdk 24`; *Move to trash* in the 3.0.0 Gallery needs Android 11 or newer) **on a 64-bit (arm64) phone**. Since version 2.0.2 the app only includes the arm64 version of OpenCV to keep the download small, so very old 32-bit phones can't install it |
 | Timer | A display with **seven-segment style digits**: Stackmat-style LCD timers (for example the QiYi Smart Timer) and screens such as **csTimer** on a PC or phone (turn off its "use small font after decimal point" option). Other fonts are not supported yet |
 | Footage | A fixed camera works best, with the timer's display in view. The timer must keep showing the final time for at least about 1.5 s after a solve. The main test footage is 1080x1920, 60 fps, HEVC. Video the phone's hardware decoder can't handle (for example some HDR / 10-bit footage) should still be read, but through a slower fallback (not tested) |
 | Build | Android Studio, Kotlin, Jetpack Compose, OpenCV 4.13.0, Media3 1.10.1 |
@@ -61,8 +62,10 @@ Everything below describes what has **actually been tried**. Anything not listed
 * **Long videos can make the phone warm and use a lot of battery** while Find solves runs. Plug it in for a long session.
 * **Exported clips are full-quality copies**, so a whole session can take several GB. Check you have free space before exporting.
 * **Your original video is never changed.** The app only reads it and writes new files to `Movies/CubeCut`.
-* **The timer must be set up again** every time the app starts and every time you import a video.
-* Re-running Find solves replaces the list, so manual edits are lost.
+* **Version 2.0.2:** the timer must be set up again every time the app starts and every time you import a video. **Version 3.0.0 (dev):** the setup is remembered for each video; if it can't be rebuilt you set it up by hand as before.
+* Re-running Find solves replaces the list, so manual edits are lost (merging a re-scan with your edits is planned for a later 3.0.0 phase).
+* **3.0.0 (dev) keeps a small database on the phone** (numbers and text only: where each video is, the cuts, notes, export records). Videos and exported clips are never copied or changed. *Move to trash* (Android 11 or newer) puts a video or clip in the phone's trash, from where it can be restored for about 30 days; CubeCut never deletes anything permanently.
+* If you delete a raw video, the clips you exported from it stay in the Gallery (tagged *Export only*); clips that were never exported disappear from the Gallery (their cuts stay saved, so importing the video again brings them back).
 
 ## Build and run
 
@@ -84,18 +87,19 @@ The code is open, so you are welcome to fork it and fix or extend it. The part m
 
 | File | What is in it |
 |---|---|
+| [docs/V3_HANDOVER.md](docs/V3_HANDOVER.md) | Short state-of-the-work summary for the 3.0.0 Gallery build: what is done, what is next, how to pick the work up again |
 | [docs/CUBECUT_PROJECT_GUIDE.md](docs/CUBECUT_PROJECT_GUIDE.md) | Everything: algorithms, every file, UI map, decisions, test footage, debugging, restart kit for a new AI session |
 | [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md) | How to use Git and GitHub for this project, step by step |
 | [docs/TIMER_READING_CHANGES.md](docs/TIMER_READING_CHANGES.md) | Detailed record and reasoning of the timer-reading changes (csTimer / PC screens, reader seam, setup screen) |
 | [docs/FIRST_FRAME_CUTS_CHANGES.md](docs/FIRST_FRAME_CUTS_CHANGES.md) | Record of the 2.0.0 change: cuts from the first frame that shows the time, solve-only clips, buffers, the new screen, tuning constants |
 | [pc_prototype/first_frame_scan_prototype.py](pc_prototype/first_frame_scan_prototype.py) | The 2.0.0 scan and clip logic in Python with a noisy-timer simulator and tests (`python first_frame_scan_prototype.py`) |
-| [CHANGELOG.md](CHANGELOG.md) | What changed in each version (1.0.0 to 2.0.2) |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version (1.0.0 to 2.0.2, plus the unreleased 3.0.0 work) |
 | [LICENSE](LICENSE) | The full GNU General Public License, version 3 |
 | [NOTICE.md](NOTICE.md) | The extra terms added to the licence: keep the author credit, mark changed versions |
 
 ## Privacy
 
-The app has no internet permission and uploads nothing. Videos are read through Android's photo picker and clips are written to your own `Movies/CubeCut` folder.
+The app has no internet permission and uploads nothing. Videos are chosen with Android's file picker (since 3.0.0 dev, so that CubeCut can keep permission to open them later; 2.0.2 used the photo picker) and clips are written to your own `Movies/CubeCut` folder.
 
 ## Licence
 
