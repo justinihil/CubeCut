@@ -1543,13 +1543,17 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                         fun viewportHeight(): Int =
                             if (ui.clipsGrid) clipsGridState.layoutInfo.viewportSize.height else clipsListState.layoutInfo.viewportSize.height
-                        // the finger is over clip [to]: every clip from the first one to [to] is ticked (or unticked); going back undoes it
+                        // the finger is over clip [to]: every clip from the first one to [to] is ticked (or unticked); going back undoes it.
+                        // Ticking skips clips that are already exported (the clip the drag started on is always ticked; tap an exported
+                        // clip to tick it on its own). Unticking unticks everything in the range.
                         fun dragOver(to: Int) {
                             val a = drag.anchor
                             if (a < 0) return
                             drag.last = to
                             val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { shown.getOrNull(it) }
-                                .filter { selectable(it, d.openable) }.map { it.listKey }.toSet()
+                                .filter { selectable(it, d.openable) }
+                                .filter { !drag.ticking || it.exported == null || it === shown.getOrNull(a) }
+                                .map { it.listKey }.toSet()
                             ui.selected = if (drag.ticking) drag.base + range else drag.base - range
                         }
                         // a long-press on clip [i]: start choosing (or carry on), and tick it, or untick it if it was ticked
@@ -2218,20 +2222,20 @@ private fun SwipeUpHint(modifier: Modifier = Modifier) {
 }
 
 /**
- * One button of the action row in a clip's details: an icon above a short label. Greyed out (and not tappable) when [enabled] is false,
- * so the row always has the same three buttons in the same places.
+ * One button of the action row in a clip's details: an icon above a short label. Greyed out when [enabled] is false, so the row always
+ * has the same three buttons in the same places; tapping a greyed-out button calls [onDisabledClick] (which says why it can't be used).
  */
 @Composable
 private fun SheetAction(
     label: String, background: Color, content: Color, enabled: Boolean, modifier: Modifier = Modifier,
-    icon: @Composable (Color) -> Unit, onClick: () -> Unit
+    onDisabledClick: () -> Unit = {}, icon: @Composable (Color) -> Unit, onClick: () -> Unit
 ) {
     val fg = if (enabled) content else content.copy(alpha = 0.38f)
     Column(
         modifier
             .clip(RoundedCornerShape(10.dp))
             .background(if (enabled) background else background.copy(alpha = 0.5f))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable { if (enabled) onClick() else onDisabledClick() }
             .padding(vertical = 10.dp, horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -2558,6 +2562,7 @@ fun ClipViewer(
     var overrideVersion by remember { mutableStateOf(0) }
     var controlsVisible by remember { mutableStateOf(false) }
     var exportMessage by remember { mutableStateOf("") }
+    var actionHint by remember { mutableStateOf("") }             // why a greyed-out button can't be used (shown for a few seconds)
     var exporting by remember { mutableStateOf(false) }
     var confirmReexport by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf(false) }
@@ -2646,6 +2651,7 @@ fun ClipViewer(
     }
     LaunchedEffect(current.listKey) {
         exportMessage = ""
+        actionHint = ""
         confirmReexport = false
         confirmTrash = false
         controlsVisible = false          // a new clip starts without the controls on top of it
@@ -2936,26 +2942,41 @@ fun ClipViewer(
                     // ===== what you can do with this clip: export it, open it in the editor, delete its exported file =====
                     // (all three always show, greyed out when they can't be used, so the row never changes shape)
                     val canDeleteFile = exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30
+                    // what a tap on a greyed-out button says (short, and says what to do instead)
+                    val noVideoHint = if (!sourceOk) "The original video is missing. Tap Reconnect video below to use it again."
+                    else "This clip no longer matches a solve. Open the video in the editor from the Footage tab."
+                    val noFileHint = if (exportedFile == null) "Not exported yet, so there's no file to delete.\nWrong solve? Tap Editor to fix or delete it."
+                    else "Deleting files needs Android 11 or newer."
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SheetAction(
                             if (exporting) "Exporting..." else if (exportedFile != null) "Export again" else "Export",
                             MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary,
                             enabled = editable && !exporting, modifier = Modifier.weight(1f),
+                            onDisabledClick = { if (!exporting) actionHint = noVideoHint },
                             icon = { c -> ExportIcon(c, 22.dp) }
                         ) { if (exportedFile != null) confirmReexport = true else doExport() }
                         SheetAction(
                             "Editor",
                             MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurface,
                             enabled = editable, modifier = Modifier.weight(1f),
+                            onDisabledClick = { actionHint = noVideoHint },
                             icon = { c -> EditIcon(c, 22.dp) }
                         ) { scope.launch { flushNotes(); onOpenEditor(current) } }
                         SheetAction(
                             "Delete file",
                             MaterialTheme.colorScheme.surfaceContainerHighest, AppColors.danger,
                             enabled = canDeleteFile, modifier = Modifier.weight(1f),
+                            onDisabledClick = { actionHint = noFileHint },
                             icon = { c -> TrashIcon(c, 22.dp) }
                         ) { confirmTrash = true }
+                    }
+                    if (actionHint.isNotEmpty()) {
+                        InfoNote(actionHint, modifier = Modifier.padding(top = 8.dp))
+                        LaunchedEffect(actionHint) {
+                            delay(5000)                     // the hint goes away by itself
+                            actionHint = ""
+                        }
                     }
                     if (exportMessage.isNotEmpty()) {
                         Text(exportMessage, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
