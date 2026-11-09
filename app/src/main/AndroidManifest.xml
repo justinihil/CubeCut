@@ -16,12 +16,22 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.CubeCut">
+        <!--
+            screenOrientation: CubeCut always stays upright, even with auto-rotate on (the screens are made for portrait).
+            configChanges: when the phone switches to dark mode, the font size or display size changes, or the app goes into split
+            screen, CubeCut redraws itself instead of being restarted by Android. A restart would close the editor and stop a
+            running Find solves or export. (On tablets and foldables Android may ignore the portrait lock; this line still keeps
+            everything when it rotates there.)
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.CubeCut"
-            android:windowSoftInputMode="adjustResize">
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|keyboard|keyboardHidden|navigation|locale|layoutDirection"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="LockedOrientationActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

@@ -29,7 +29,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -149,11 +148,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.TimeZone
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
 // ---------------------------------------------------------------------------------------
 // Version 3: the Gallery. It is the first screen of the app. It shows what the phone remembers (see SessionStore.kt):
@@ -162,11 +159,11 @@ import kotlin.math.sin
 // Rules for what the Clips tab shows:
 //   - a session whose video can still be opened: ALL its found solves, each tagged Exported or not
 //   - a session whose video is gone: only the clips that were exported (they play from the exported file)
-// Tapping a clip opens its detail screen (it plays just that clip, says which video it came from, and keeps your note and social
-// media buttons); tapping a footage card offers "show only its clips", "open in editor", "rename" and "forget".
+// Tapping a clip opens the full-screen viewer (it plays just that clip; swipe up for its details, note and social media buttons).
+// Tapping a footage card opens the video in the editor; its round three-dot button opens the video's options.
 // Pinch with two fingers on a grid to change the number of columns (2 to 6), like the phone's own gallery.
-// Long-press a clip to start choosing clips to export (the editor's "Export clips..." opens this too): tap clips to tick them, tap the
-// arrows in a clip's corner to watch it full screen (it can be ticked and its scramble switched there too), then Export.
+// Long-press a clip to start choosing clips to export (a video's "Export clips..." option opens this too): tap clips to tick them, tap
+// the arrows in a clip's corner to watch it full screen (it can be ticked and its scramble switched there too), then Export.
 // ---------------------------------------------------------------------------------------
 
 /** How tall a picture cell is compared to its width (3 wide : 4 tall). Change this one number to reshape the whole grid. */
@@ -213,7 +210,7 @@ enum class ClipKey(val label: String, val short: String) {
 
     companion object {
         fun parse(csv: String?): List<ClipKey> {
-            val keys = (csv ?: "").split(',').mapNotNull { n -> values().firstOrNull { it.name == n } }.take(3)
+            val keys = (csv ?: "").split(',').mapNotNull { n -> ClipKey.entries.firstOrNull { it.name == n } }.take(3)
             return if (keys.isEmpty()) listOf(DAY_NEWEST) else keys
         }
     }
@@ -228,7 +225,7 @@ enum class FootageSort(val label: String) {
     LONGEST("Longest video");
 
     companion object {
-        fun from(name: String?): FootageSort = values().firstOrNull { it.name == name } ?: NEWEST
+        fun from(name: String?): FootageSort = FootageSort.entries.firstOrNull { it.name == name } ?: NEWEST
     }
 }
 
@@ -238,7 +235,7 @@ enum class ExportFilter(val label: String) {
     NOT_EXPORTED("Not exported only");
 
     companion object {
-        fun from(name: String?): ExportFilter = values().firstOrNull { it.name == name } ?: ALL
+        fun from(name: String?): ExportFilter = ExportFilter.entries.firstOrNull { it.name == name } ?: ALL
     }
 }
 
@@ -302,9 +299,8 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var skipSeconds by mutableStateOf(prefs.getInt("skip_seconds", 5).coerceIn(1, 60))
     var swipeHintSeen by mutableStateOf(prefs.getBoolean("swipe_hint_seen", false))
     var openClip by mutableStateOf<Pair<Long, Double>?>(null)     // (session id, stop time) of a clip to open as soon as the data has loaded
-    var selecting by mutableStateOf(false)                        // choosing clips to export (long-press a clip, or the editor's Export clips...)
+    var selecting by mutableStateOf(false)                        // choosing clips to export (long-press a clip, or a video's Export clips...)
     var selected by mutableStateOf<Set<String>>(emptySet())       // the chosen clips (their listKey)
-    var selectFootage by mutableStateOf<Long?>(null)              // a session whose clips should be selected as soon as the data has loaded
     // "you were just here": once the data has loaded, the Gallery scrolls to this video or clip and lights it up briefly
     var flashFootage by mutableStateOf<Long?>(null)               // the video the editor was just closed on (Footage tab)
     var flashClip by mutableStateOf<GalleryClip?>(null)           // the clip the viewer was just closed on (Clips tab)
@@ -349,8 +345,11 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     }
 }
 
-/** The activity a composable runs in (the screen is wrapped in other contexts on some phones). */
-private fun Context.findActivity(): ComponentActivity? {
+/**
+ * The activity a composable runs in (the screen is wrapped in other contexts on some phones). The one place this is worked out: the
+ * Gallery, the editor and the theme all use it.
+ */
+fun Context.findActivity(): ComponentActivity? {
     var c: Context = this
     while (c is ContextWrapper) {
         if (c is ComponentActivity) return c
@@ -835,7 +834,7 @@ private fun LevelPicker(title: String, current: ClipKey?, allowNone: Boolean, en
             }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 if (allowNone) DropdownMenuItem(text = { Text("(none)") }, onClick = { open = false; onPick(null) })
-                for (k in ClipKey.values()) {
+                for (k in ClipKey.entries) {
                     DropdownMenuItem(text = { Text(k.label) }, onClick = { open = false; onPick(k) })
                 }
             }
@@ -945,7 +944,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
         ui.selected = if (clip.listKey in ui.selected) ui.selected - clip.listKey else ui.selected + clip.listKey
     }
-    /** Shows only one session's clips and ticks the ones that aren't exported yet (the editor's Export clips..., or the footage menu). */
+    /** Shows only one session's clips and ticks the ones that aren't exported yet (the Export clips... option of a video on the Footage tab). */
     fun selectSession(id: Long, loaded: GalleryData) {
         ui.tab = 0
         ui.hidden = loaded.footage.map { it.id }.filter { it != id }.toSet()
@@ -1063,12 +1062,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ui.tab = 0
                     ui.openViewer(loaded.clips.filter { it.footage.id == found.footage.id }.sortedBy { it.index }, found)
                 }
-            }
-            // coming back from the editor's Export clips...: tick that video's clips that aren't exported yet
-            val selectFor = ui.selectFootage
-            if (selectFor != null) {
-                ui.selectFootage = null
-                if (loaded.footage.any { it.id == selectFor }) selectSession(selectFor, loaded)
             }
             // coming back from the editor or from the clip viewer: point out where you were
             val backFromVideo = ui.flashFootage
@@ -1316,7 +1309,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     OutlinedButton(onClick = { showSort = true }) { Text("Sort") }
                     OutlinedButton(onClick = { showFilter = true }) { Text(if (ui.filterActive) "Filter \u2022" else "Filter") }
                 } else {
-                    SortMenu(ui.footageSort.label, FootageSort.values().map { it to it.label }) { ui.footageSort = it; ui.save() }
+                    SortMenu(ui.footageSort.label, FootageSort.entries.map { it to it.label }) { ui.footageSort = it; ui.save() }
                 }
             }
             if (ui.tab == 0) {
@@ -1573,7 +1566,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 text = {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                         Text("Appearance", style = MaterialTheme.typography.labelLarge)
-                        for (m in ThemeMode.values()) {
+                        for (m in ThemeMode.entries) {
                             Row(
                                 Modifier
                                     .fillMaxWidth()
@@ -1636,7 +1629,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             .verticalScroll(rememberScrollState())
                     ) {
                         Text("Show clips that are", style = MaterialTheme.typography.labelLarge)
-                        for (opt in ExportFilter.values()) {
+                        for (opt in ExportFilter.entries) {
                             Row(
                                 Modifier
                                     .fillMaxWidth()
@@ -2119,7 +2112,7 @@ private fun PlayerOverlay(
     var playing by remember { mutableStateOf(player.isPlaying) }
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
-    var touched by remember { mutableStateOf(0) }       // goes up whenever a control is used, so the 2 second hide timer starts again
+    var touched by remember { mutableStateOf(0) }       // goes up whenever a control is used, so the 4 second hide timer starts again
     var skipMenu by remember { mutableStateOf(false) }
     var lastUseMs by remember { mutableStateOf(0L) }       // when a control was last used
 
@@ -2455,7 +2448,7 @@ fun ClipViewer(
         }
     }
 
-    // ---- export this one clip (the same maths and rules as the editor's export) ----
+    // ---- export this one clip (the same maths and rules as the batch export) ----
     fun doExport() {
         if (exporting) return
         val c = current
@@ -2470,23 +2463,29 @@ fun ClipViewer(
         exporting = true
         exportMessage = "Exporting..."
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                try { ClipExporter.export(context, Uri.parse(f.uri), listOf(clip), f.title) { _, _ -> } } catch (e: Exception) { null }
-            }
-            if (result == null) {
-                exportMessage = "The export failed."
-            } else {
-                exportMessage = result.message
-                val now = System.currentTimeMillis()
-                val records = result.files.map { ef ->
-                    ExportedClip(0L, f.id, cut.stopSec, cut.timeText, ef.uri, ef.fileName, max(0.0, cut.stopSec - ef.startSec), now)
-                }
-                if (records.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
+            // Writing the file and recording it are ONE background step: if you leave the player while it exports, this screen's work is
+            // cancelled, but the background step still finishes, so the new file is always recorded (and shows as Exported).
+            val done: Pair<ExportResult, ExportedClip?>? = withContext(Dispatchers.IO) {
+                try {
+                    val result = ClipExporter.export(context, Uri.parse(f.uri), listOf(clip), f.title) { _, _ -> }
+                    val now = System.currentTimeMillis()
+                    val records = result.files.map { ef ->
+                        ExportedClip(0L, f.id, cut.stopSec, cut.timeText, ef.uri, ef.fileName, max(0.0, cut.stopSec - ef.startSec), now)
+                    }
+                    if (records.isNotEmpty()) {
                         try { SessionStore.recordExports(context, f.id, records) } catch (e: Exception) { }
                     }
-                    exportedNow[c.listKey] = records[0]
+                    Pair(result, records.firstOrNull())
+                } catch (e: Exception) {
+                    null
                 }
+            }
+            if (done == null) {
+                exportMessage = "The export failed."
+            } else {
+                exportMessage = done.first.message
+                val record = done.second
+                if (record != null) exportedNow[c.listKey] = record
             }
             exporting = false
         }
@@ -2518,7 +2517,10 @@ fun ClipViewer(
                                 pv.player = player
                                 pv
                             },
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize(),
+                            // a swipe to another clip removes this view: unhook it from the player, or the player keeps it alive
+                            // (and keeps telling it about every event) until the viewer closes
+                            onRelease = { it.player = null }
                         )
                     }
                     // the clip's still picture. It is the SAME picture before and after the page becomes the playing one (it is never
@@ -2861,4 +2863,4 @@ fun ClipViewer(
             )
         }
     }
-}
+}

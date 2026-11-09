@@ -52,7 +52,7 @@ class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Doubl
  * The editor timeline: film strip on top, a strip below it showing what each clip will contain, markers for the cuts
  * and a red playhead.
  * At zoom 1 the whole video fits the screen; above that you scroll sideways. Tap to jump; at zoom 1 you can also drag to scrub.
- * markerStates: 1 = a cut that will be exported (green), 2 = a cut left out (grey), anything else = orange.
+ * markerStates: 1 = a solve (green), anything else (2) = a cut left over from before the video began, which makes no clip (grey).
  * A cut marker sits on the FIRST frame that shows the final time (the moment the timer stopped).
  * clipBars: dim green = scramble part of a clip, bright green = the solve part (solve with its buffers).
  */
@@ -167,11 +167,7 @@ fun Timeline(
                     if (durationMs > 0) {
                         for ((i, t) in stops.withIndex()) {
                             val x = (size.width * (t * 1000.0 / durationMs)).toFloat()
-                            val markerColor = when (markerStates.getOrElse(i) { 0 }) {
-                                1 -> Color(0xFF66BB6A)
-                                2 -> Color(0xFF9E9E9E)
-                                else -> Color(0xFFFFA726)
-                            }
+                            val markerColor = if (markerStates.getOrElse(i) { 1 } == 1) Color(0xFF66BB6A) else Color(0xFF9E9E9E)
                             drawLine(markerColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2f)
                             drawCircle(color = markerColor, radius = 7f, center = Offset(x, 7f))
                             if (i == selectedIndex) {
@@ -189,4 +185,4 @@ fun Timeline(
             }
         }
     }
-}
+}

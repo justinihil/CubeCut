@@ -22,7 +22,7 @@ package com.example.cubecut
 // The new scan does not replace the saved list. Each solve it finds is matched to a saved cut when their SOLVE parts
 // (timer start to stop, worked out from the time shown) overlap; the scramble and inspection are not used for matching,
 // because a missed solve can sit inside the next solve's scramble.
-//  - A saved cut you changed (switch, scramble tick, time, position, note, added by hand) or exported stays exactly as it is.
+//  - A saved cut you changed (scramble, time, position, note, marked as checked, added by hand) or exported stays exactly as it is.
 //  - A saved cut you never touched takes the new scan's values.
 //  - A new solve that matches no saved cut is added.
 //  - A saved cut the new scan did not find again is kept; an untouched one gets a note so it can be checked.
@@ -167,4 +167,4 @@ fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
         prev = i
     }
     return CutChecks(found.mapValues { it.value.joinToString("; ") }, noClip)
-}
+}

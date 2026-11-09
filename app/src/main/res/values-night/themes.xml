@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Used when the phone is in dark mode, so the app doesn't flash white while it starts (see res/values/themes.xml). -->
+    <style name="Theme.CubeCut" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+</resources>

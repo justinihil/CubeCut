@@ -18,7 +18,6 @@ package com.example.cubecut
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.view.LayoutInflater
@@ -55,7 +54,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -67,7 +65,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -79,7 +76,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -112,7 +108,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -167,10 +162,9 @@ fun AppRoot(ui: GalleryUiState) {
     var editor by remember { mutableStateOf<EditorRequest?>(null) }
     val request = editor
     if (request != null) {
-        EditorScreen(request = request, onClose = { footageId, solveSec, selectToExport ->
+        EditorScreen(request = request, onClose = { footageId, solveSec ->
             editor = null
-            if (footageId != null && selectToExport) ui.selectFootage = footageId                       // "Export clips..."
-            else if (footageId != null && solveSec != null) ui.openClip = Pair(footageId, solveSec)    // "show in Gallery" on a solve
+            if (footageId != null && solveSec != null) ui.openClip = Pair(footageId, solveSec)         // View on a solve card
             else if (footageId != null) {
                 // Gallery button or Back: open the Footage tab and point out the video you were just in
                 ui.tab = 1
@@ -281,7 +275,7 @@ private fun ScrambleButton(on: Boolean, enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> Unit) {
+fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -351,15 +345,33 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
     var setupBusy by remember { mutableStateOf(false) }
     var setupMessage by remember { mutableStateOf("") }
 
+    // The timer engine holds OpenCV memory that the garbage collector can't see, so it is freed by hand when the editor closes.
+    // A background job that is still reading with it (Find solves, + Cut at playhead, Read timer here) must finish first, or it
+    // would read with freed memory: each one counts itself in and out here, and the last one out frees the engine.
+    // (plain arrays, not screen state: only the main thread touches them, and changing them must not redraw anything)
+    val engineUsers = remember { IntArray(1) }
+    val editorClosed = remember { BooleanArray(1) }
+    fun startUsing() {
+        engineUsers[0]++
+    }
+    fun stopUsing(engine: TimerEngine) {
+        engineUsers[0]--
+        if (editorClosed[0] && engineUsers[0] == 0) engine.release()
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            editorClosed[0] = true
+            if (engineUsers[0] == 0) timerEngine?.release()
+        }
+    }
+
     // ---- the video player ----
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
     // leaving the app (home, another app, screen off) stops the sound: pause as soon as CubeCut is no longer in front
     DisposableEffect(exoPlayer) {
-        var host: Context? = context
-        while (host is android.content.ContextWrapper && host !is ComponentActivity) host = host.baseContext
-        val lifecycle = (host as? ComponentActivity)?.lifecycle
+        val lifecycle = context.findActivity()?.lifecycle
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) exoPlayer.pause()
         }
@@ -589,6 +601,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
         if (uri != null && engine != null && dur > 0 && !analyzing) {
             exoPlayer.pause()
             scope.launch {
+                startUsing()                            // the scan reads with the timer engine (see stopUsing in finally)
                 analyzing = true
                 setupExpanded = false                   // fold the Setup box away as soon as the scan starts
                 cancelScan = false
@@ -646,6 +659,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 } finally {
                     analyzing = false
                     AnalysisService.stop(context)
+                    stopUsing(engine)                   // the scan has really stopped reading by now (also when the editor was closed)
                 }
                 finishedText?.let { AnalysisService.notifyDone(context, it) }
             }
@@ -773,8 +787,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
     }
 
     // back to the Gallery: save the latest edits first (the autosave waits a moment), then close the editor
-    // [selectToExport]: open the Gallery with this video's clips that aren't exported yet selected, ready to export
-    fun leaveToGallery(showSolve: Int? = null, selectToExport: Boolean = false) {
+    // [showSolve]: the Gallery opens that solve's clip in the viewer (the View button); null = the Footage tab, pointing out this video
+    fun leaveToGallery(showSolve: Int? = null) {
         if (analyzing) {
             status = "Find solves is running. Let it finish or cancel it first."
             return
@@ -795,7 +809,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 }
             }
             exoPlayer.pause()
-            onClose(id, openSec, selectToExport)
+            onClose(id, openSec)
         }
     }
     BackHandler { leaveToGallery() }
@@ -1009,8 +1023,13 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                 var text = ""
                                 var note = "added by you"
                                 if (engine != null) {
-                                    val found = withContext(Dispatchers.Default) {
-                                        SolveAnalyzer.analyzeOne(context, uri, at, dur, engine)
+                                    startUsing()
+                                    val found = try {
+                                        withContext(Dispatchers.Default) {
+                                            SolveAnalyzer.analyzeOne(context, uri, at, dur, engine)
+                                        }
+                                    } finally {
+                                        stopUsing(engine)
                                     }
                                     stop = found.stopSec
                                     text = found.timeText
@@ -1113,7 +1132,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                                     if (bmp == null) {
                                                         timerMessage = "Couldn't read a picture here"
                                                     } else {
-                                                        val res = withContext(Dispatchers.Default) { engine.readFrame(bmp) }
+                                                        startUsing()
+                                                        val res = try {
+                                                            withContext(Dispatchers.Default) { engine.readFrame(bmp) }
+                                                        } finally {
+                                                            stopUsing(engine)
+                                                        }
                                                         timerMessage = res.message
                                                         timerDebug = res.debug
                                                     }
@@ -1456,17 +1480,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 }
             }
 
-            // ===== the author credit: one small line at the very bottom; tap it to open the About window =====
-            Text(
-                "CubeCut by $AUTHOR_NAME",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { showAbout = true }
-                    .padding(top = 4.dp)
-            )
+            // ===== the author credit: one small line at the very bottom; tap it to open the About window (the same line as the Gallery's) =====
+            AuthorCreditLine { showAbout = true }
         }
 
         // ===== the import progress window: blocks all touches until the video is fully loaded =====
@@ -1675,4 +1690,4 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
             )
         }
     }
-}
+}

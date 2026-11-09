@@ -61,7 +61,6 @@ class Footage(
     val afterPad: Float,
     val scrambleAll: Boolean,
     val cutCount: Int,            // how many cuts are saved for it
-    val includedCount: Int,       // how many of them are switched on
     val timerFrameMs: Long,       // where in the video the timer was set up (-1 = never)
     val timerCorners: String,     // the four corners marked on that picture (8 numbers, comma separated)
     val timerTyped: String,       // the number that was typed in for it
@@ -315,7 +314,6 @@ object SessionStore {
         "SELECT f.id, f.uri, f.display_name, f.size_bytes, f.duration_ms, f.title, f.date_taken_ms, f.added_ms, f.last_scan_ms, " +
                 "f.before_pad, f.after_pad, f.scramble_all, " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id), " +
-                "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id AND c.included = 1), " +
                 "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms " +
                 "FROM footage f"
 
@@ -323,8 +321,8 @@ object SessionStore {
         id = c.getLong(0), uri = c.getString(1), displayName = c.getString(2), sizeBytes = c.getLong(3),
         durationMs = c.getLong(4), title = c.getString(5), dateTakenMs = c.getLong(6), addedMs = c.getLong(7),
         lastScanMs = c.getLong(8), beforePad = c.getFloat(9), afterPad = c.getFloat(10), scrambleAll = c.getInt(11) == 1,
-        cutCount = c.getInt(12), includedCount = c.getInt(13),
-        timerFrameMs = c.getLong(14), timerCorners = c.getString(15), timerTyped = c.getString(16), trashedMs = c.getLong(17)
+        cutCount = c.getInt(12),
+        timerFrameMs = c.getLong(13), timerCorners = c.getString(14), timerTyped = c.getString(15), trashedMs = c.getLong(16)
     )
 
     fun getFootage(context: Context, id: Long): Footage? =
@@ -517,15 +515,6 @@ object SessionStore {
         return if (parts.size == 8) parts.toDoubleArray() else null
     }
 
-    /** Switches one cut on or off, and with or without its scramble (found by its stop time). Used by the Gallery; the editor sees the change. */
-    fun updateCutFlags(context: Context, footageId: Long, stopSec: Double, included: Boolean, includeScramble: Boolean) {
-        val v = ContentValues()
-        v.put("included", if (included) 1 else 0)
-        v.put("include_scramble", if (includeScramble) 1 else 0)
-        v.put("user_edited", 1)
-        db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
-    }
-
     /** Marks one cut's "check" as looked at (found by its stop time). The editor sees the change. */
     fun markCutReviewed(context: Context, footageId: Long, stopSec: Double) {
         val v = ContentValues()
@@ -700,4 +689,4 @@ fun togglePlatform(note: String, platform: String): String {
 class TrashedExport(val clip: ExportedClip, val footageTitle: String)
 
 /** What CubeCut moved to the phone's trash and can restore. */
-class TrashData(val videos: List<Footage>, val clips: List<TrashedExport>)
+class TrashData(val videos: List<Footage>, val clips: List<TrashedExport>)

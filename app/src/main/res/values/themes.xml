@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <style name="Theme.CubeCut" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+        The window CubeCut opens in. Everything you see is drawn by Compose with the colours in Theme.kt; this only decides the
+        colour shown for a moment while the app starts. The dark version is in res/values-night/themes.xml.
+    -->
+    <style name="Theme.CubeCut" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
 </resources>

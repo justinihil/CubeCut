@@ -16,9 +16,6 @@
  */
 package com.example.cubecut
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -50,7 +47,7 @@ enum class ThemeMode(val label: String) {
     DARK("Dark");
 
     companion object {
-        fun from(name: String?): ThemeMode = values().firstOrNull { it.name == name } ?: SYSTEM
+        fun from(name: String?): ThemeMode = ThemeMode.entries.firstOrNull { it.name == name } ?: SYSTEM
     }
 }
 
@@ -112,15 +109,6 @@ object AppColors {
     }
 }
 
-private fun Context.activity(): Activity? {
-    var c: Context = this
-    while (c is ContextWrapper) {
-        if (c is Activity) return c
-        c = c.baseContext
-    }
-    return null
-}
-
 /** Wraps the whole app: picks light or dark colours and makes the status bar icons readable on them. */
 @Composable
 fun CubeCutTheme(mode: ThemeMode, content: @Composable () -> Unit) {
@@ -133,11 +121,11 @@ fun CubeCutTheme(mode: ThemeMode, content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = view.context.activity()?.window ?: return@SideEffect
+            val window = view.context.findActivity()?.window ?: return@SideEffect   // findActivity: see Gallery.kt
             val bars = WindowCompat.getInsetsController(window, view)
             bars.isAppearanceLightStatusBars = !dark
             bars.isAppearanceLightNavigationBars = !dark
         }
     }
     MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, content = content)
-}
+}

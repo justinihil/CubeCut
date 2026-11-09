@@ -40,11 +40,11 @@ import kotlin.math.min
 data class CutItem(
     val stopSec: Double,                  // the first frame that shows the final time, in seconds from the start of the video
     val timeText: String,                 // what the timer showed, e.g. "11.263" ("" = unknown)
-    val included: Boolean,                // true = this cut is exported as a clip
+    val included: Boolean,                // true = a real solve; false only for a cut left over from before the video began (see isLeftover)
     val note: String,                     // why it needs a look, or "added by you"
     val includeScramble: Boolean = true,  // true = clip runs from the end of the previous clip (scramble included); false = the solve only
     val userNote: String = "",            // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
-    val edited: Boolean = false,          // true once you changed this cut yourself (switch, scramble tick, time, position, note) or added it: Find solves then leaves it alone
+    val edited: Boolean = false,          // true once you changed this cut yourself (its scramble, time, position, note or check) or added it: Find solves then leaves it alone
     val reviewed: Boolean = false         // you marked its "check" as looked at: its scan note and timing warnings stop flagging it (a solve with no clip stays flagged)
 )
 
@@ -135,8 +135,14 @@ object ClipExporter {
     private const val MAX_BUFFER = 64 * 1024 * 1024
     private const val AUDIO_SLACK_US = 25_000L   // one audio frame is about 21 ms; keep the one that starts just before the keyframe
 
-    // one buffer for all clips (clips are exported one after another); it only grows if a sample doesn't fit
-    private var sampleBuffer: ByteBuffer = ByteBuffer.allocate(START_BUFFER)
+    /**
+     * The memory one sample is copied through. Each export() call has its own (shared by its clips, which are exported one after
+     * another), so two exports running at the same time (the player's and a batch) can never write into each other's buffer.
+     * It starts at 4 MB and only grows if a sample doesn't fit.
+     */
+    private class SampleBuffer {
+        var bytes: ByteBuffer = ByteBuffer.allocate(START_BUFFER)
+    }
 
     /** "1:02.345" -> "1m02.345", "" -> "unknown" (colons are not allowed in file names). */
     fun safeTime(timeText: String): String {
@@ -164,10 +170,11 @@ object ClipExporter {
         val failed = mutableListOf<String>()
         val files = mutableListOf<ExportedFile>()
         var done = 0
+        val buffer = SampleBuffer()
         for ((i, clip) in clips.withIndex()) {
             onProgress(i, clips.size)
             val made = Made()
-            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix), made)
+            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix), made, buffer)
             if (error == null) {
                 done++
                 val uri = made.uri
@@ -211,7 +218,7 @@ object ClipExporter {
      * Because of that, a clip can start a little earlier than asked: it must begin on a "keyframe" (usually within a second).
      * Returns null on success, or a short error message.
      */
-    private fun exportOne(context: Context, source: Uri, startUs: Long, endUs: Long, name: String, made: Made): String? {
+    private fun exportOne(context: Context, source: Uri, startUs: Long, endUs: Long, name: String, made: Made, sample: SampleBuffer): String? {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
         var output: Output? = null
@@ -286,19 +293,19 @@ object ClipExporter {
                 if (outTrack != null) {
                     var size = -1
                     while (true) {
-                        sampleBuffer.clear()
+                        sample.bytes.clear()
                         try {
-                            size = extractor.readSampleData(sampleBuffer, 0)
+                            size = extractor.readSampleData(sample.bytes, 0)
                             break
                         } catch (e: IllegalArgumentException) {
                             // this sample (a big keyframe) is larger than the buffer: make it bigger and read it again
-                            val bigger = sampleBuffer.capacity() * 2
+                            val bigger = sample.bytes.capacity() * 2
                             if (bigger > MAX_BUFFER) throw IOException("a video frame is too large to copy")
-                            sampleBuffer = ByteBuffer.allocate(bigger)
+                            sample.bytes = ByteBuffer.allocate(bigger)
                         }
                     }
                     if (size < 0) break
-                    val buffer = sampleBuffer
+                    val buffer = sample.bytes
                     if (baseUs < 0) baseUs = timeUs
                     val flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                     info.set(0, size, max(0L, timeUs - baseUs), flags)
@@ -339,4 +346,4 @@ object ClipExporter {
             }
         }
     }
-}
+}
