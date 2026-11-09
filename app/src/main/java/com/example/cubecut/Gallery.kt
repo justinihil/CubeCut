@@ -44,6 +44,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -99,6 +100,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -186,6 +188,9 @@ class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashin
     val uriString: String get() = footage?.uri ?: export?.uri ?: ""
     val name: String get() = footage?.title ?: export?.fileName ?: ""
 }
+
+/** What the Gallery should point out after loading: a video on the Footage tab, or a clip on the Clips tab. */
+private class FlashTarget(val footageId: Long?, val clip: GalleryClip?)
 
 /** What the editor is asked to open: [uri] (null = an empty editor) and optionally the solve to jump to ([seekSec] = its stop time). */
 class EditorRequest(val uri: Uri?, val seekSec: Double? = null)
@@ -300,6 +305,9 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var selecting by mutableStateOf(false)                        // choosing clips to export (long-press a clip, or the editor's Export clips...)
     var selected by mutableStateOf<Set<String>>(emptySet())       // the chosen clips (their listKey)
     var selectFootage by mutableStateOf<Long?>(null)              // a session whose clips should be selected as soon as the data has loaded
+    // "you were just here": once the data has loaded, the Gallery scrolls to this video or clip and lights it up briefly
+    var flashFootage by mutableStateOf<Long?>(null)               // the video the editor was just closed on (Footage tab)
+    var flashClip by mutableStateOf<GalleryClip?>(null)           // the clip the viewer was just closed on (Clips tab)
     var clipsGrid by mutableStateOf(prefs.getBoolean("clips_grid", true))
     var footageGrid by mutableStateOf(prefs.getBoolean("footage_grid", true))
     var clipsColumns by mutableStateOf(prefs.getInt("clips_columns", 3).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
@@ -387,6 +395,56 @@ private fun Modifier.pinchColumns(onStep: (Int) -> Unit, onScale: (Float) -> Uni
         } while (event.changes.any { it.pressed })
         onEnd()
     }
+}
+
+/**
+ * Makes sure item [index] of a grid is fully on screen. If it has to scroll, the item ends up roughly in the middle. Waits (up to about a
+ * second) for the grid to be laid out first, because it may only just have appeared.
+ */
+private suspend fun revealGridItem(state: LazyGridState, index: Int) {
+    var tries = 0
+    while (state.layoutInfo.totalItemsCount <= index && tries < 60) {
+        delay(16)
+        tries++
+    }
+    if (state.layoutInfo.totalItemsCount <= index) return
+    val before = state.layoutInfo
+    val seen = before.visibleItemsInfo.firstOrNull { it.index == index }
+    if (seen != null && seen.offset.y >= before.viewportStartOffset && seen.offset.y + seen.size.height <= before.viewportEndOffset) return
+    state.scrollToItem(index)
+    tries = 0
+    while (state.layoutInfo.visibleItemsInfo.none { it.index == index } && tries < 10) {
+        delay(16)
+        tries++
+    }
+    val info = state.layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return
+    // scrollToItem puts the item's row at the top: move it down to the middle (the grid stops by itself at its start)
+    val shift = (info.viewportEndOffset - info.viewportStartOffset - item.size.height) / 2f - (item.offset.y - info.viewportStartOffset)
+    if (shift > 1f) state.scrollBy(-shift)
+}
+
+/** The same as [revealGridItem], for a list. */
+private suspend fun revealListItem(state: LazyListState, index: Int) {
+    var tries = 0
+    while (state.layoutInfo.totalItemsCount <= index && tries < 60) {
+        delay(16)
+        tries++
+    }
+    if (state.layoutInfo.totalItemsCount <= index) return
+    val before = state.layoutInfo
+    val seen = before.visibleItemsInfo.firstOrNull { it.index == index }
+    if (seen != null && seen.offset >= before.viewportStartOffset && seen.offset + seen.size <= before.viewportEndOffset) return
+    state.scrollToItem(index)
+    tries = 0
+    while (state.layoutInfo.visibleItemsInfo.none { it.index == index } && tries < 10) {
+        delay(16)
+        tries++
+    }
+    val info = state.layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return
+    val shift = (info.viewportEndOffset - info.viewportStartOffset - item.size) / 2f - (item.offset - info.viewportStartOffset)
+    if (shift > 1f) state.scrollBy(-shift)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -508,6 +566,26 @@ private fun clipPictureKey(clip: GalleryClip): String =
 private fun clipPictureMs(clip: GalleryClip): Long =
     if (clip.exportOnly && clip.exported != null) Math.round(clip.exported.offsetSec * 1000.0) else Math.round(clip.cut.stopSec * 1000.0)
 
+/** "You were just here": a blue glow and border over a picture cell. [level] goes from 0 (nothing) to 1 (full). */
+@Composable
+private fun FlashOverlay(level: Float) {
+    if (level <= 0f) return
+    val blue = MaterialTheme.colorScheme.primary
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(blue.copy(alpha = 0.22f * level))
+            .border(3.dp, blue.copy(alpha = level), RoundedCornerShape(10.dp))
+    )
+}
+
+/** The same "you were just here" light for a list row: a blue tint and border behind the row. */
+private fun Modifier.flashRow(level: Float, blue: Color): Modifier =
+    if (level <= 0f) this
+    else this
+        .background(blue.copy(alpha = 0.18f * level), RoundedCornerShape(8.dp))
+        .border(2.dp, blue.copy(alpha = level), RoundedCornerShape(8.dp))
+
 /**
  * One solve as a picture, with its time at the upper right. [columns] tells how crowded the grid is, so small cells show less text.
  * While clips are being chosen ([selecting]) the cell shows its selection mark and a button to watch it full screen ([onPreview]).
@@ -516,7 +594,7 @@ private fun clipPictureMs(clip: GalleryClip): Long =
 @Composable
 private fun ClipCell(
     clip: GalleryClip, openable: Map<Long, Boolean>, columns: Int, selecting: Boolean, selected: Boolean, modifier: Modifier = Modifier,
-    onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
 ) {
     val canPick = selectable(clip, openable)
     Box(
@@ -575,6 +653,7 @@ private fun ClipCell(
         if (selecting) {
             PreviewButton(if (columns >= 5) 14.dp else 18.dp, Modifier.align(Alignment.BottomEnd).padding(4.dp), onPreview)
         }
+        FlashOverlay(highlight)
     }
 }
 
@@ -583,12 +662,13 @@ private fun ClipCell(
 @Composable
 private fun ClipRow(
     clip: GalleryClip, openable: Map<Long, Boolean>, selecting: Boolean, selected: Boolean,
-    onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, onLongClick: () -> Unit, onPreview: () -> Unit, onClick: () -> Unit
 ) {
     val canPick = selectable(clip, openable)
     Row(
         Modifier
             .fillMaxWidth()
+            .flashRow(highlight, MaterialTheme.colorScheme.primary)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .alpha(if (selecting && !canPick) 0.45f else 1f)
             .padding(vertical = 4.dp),
@@ -634,7 +714,7 @@ private fun footageThumbKey(f: Footage): String = "f_${f.id}"
 @Composable
 private fun FootageCell(
     f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier,
-    onMenu: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, onMenu: () -> Unit, onClick: () -> Unit
 ) {
     Box(
         modifier
@@ -672,15 +752,19 @@ private fun FootageCell(
                 }
             }
         }
+        FlashOverlay(highlight)
         MoreButton(if (columns >= 5) 22.dp else 30.dp, Modifier.align(Alignment.BottomEnd).padding(4.dp), onMenu)
     }
 }
 
 @Composable
-private fun FootageRow(f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, onMenu: () -> Unit, onClick: () -> Unit) {
+private fun FootageRow(
+    f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, highlight: Float = 0f, onMenu: () -> Unit, onClick: () -> Unit
+) {
     Row(
         Modifier
             .fillMaxWidth()
+            .flashRow(highlight, MaterialTheme.colorScheme.primary)
             .clickable(onClick = onClick)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -837,6 +921,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var askExport by remember { mutableStateOf(false) }                 // the "Export N clips?" window
     var batchDone by remember { mutableStateOf(-1) }                    // clips exported so far in a batch export (-1 = not exporting)
     var batchTotal by remember { mutableStateOf(0) }
+    // ---- "you were just here": the video or clip you came back from lights up for a moment ----
+    var flashTarget by remember { mutableStateOf<FlashTarget?>(null) }  // waiting to be shown (set once the data has loaded)
+    var flashRun by remember { mutableStateOf(0) }                      // goes up for every new light-up
+    var flashKey by remember { mutableStateOf("") }                     // which cell is lit: "c_<clip listKey>" or "f_<video id>"
+    var flashLevel by remember { mutableStateOf(0f) }                   // how strongly (0 = not at all, 1 = fully)
 
     // keep the screen awake while a batch export runs
     val view = LocalView.current
@@ -981,6 +1070,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 ui.selectFootage = null
                 if (loaded.footage.any { it.id == selectFor }) selectSession(selectFor, loaded)
             }
+            // coming back from the editor or from the clip viewer: point out where you were
+            val backFromVideo = ui.flashFootage
+            val backFromClip = ui.flashClip
+            ui.flashFootage = null
+            ui.flashClip = null
+            if (backFromVideo != null && loaded.footage.any { it.id == backFromVideo }) {
+                flashTarget = FlashTarget(backFromVideo, null)
+                flashRun++
+            } else if (backFromClip != null) {
+                flashTarget = FlashTarget(null, backFromClip)
+                flashRun++
+            }
             // forget filter choices about sessions that no longer exist
             val known = loaded.footage.map { it.id }.toSet()
             if (ui.hidden.any { it !in known }) {
@@ -1085,6 +1186,50 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             },
             ui.clipKeys
         )
+    }
+
+    // the light-up itself: scroll the video or clip into view (only if it isn't already fully on screen), then a blue glow and border
+    // that comes up quickly, stays a moment and fades out (about 1.7 s in all)
+    val latestData by rememberUpdatedState(d)
+    val latestShown by rememberUpdatedState(shownClips)
+    val latestStats by rememberUpdatedState(statsById)
+    LaunchedEffect(flashRun) {
+        val target = flashTarget ?: return@LaunchedEffect
+        flashTarget = null
+        val run = flashRun
+        val loaded = latestData ?: return@LaunchedEffect
+        val key: String
+        val footageId = target.footageId
+        val back = target.clip
+        if (footageId != null) {
+            val order = sortFootage(loaded.footage, ui.footageSort, latestStats)
+            val i = order.indexOfFirst { it.id == footageId }
+            if (i < 0) return@LaunchedEffect
+            if (ui.footageGrid) revealGridItem(footageGridState, i) else revealListItem(footageListState, i)
+            key = "f_$footageId"
+        } else if (back != null) {
+            val shown = latestShown
+            // the same clip, found by its key, or else by its video and its place in the video (in case the key changed, e.g. after an export)
+            var i = shown.indexOfFirst { it.listKey == back.listKey }
+            if (i < 0) i = shown.indexOfFirst { it.footage.id == back.footage.id && Math.abs(it.cut.stopSec - back.cut.stopSec) < 0.05 }
+            if (i < 0) return@LaunchedEffect          // filtered out of the Clips tab: nothing to point at
+            if (ui.clipsGrid) revealGridItem(clipsGridState, i) else revealListItem(clipsListState, i)
+            key = "c_" + shown[i].listKey
+        } else {
+            return@LaunchedEffect
+        }
+        flashKey = key
+        try {
+            animate(0f, 1f, animationSpec = tween(150)) { v, _ -> flashLevel = v }
+            delay(650)
+            animate(1f, 0f, animationSpec = tween(900)) { v, _ -> flashLevel = v }
+        } finally {
+            // a newer light-up may already have started: only clear this one
+            if (flashRun == run) {
+                flashLevel = 0f
+                flashKey = ""
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -1255,6 +1400,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 gridItems(shown, key = { it.listKey }) { clip ->
                                     ClipCell(
                                         clip, d.openable, ui.clipsColumns, ui.selecting, clip.listKey in ui.selected, Modifier.animateItem(),
+                                        highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
                                         onLongClick = { onLong(clip) }, onPreview = { ui.openViewer(shown, clip) }
                                     ) { onTap(clip) }
                                 }
@@ -1264,6 +1410,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 listItems(shown, key = { it.listKey }) { clip ->
                                     ClipRow(
                                         clip, d.openable, ui.selecting, clip.listKey in ui.selected,
+                                        highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
                                         onLongClick = { onLong(clip) }, onPreview = { ui.openViewer(shown, clip) }
                                     ) { onTap(clip) }
                                 }
@@ -1283,6 +1430,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 gridItems(shown, key = { it.id }) { f ->
                                     FootageCell(
                                         f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns, Modifier.animateItem(),
+                                        highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
                                         onMenu = { footageMenu = f }
                                     ) { openFootage(f, d.openable[f.id] == true) }
                                 }
@@ -1290,7 +1438,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         } else {
                             LazyColumn(Modifier.fillMaxSize(), state = footageListState, contentPadding = PaddingValues(bottom = 8.dp)) {
                                 listItems(shown, key = { it.id }) { f ->
-                                    FootageRow(f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, onMenu = { footageMenu = f }) {
+                                    FootageRow(
+                                        f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden,
+                                        highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
+                                        onMenu = { footageMenu = f }
+                                    ) {
                                         openFootage(f, d.openable[f.id] == true)
                                     }
                                 }
@@ -1321,8 +1473,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         ui.save()
                     }
                 },
-                onBack = {
+                onBack = { last ->
                     ui.detail = null
+                    ui.flashClip = last     // point out the clip you were last on (it may not be the one you opened)
                     ui.refresh++            // pick up what was changed in the viewer (notes, switches, exports)
                 },
                 onOpenEditor = { c ->
@@ -2087,7 +2240,7 @@ fun ClipViewer(
     onSkipChange: (Int) -> Unit,
     showHint: Boolean,
     onHintSeen: () -> Unit,
-    onBack: () -> Unit,
+    onBack: (GalleryClip) -> Unit,             // told which clip was showing when the viewer closed
     onOpenEditor: (GalleryClip) -> Unit,
     onReconnect: (Footage) -> Unit,
     onShowSession: (Footage) -> Unit,
@@ -2239,9 +2392,10 @@ fun ClipViewer(
     }
     LaunchedEffect(activePage) { flushNotes() }
     fun leave() {
+        val last = current                      // the clip on screen now (the Gallery points it out)
         scope.launch {
             flushNotes()
-            onBack()
+            onBack(last)
         }
     }
 

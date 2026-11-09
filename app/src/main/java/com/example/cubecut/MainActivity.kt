@@ -36,6 +36,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -94,7 +95,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.DialogProperties
@@ -168,6 +171,11 @@ fun AppRoot(ui: GalleryUiState) {
             editor = null
             if (footageId != null && selectToExport) ui.selectFootage = footageId                       // "Export clips..."
             else if (footageId != null && solveSec != null) ui.openClip = Pair(footageId, solveSec)    // "show in Gallery" on a solve
+            else if (footageId != null) {
+                // Gallery button or Back: open the Footage tab and point out the video you were just in
+                ui.tab = 1
+                ui.flashFootage = footageId
+            }
             ui.refresh++
         })
     } else {
@@ -227,6 +235,48 @@ private fun DeleteButton(enabled: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         TrashIcon(Color.White, 20.dp)
+    }
+}
+
+/**
+ * The scramble button on a solve card: crossing "shuffle" arrows. On (the clip includes the scramble): blue arrows and a blue border.
+ * Off (only the solve): grey arrows, crossed out. The button itself stays grey like Edit, so it isn't confused with the blue View button.
+ */
+@Composable
+private fun ScrambleButton(on: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    val back = MaterialTheme.colorScheme.surfaceContainerHighest
+    val tint = (if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        .let { if (enabled) it else it.copy(alpha = 0.4f) }
+    Box(
+        Modifier
+            .size(34.dp)
+            .clip(shape)
+            .background(if (enabled) back else back.copy(alpha = 0.4f))
+            .then(if (on) Modifier.border(1.5.dp, tint, shape) else Modifier)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(20.dp)) {
+            val w = this.size.width
+            val h = this.size.height
+            val sw = w * 0.1f
+            fun line(x1: Float, y1: Float, x2: Float, y2: Float) =
+                drawLine(tint, Offset(w * x1, h * y1), Offset(w * x2, h * y2), strokeWidth = sw, cap = StrokeCap.Round)
+            // top left to bottom right, arrow head at the end
+            line(0.10f, 0.30f, 0.32f, 0.30f)
+            line(0.32f, 0.30f, 0.62f, 0.70f)
+            line(0.62f, 0.70f, 0.88f, 0.70f)
+            line(0.88f, 0.70f, 0.76f, 0.58f)
+            line(0.88f, 0.70f, 0.76f, 0.82f)
+            // bottom left to top right, arrow head at the end
+            line(0.10f, 0.70f, 0.32f, 0.70f)
+            line(0.32f, 0.70f, 0.62f, 0.30f)
+            line(0.62f, 0.30f, 0.88f, 0.30f)
+            line(0.88f, 0.30f, 0.76f, 0.18f)
+            line(0.88f, 0.30f, 0.76f, 0.42f)
+            if (!on) line(0.08f, 0.92f, 0.92f, 0.08f)          // crossed out: the scramble is left out
+        }
     }
 }
 
@@ -1089,32 +1139,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
-
-                                // one switch for the scramble of ALL clips: a setting for the whole video, like the buffers
-                                // (each clip can still differ: change it in the Gallery's clip viewer or while selecting clips to export)
-                                val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
-                                val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
-                                Spacer(Modifier.height(12.dp))
-                                Text("3. Scramble", style = MaterialTheme.typography.titleSmall)
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "Include the scramble in all clips" + if (mixedScramble) " (mixed)" else if (allScrambleOn) " (on)" else " (off)",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Switch(
-                                        checked = allScrambleOn,
-                                        onCheckedChange = { on ->
-                                            scrambleAll = on
-                                            for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
-                                        }
-                                    )
-                                }
-                                Text(
-                                    "On: each clip starts where the previous solve ended. Off: only the solve, with the \"before\" buffer. " +
-                                            "To change one clip, use the Gallery.",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                // (the scramble switch for all clips is no longer here: it sits above the list, next to the check filter)
                             }
                         }
                     }
@@ -1229,11 +1254,41 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
 
                 if (cuts.isNotEmpty()) {
                     Text(
-                        "One card per solve. Tap a card to jump to just before the time first appears. Edit fixes a time or a position, View shows its clip, " +
+                        "One card per solve. Tap a card to jump to just before the time first appears. The arrows button puts the scramble " +
+                                "in or out of that clip (blue = in). Edit fixes a time or a position, View shows its clip, " +
                                 "the red bin deletes a cut that isn't a solve (Undo brings it back). Cards marked check need a look: fix them, " +
                                 "or tap It's fine. To export, select clips in the Gallery.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+                // ===== one switch for the scramble of ALL clips: a setting for the whole video, like the buffers =====
+                // (flipping it sets every clip; each card's arrows button can then change one clip again)
+                if (videoUri != null) {
+                    val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
+                    val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Include the scramble in all clips" + if (mixedScramble) " (mixed)" else if (allScrambleOn) " (on)" else " (off)",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                "Off: only the solve, with the \"before\" buffer",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = allScrambleOn,
+                            enabled = !analyzing,
+                            onCheckedChange = { on ->
+                                scrambleAll = on
+                                for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
+                            }
+                        )
+                    }
+                }
+                if (cuts.isNotEmpty()) {
                     // ===== only the solves to check, and a way to clear every check at once =====
                     val toCheck = cuts.indices.count { needsCheck(it) }
                     val canClear = cuts.indices.count { needsCheck(it) && !cuts[it].reviewed }
@@ -1320,6 +1375,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                         }
                                         Spacer(Modifier.width(6.dp))
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            // this clip's scramble: in (blue) or out (grey, crossed out). Counts as an edit, so a re-scan keeps it
+                                            ScrambleButton(on = item.includeScramble, enabled = !analyzing && !isLeftover(item)) {
+                                                if (index in cuts.indices) {
+                                                    cuts[index] = cuts[index].copy(includeScramble = !cuts[index].includeScramble, edited = true)
+                                                }
+                                            }
                                             RowButton(
                                                 if (item.timeText.isEmpty()) "Add time" else "Edit",
                                                 MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurface
