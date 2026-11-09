@@ -6,7 +6,50 @@ All notable changes to CubeCut are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. All phases are built and running on the phone (Galaxy S25 Ultra); the 3.0.0 work is now in the **testing phase** (see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change.
+Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. All phases are built and running on the phone (Galaxy S25 Ultra); the 3.0.0 work is now in the **testing phase** (see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change. A code review and the fixes from testing followed (*Review fixes* below); from 3.0.0 CubeCut needs **Android 11 or newer**.
+
+### Review fixes (2026-11-09, branch `dev-v3.0.0-review-fixes`)
+
+A review of all the code (unused code, leaks, things that would cause trouble later), applied in batches together with the requests from testing. Merged back into `dev-v3.0.0`. How solves are found, how digits are read and how clips are calculated did **not** change.
+
+**Added**
+- **Hold and drag to choose clips** in the Gallery: hold a clip, then drag over others to tick them; the list scrolls by itself near the top and bottom edge, with a short vibration at the start. A tap still ticks one clip.
+- **Filter chips** under the Sort line on the Clips tab (*Video: …*, *Exported only* / *Not exported only*, *Needs a check*), each with ✕, and **Clear all** when two or more are on.
+- **The viewer's action row:** **Export** (or *Export again*), **Editor** and **Delete file**, side by side with icons. A greyed-out button says why for 5 seconds when tapped.
+- **Exported files whose solve was deleted stay in the Gallery**, tagged *Exported* and *Solve deleted*. They play from the file, the file can be deleted, and Undo (or a new cut at the same spot) makes them a normal solve again.
+- **Deleting an exported solve in the editor asks first:** *Delete solve, keep file* or *Delete solve and file* (the file goes to the phone's trash, with Android's prompt). Solves that were not exported still delete at once with Undo.
+- **Visual warnings for Delete video and Forget this session:** the video's picture and title, then short lines with a green ✓ (stays), red ✕ (goes) or blue ↺ (can be restored), and a red button. Forget adds "Can't be undone".
+- **The Edit window shows the frame the cut is on**, with its time, and updates after each move. An exported solve shows "Already exported: changes here don't change the file".
+- **The selected solve follows the playhead** while playing and when the timeline is tapped or scrubbed, and the list scrolls to its card. A solve's scramble counts as part of it even when its clip leaves the scramble out. With *Only solves to check* on, other solves are skipped.
+- **The zoomed timeline keeps the playhead on screen**: while playing, after a jump (a card, the arrows) and when the zoom changes.
+
+**Changed**
+- **+ Cut at playhead asks for the solve time** instead of reading the video (that took about 20 reads and was slow). A spot inside an existing solve is refused with *Go to solve N*; a time that would overlap the solve before is refused the same way. It, and the two switches, only show once Find solves has run on the video.
+- **Editor layout:** pinned are the video, timeline, the review bar with **arrow buttons** instead of *‹ Prev* / *Next ›*, the Undo bar, a full-width **+ Cut at playhead**, and **Scramble in all clips** and **Only solves to check** side by side. The Setup box (folded: "Timer ready · 2.5 s before · 2.5 s after", **Change**), **Find solves** (full width, *Find solves again* when there are solves), *Mark all N as checked* and the list scroll. With nothing selected, the arrows step from the playhead.
+- **Edit window:** two parts, *Solve time* and *Where the cut is*; the move buttons read **◂ 0.5s ◂ 0.1s** (earlier) and **0.1s ▸ 0.5s ▸** (later); *Jump to this frame* is now *Show it in the video*.
+- **Moving a cut keeps its export link** (the export record moves with it), so the solve stays *Exported*.
+- **Footage ⋮ menu:** *See its clips* (its chip on the Clips tab undoes it), Reconnect, Export clips…, Restore, Rename, then **Delete video** (was *Move video to trash*) and **Forget this session** as red buttons at the bottom. *Show / hide its clips* and *Open in editor* were removed (a tap on the video opens the editor).
+- **Export window:** says how many were exported before, explains that exporting again makes a second copy, and offers *Export only the N new*, *Export all N, X again* and Cancel. While choosing, the header says "N already exported".
+- **Grid cells:** the solve time moved to the lower right, above *Solve N of M*, so tags no longer cover it.
+- **About window:** the logo next to the title, the credit and "Find me on TikTok, Instagram and Facebook: DadCuber" largest, the licence bullets smaller.
+- **Android 11 or newer is now required** (`minSdk 30`, was 24). On Android 7–9 exports went to a folder only CubeCut could see, which was erased on uninstall, and deleting from CubeCut needed Android 11 anyway.
+- **No backups:** CubeCut's data is left out of Android's Google backup and phone-to-phone transfer (`allowBackup="false"`, `data_extraction_rules.xml`).
+- **Find solves in the background** is labelled *media processing* on Android 15 and newer (*data sync* before), and stops cleanly if Android's daily limit for background work runs out.
+- **Portrait only**, and dark-mode, font-size and similar changes no longer restart the editor or a running Find solves.
+- **Pictures:** made at the small size directly; the picture folder is kept under about 100 MB; a half-written picture is never used; Forget also removes a video's viewer pictures and the pictures of its exported files.
+- **The editor does less work while the video plays:** only the time and the red playhead redraw, and nothing runs while paused.
+
+**Fixed**
+- An export's record was lost if the clip viewer was closed while the export was finishing.
+- The video player view in the clip viewer kept hold of the player after leaving the screen.
+- The timer engine's native memory is freed after the last background read, not while one could still be using it.
+- Two exports running at the same time could share one buffer.
+- The editor said *Already exported* for a file that had been deleted in another app.
+- A white flash before the first screen in dark mode.
+
+**Removed**
+- The automatic reading behind + Cut at playhead (`SolveAnalyzer.locate`, `analyzeOne`, `ManualCut`, `MANUAL_BACK_MAX_SEC`), `Footage.includedCount`, `SessionStore.updateCutFlags`, the editor's unused *select to export* path (`ui.selectFootage`), and all code for Android 7–10 (the app-only export folder, "needs Android 11" checks).
+- `res/xml/backup_rules.xml` and the unused `ui.theme` folder.
 
 ### Testing phase: navigation, wording and audio (2026-11-09)
 
