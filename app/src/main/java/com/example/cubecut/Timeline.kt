@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -55,6 +56,9 @@ class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Doubl
  * markerStates: 1 = a solve (green), anything else (2) = a cut left over from before the video began, which makes no clip (grey).
  * A cut marker sits on the FIRST frame that shows the final time (the moment the timer stopped).
  * clipBars: dim green = scramble part of a clip, bright green = the solve part (solve with its buffers).
+ * position: where the playhead is, in ms. It is a function, read only while drawing the red line (and by the zoom follow below),
+ * so the playhead moving redraws just that line: the film strip, the clip bars, the markers and the rest of the editor stay as
+ * they are.
  */
 @Composable
 fun Timeline(
@@ -63,13 +67,13 @@ fun Timeline(
     selectedIndex: Int = -1,        // the cut being looked at (drawn bigger, in white); -1 = none
     clipBars: List<ClipBar> = emptyList(),
     thumbs: List<ImageBitmap>,
-    positionMs: Long,
+    position: () -> Long,
     durationMs: Long,
     zoom: Float,
     scrollState: ScrollState,
     onSeek: (Long) -> Unit
 ) {
-    val fraction = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    fun fraction(): Float = if (durationMs > 0) (position().toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val zoomed = zoom > 1.01f
 
     BoxWithConstraints(
@@ -83,12 +87,15 @@ fun Timeline(
         val contentPx = viewportPx * zoom
 
         // when zoomed in, keep the playhead on screen
-        LaunchedEffect(positionMs / 400, zoom) {
-            if (zoomed && durationMs > 0) {
-                val x = (contentPx * fraction).toInt()
-                val left = scrollState.value
-                if (x < left + viewportPx * 0.1f || x > left + viewportPx * 0.9f) {
-                    scrollState.scrollTo(max(0, x - viewportPx / 2))
+        // (checked every 0.4 s of video, without redrawing the timeline for it)
+        LaunchedEffect(zoom, contentPx, durationMs) {
+            snapshotFlow { position() / 400 }.collect {
+                if (zoomed && durationMs > 0) {
+                    val x = (contentPx * fraction()).toInt()
+                    val left = scrollState.value
+                    if (x < left + viewportPx * 0.1f || x > left + viewportPx * 0.9f) {
+                        scrollState.scrollTo(max(0, x - viewportPx / 2))
+                    }
                 }
             }
         }
@@ -179,10 +186,10 @@ fun Timeline(
                 }
                 // red playhead
                 Canvas(Modifier.fillMaxSize()) {
-                    val x = size.width * fraction
+                    val x = size.width * fraction()
                     drawLine(Color.Red, Offset(x, 0f), Offset(x, size.height), strokeWidth = 3f)
                 }
             }
         }
     }
-}
+}

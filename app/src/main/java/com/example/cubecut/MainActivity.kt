@@ -86,6 +86,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,6 +104,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -274,6 +277,43 @@ private fun ScrambleButton(on: Boolean, enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
+/** The previous / next solve buttons in the review bar: a grey square with a bold arrow pointing the way it goes. */
+@Composable
+private fun ArrowButton(left: Boolean, onClick: () -> Unit) {
+    val tint = MaterialTheme.colorScheme.onSurface
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = if (left) "Previous solve" else "Next solve" },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(22.dp)) {
+            val w = this.size.width
+            val h = this.size.height
+            val sw = w * 0.13f
+            // drawn pointing right; mirrored for the left one
+            fun x(f: Float) = if (left) w * (1f - f) else w * f
+            fun line(x1: Float, y1: Float, x2: Float, y2: Float) =
+                drawLine(tint, Offset(x(x1), h * y1), Offset(x(x2), h * y2), strokeWidth = sw, cap = StrokeCap.Round)
+            line(0.14f, 0.50f, 0.84f, 0.50f)
+            line(0.84f, 0.50f, 0.54f, 0.20f)
+            line(0.84f, 0.50f, 0.54f, 0.80f)
+        }
+    }
+}
+
+/**
+ * "1:23.4 / 5:00.0" next to Play. It reads the playhead itself (position is a function), so while the video plays only this
+ * text is redrawn, not the editor around it.
+ */
+@Composable
+private fun PositionText(position: () -> Long, durationMs: Long) {
+    Text("${formatTime(position())} / ${formatTime(durationMs)}", style = MaterialTheme.typography.bodySmall)
+}
+
 @Composable
 fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     val context = LocalContext.current
@@ -390,14 +430,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
-    }
-
-    // move the red playhead along as the video plays
-    LaunchedEffect(exoPlayer) {
-        while (true) {
-            positionMs = exoPlayer.currentPosition
-            delay(33)
-        }
     }
 
     // the system file picker (needs no storage permission). It is used instead of the photo picker because Android lets the app
@@ -553,7 +585,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
 
     // the clips that would be exported right now
-    // (remembered: the playhead moves the screen 30 times a second, but the clips only change when the cuts or buffers do)
+    // (remembered: the clips only change when the cuts or buffers do, not every time the screen is redrawn)
     val clips = remember(cuts.toList(), beforePad, afterPad, durationMs) {
         computeClips(cuts, beforePad.toDouble(), afterPad.toDouble(), durationMs / 1000.0)
     }
@@ -761,8 +793,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         val shown = cuts.indices.filter { !onlyCheck || needsCheck(it) }
         if (shown.isEmpty()) return
         val sel = selectedCut
+        // nothing selected (the playhead is between clips): go to the next / previous solve from where the playhead is
+        val at = exoPlayer.currentPosition / 1000.0
         val target = when {
-            sel !in cuts.indices -> if (dir > 0) shown.first() else shown.last()
+            sel !in cuts.indices ->
+                if (dir > 0) shown.firstOrNull { cuts[it].stopSec > at } ?: shown.last()
+                else shown.lastOrNull { cuts[it].stopSec < at } ?: shown.first()
             dir > 0 -> shown.firstOrNull { it > sel } ?: shown.last()
             else -> shown.lastOrNull { it < sel } ?: shown.first()
         }
@@ -793,6 +829,39 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             cutBlockedBy = inside
         } else {
             addCutAt = at
+        }
+    }
+
+    // ---- the selected solve follows the playhead while the video plays or you scrub the timeline ----
+    // It is the solve whose clip (its scramble part or its solve part) contains the playhead; between clips nothing is selected.
+    // The list does not scroll by itself (so the switches above it never move away); the review bar and the white ring on the
+    // timeline always show which solve it is. Tapping a card, Prev / Next and Undo choose the solve themselves and are not overruled.
+    val latestClips by rememberUpdatedState(clips)
+    fun solveUnder(ms: Long): Int {
+        val t = ms / 1000.0
+        for (c in latestClips) if (t >= c.startSec && t < c.endSec) return c.cutIndex
+        return -1
+    }
+    fun followPlayhead(ms: Long) {
+        val i = solveUnder(ms)
+        if (i == selectedCut) return
+        // a leftover cut (from before the video began) makes no clip, so the playhead is never "in" it: keep it selected
+        // until the playhead reaches a real clip, instead of dropping it straight after Prev / Next chose it
+        if (i < 0 && selectedCut in cuts.indices && latestClips.none { it.cutIndex == selectedCut }) return
+        selectedCut = i
+    }
+
+    // move the red playhead along while the video plays. Paused, nothing moves, so nothing runs (the phone isn't woken 30 times a
+    // second for nothing). Only the timeline and the time text read the position, so only they redraw, not the whole screen.
+    LaunchedEffect(exoPlayer, isPlaying) {
+        positionMs = exoPlayer.currentPosition
+        if (isPlaying) {
+            while (true) {
+                delay(33)
+                val ms = exoPlayer.currentPosition
+                positionMs = ms
+                followPlayhead(ms)
+            }
         }
     }
 
@@ -951,7 +1020,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     enabled = videoUri != null
                 ) { Text(if (isPlaying) "Pause" else "Play") }
                 Spacer(Modifier.width(8.dp))
-                Text("${formatTime(positionMs)} / ${formatTime(durationMs)}", style = MaterialTheme.typography.bodySmall)
+                PositionText({ positionMs }, durationMs)
                 Spacer(Modifier.width(8.dp))
                 Text("Zoom", style = MaterialTheme.typography.bodySmall)
                 Slider(
@@ -969,13 +1038,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 selectedIndex = selectedCut,
                 clipBars = clips.map { ClipBar(it.startSec, it.solveStartSec, it.endSec) },
                 thumbs = thumbs,
-                positionMs = positionMs,
+                position = { positionMs },
                 durationMs = durationMs,
                 zoom = zoom,
                 scrollState = timelineScroll,
                 onSeek = { ms ->
                     exoPlayer.seekTo(ms)
                     positionMs = ms
+                    followPlayhead(ms)          // scrubbing or tapping the timeline selects the solve under the playhead
                 }
             )
 
@@ -984,10 +1054,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 val sel = selectedCut
                 val selValid = sel in cuts.indices
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = { stepCut(-1) }) { Text("\u2039 Prev") }
+                    ArrowButton(left = true) { stepCut(-1) }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             if (selValid) "Solve ${sel + 1} of ${cuts.size}" else "${cuts.size} solves",
@@ -999,12 +1071,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     (if (cuts[sel].timeText.isNotEmpty()) "${cuts[sel].timeText} s" else "time unknown") +
                                             (if (cuts[sel].includeScramble) "  |  with scramble" else "  |  solve only") +
                                             (if (needsCheck(sel)) "  |  check this one" else "")
-                                } else "tap Next or a row below"
+                                } else "tap an arrow or a solve below"
                             ),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    TextButton(onClick = { stepCut(1) }) { Text("Next \u203A") }
+                    ArrowButton(left = false) { stepCut(1) }
                 }
             }
             val undone = undoCut
@@ -1027,28 +1099,55 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             }
             Spacer(Modifier.height(4.dp))
 
-            // ################ the two main buttons stay pinned ################
+            // ################ always at hand: + Cut at playhead and the two switches ################
 
-            // ===== Find solves + add a cut =====
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = { showFindConfirm = true },
-                    enabled = videoUri != null && timerEngine != null && durationMs > 0 && !analyzing,
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (analyzing) "Working... ${if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0}%" else "Find solves") }
-                OutlinedButton(
-                    onClick = { startManualCut() },
-                    enabled = videoUri != null && durationMs > 0 && !analyzing,
-                    modifier = Modifier.weight(1f)
-                ) { Text("+ Cut at playhead") }
+            OutlinedButton(
+                onClick = { startManualCut() },
+                enabled = videoUri != null && durationMs > 0 && !analyzing,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("+ Cut at playhead") }
+
+            // the scramble for every clip (a card's own scramble button can then change one clip again), and the check filter
+            if (videoUri != null) {
+                val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
+                val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
+                val toCheck = cuts.indices.count { needsCheck(it) }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Scramble in all clips", style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        Text(
+                            if (mixedScramble) "mixed" else if (allScrambleOn) "on" else "off",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = allScrambleOn,
+                        enabled = !analyzing,
+                        onCheckedChange = { on ->
+                            scrambleAll = on
+                            for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
+                        }
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(highlightCheck("Only solves to check"), style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        Text(
+                            if (toCheck == 0) "none flagged" else "$toCheck flagged",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = onlyCheck,
+                        onCheckedChange = { onlyCheck = it; rowBoxes.clear() },
+                        enabled = toCheck > 0 || onlyCheck
+                    )
+                }
             }
 
-            // ################ EVERYTHING BELOW SCROLLS TOGETHER: setup box, status, scramble switch, the list ################
-            // (only the video, timeline, Prev/Next bar and the two buttons above stay put, so the list gets the rest of the screen)
+            // ################ EVERYTHING BELOW SCROLLS TOGETHER: setup box, Find solves, status, the list ################
+            // (only the video, timeline, Prev/Next bar, + Cut at playhead and the two switches above stay put)
             Column(
                 Modifier
                     .weight(1f)
@@ -1078,14 +1177,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             Text(
                                 if (setupExpanded) "Setup: timer and clip buffers"
                                 else (if (engineNow != null) "Timer ready" else "Timer not set up") +
-                                        " | ${"%.1f".format(beforePad)} s before | ${"%.1f".format(afterPad)} s after",
+                                        " \u00B7 ${"%.1f".format(beforePad)} s before \u00B7 ${"%.1f".format(afterPad)} s after",
                                 style = if (setupExpanded) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text(if (setupExpanded) "Hide \u25B2" else "Show \u25BC", style = MaterialTheme.typography.labelLarge)
+                            Text(if (setupExpanded) "Hide \u25B2" else "Change \u25BC", style = MaterialTheme.typography.labelLarge)
                         }
 
                         if (setupExpanded) {
@@ -1176,10 +1275,23 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     )
                                 }
                                 Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
-                                // (the scramble switch for all clips is no longer here: it sits above the list, next to the check filter)
+                                // (the scramble switch for all clips is not here: it sits under + Cut at playhead, next to the check filter)
                             }
                         }
                     }
+                }
+
+                // ===== Find solves: right under the box it depends on (a re-run doesn't need the box opened) =====
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = { showFindConfirm = true },
+                    enabled = videoUri != null && timerEngine != null && durationMs > 0 && !analyzing,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (analyzing) "Working... ${if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0}%"
+                        else if (cuts.isEmpty()) "Find solves" else "Find solves again"
+                    )
                 }
 
                 if (analyzing) {
@@ -1280,6 +1392,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 }
 
                 if (cuts.isNotEmpty()) {
+                    // every check marked as looked at in one go (on its own line, apart from the filter switch)
+                    val canClear = cuts.indices.count { needsCheck(it) && !cuts[it].reviewed }
+                    if (canClear > 0) {
+                        OutlinedButton(onClick = { showClearChecks = true }) { Text("Mark all $canClear as checked") }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "Tap a solve to jump to it.",
@@ -1298,54 +1415,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 "To export, choose clips in the Gallery."
                             )
                         )
-                    }
-                }
-                // ===== one switch for the scramble of ALL clips: a setting for the whole video, like the buffers =====
-                // (flipping it sets every clip; each card's arrows button can then change one clip again)
-                if (videoUri != null) {
-                    val allScrambleOn = if (cuts.isEmpty()) scrambleAll else cuts.all { it.includeScramble }
-                    val mixedScramble = cuts.isNotEmpty() && cuts.any { it.includeScramble } && cuts.any { !it.includeScramble }
-                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "Include the scramble in all clips" + if (mixedScramble) " (mixed)" else if (allScrambleOn) " (on)" else " (off)",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "Off: only the solve, with the \"before\" buffer",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = allScrambleOn,
-                            enabled = !analyzing,
-                            onCheckedChange = { on ->
-                                scrambleAll = on
-                                for (i in cuts.indices) cuts[i] = cuts[i].copy(includeScramble = on)
-                            }
-                        )
-                    }
-                }
-                if (cuts.isNotEmpty()) {
-                    // ===== only the solves to check, and a way to clear every check at once =====
-                    val toCheck = cuts.indices.count { needsCheck(it) }
-                    val canClear = cuts.indices.count { needsCheck(it) && !cuts[it].reviewed }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            highlightCheck(if (toCheck == 0) "Nothing to check" else "Only show solves to check ($toCheck)"),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Switch(
-                            checked = onlyCheck,
-                            onCheckedChange = { onlyCheck = it; rowBoxes.clear() },
-                            enabled = toCheck > 0 || onlyCheck
-                        )
-                    }
-                    // on its own line, so it isn't mistaken for part of the filter switch
-                    if (canClear > 0) {
-                        OutlinedButton(onClick = { showClearChecks = true }) { Text("Mark all $canClear as checked") }
                     }
                     // one row per cut: tap the row to jump there, Edit to fix or delete it, Gallery to see its clip
                     cuts.forEachIndexed { index, item ->
@@ -1792,4 +1861,4 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
     }
-}
+}
