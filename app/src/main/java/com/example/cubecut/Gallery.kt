@@ -423,7 +423,7 @@ private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: I
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 // the clip itself still works (it plays from its exported file), so this tag is not red
-                if (clip.exportOnly) Badge(if (clip.footage.trashedMs > 0) "Raw in trash" else "Raw deleted", YELLOW_GREEN, Color.Black)
+                if (clip.exportOnly) Badge("Raw unavailable", YELLOW_GREEN, Color.Black)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
                 if (!clip.cut.included) Badge("Left out", GREY)
@@ -482,7 +482,7 @@ private fun ClipRow(clip: GalleryClip, openable: Map<Long, Boolean>, onClick: ()
             Text(
                 formatDate(dateOf(clip.footage)) +
                         (if (clip.index >= 0) "  |  Solve ${clip.index + 1} of ${clip.total}" else "") +
-                        (if (clip.exportOnly) (if (clip.footage.trashedMs > 0) "  |  raw footage in trash" else "  |  raw footage deleted") else if (clip.exported != null) "  |  exported" else "  |  not exported") +
+                        (if (clip.exportOnly) "  |  raw footage unavailable" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
                         (if (!clip.cut.included) "  |  left out" else "") +
                         (if (clip.needsCheck) "  |  check" else "") +
                         (if (clip.sharedList.isNotEmpty()) "  |  " + clip.sharedList.joinToString(", ") else ""),
@@ -1715,7 +1715,13 @@ fun ClipViewer(
 
     val startIndex = remember { max(0, list.indexOfFirst { it.listKey == startKey }) }
     val pagerState = rememberPagerState(initialPage = startIndex) { list.size }
-    val current = list[pagerState.currentPage.coerceIn(0, list.size - 1)]
+    // The clip that plays (and whose details show) only changes once a swipe has come to rest. While a finger is still moving the pages
+    // around, the playing clip stays where it is, so wobbling around the halfway point doesn't restart the player again and again.
+    var activePage by remember { mutableStateOf(startIndex) }
+    LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
+        if (!pagerState.isScrollInProgress) activePage = pagerState.currentPage
+    }
+    val current = list[activePage.coerceIn(0, list.size - 1)]
     val footage = current.footage
 
     val player = remember { ExoPlayer.Builder(context).build() }
@@ -1759,9 +1765,9 @@ fun ClipViewer(
         }
     }
     // make the still pictures of the neighbouring clips ready before they are swiped to
-    LaunchedEffect(pagerState.currentPage) {
+    LaunchedEffect(activePage) {
         for (offset in listOf(-1, 1)) {
-            val neighbour = list.getOrNull(pagerState.currentPage + offset) ?: continue
+            val neighbour = list.getOrNull(activePage + offset) ?: continue
             ThumbCache.get(
                 context, clipPictureKey(neighbour), clipPictureUri(neighbour, openable), clipPictureMs(neighbour), VIEWER_PICTURE_HEIGHT
             )
@@ -1833,7 +1839,7 @@ fun ClipViewer(
         delay(500)
         flushNotes()
     }
-    LaunchedEffect(pagerState.currentPage) { flushNotes() }
+    LaunchedEffect(activePage) { flushNotes() }
     fun leave() {
         scope.launch {
             flushNotes()
@@ -1934,7 +1940,7 @@ fun ClipViewer(
                         .pointerInput(Unit) { detectTapGestures(onTap = { controlsVisible = !controlsVisible }) },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (page == pagerState.currentPage && playable) {
+                    if (page == activePage && playable) {
                         Box(Modifier.fillMaxSize()) {
                             AndroidView(
                                 factory = { ctx ->
@@ -1960,7 +1966,7 @@ fun ClipViewer(
                             clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize(),
                             ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
                         )
-                        if (page == pagerState.currentPage && !playable) {
+                        if (page == activePage && !playable) {
                             Text(
                                 "The video can't be opened right now.",
                                 color = Color.White, style = MaterialTheme.typography.bodyMedium,
@@ -1987,7 +1993,7 @@ fun ClipViewer(
                     Column(Modifier.weight(1f)) {
                         Text(current.title, color = Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${pagerState.currentPage + 1} / ${list.size}",
+                            "${activePage + 1} / ${list.size}",
                             color = Color(0xFFCCCCCC), style = MaterialTheme.typography.labelSmall
                         )
                     }
