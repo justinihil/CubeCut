@@ -21,7 +21,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.os.Build
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -176,13 +175,9 @@ object ThumbCache {
         return try {
             retriever.setDataSource(context, uri)
             val atUs = max(0L, timeMs) * 1000L
-            // Android 8.1 and newer: the phone shrinks the frame itself, so a full 4K picture (about 33 MB) is never handed to the
-            // app just to be shrunk. (The box is wide enough for any shape of video, so the height decides the size.)
-            val frame = if (Build.VERSION.SDK_INT >= 27) {
-                retriever.getScaledFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST, targetHeight * 4, targetHeight)
-            } else {
-                retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST)
-            }
+            // the phone shrinks the frame itself, so a full 4K picture (about 33 MB) is never handed to the app just to be shrunk
+            // (the box is wide enough for any shape of video, so the height decides the size)
+            val frame = retriever.getScaledFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST, targetHeight * 4, targetHeight)
             if (frame == null) {
                 null
             } else if (frame.height <= targetHeight) {

@@ -873,7 +873,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
     }
     fun deleteSolveAndFile(c: CutItem, e: ExportedClip) {
-        if (Build.VERSION.SDK_INT < 30) return
         val media = SessionStore.mediaStoreUriOf(e.uri)
         if (media == null) {
             status = "Can't delete \"${e.fileName}\" from here. Delete it in your Files app instead."
@@ -1946,18 +1945,16 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 8.dp)
                         )
-                        if (Build.VERSION.SDK_INT >= 30) {
-                            DangerButton("Delete solve and file") {
-                                deleteAsk = null
-                                deleteSolveAndFile(askCut, askExport)
-                            }
-                            Text(
-                                "The file goes to the phone's trash. Android asks you to confirm.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
-                            )
+                        DangerButton("Delete solve and file") {
+                            deleteAsk = null
+                            deleteSolveAndFile(askCut, askExport)
                         }
+                        Text(
+                            "The file goes to the phone's trash. Android asks you to confirm.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                        )
                     }
                 },
                 confirmButton = { TextButton(onClick = { deleteAsk = null }) { Text("Cancel") } }

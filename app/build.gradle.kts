@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.cubecut"
-        minSdk = 24
+        minSdk = 30
         targetSdk = 37
         versionCode = 3
         versionName = "3.0.0 alpha"

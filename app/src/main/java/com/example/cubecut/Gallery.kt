@@ -21,7 +21,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
-import android.os.Build
 import android.provider.MediaStore
 import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
@@ -1263,10 +1262,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
     fun startTrash(p: PendingTrash) {
-        if (Build.VERSION.SDK_INT < 30) {
-            message = "Deleting from CubeCut needs Android 11 or newer."
-            return
-        }
         val media = SessionStore.mediaStoreUriOf(p.uriString)
         if (media == null) {
             message = "Can't delete \"${p.name}\" from here. It was picked from a folder view, and Android only allows this for videos " +
@@ -1998,7 +1993,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(10.dp))
-                        if (menuFootage.trashedMs == 0L && canOpenIt && Build.VERSION.SDK_INT >= 30) {
+                        if (menuFootage.trashedMs == 0L && canOpenIt) {
                             DangerButton("Delete video") { footageMenu = null; confirmTrashFootage = menuFootage }
                             Spacer(Modifier.height(8.dp))
                         }
@@ -3067,13 +3062,13 @@ fun ClipViewer(
 
                     // ===== what you can do with this clip: export it, open it in the editor, delete its exported file =====
                     // (all three always show, greyed out when they can't be used, so the row never changes shape)
-                    val canDeleteFile = exportedFile != null && exportedFile.trashedMs == 0L && Build.VERSION.SDK_INT >= 30
+                    val canDeleteFile = exportedFile != null && exportedFile.trashedMs == 0L
                     // what a tap on a greyed-out button says (short, and says what to do instead)
                     val noVideoHint = if (current.solveDeleted) "This solve was deleted in the editor. Only its exported file is left."
                     else if (!sourceOk) "The original video is missing. Tap Reconnect video below to use it again."
                     else "This clip no longer matches a solve. Open the video in the editor from the Footage tab."
                     val noFileHint = if (exportedFile == null) "Not exported yet, so there's no file to delete.\nWrong solve? Tap Editor to fix or delete it."
-                    else "Deleting files needs Android 11 or newer."
+                    else "This file is already in the phone's trash. Restore it from Recently deleted."
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SheetAction(

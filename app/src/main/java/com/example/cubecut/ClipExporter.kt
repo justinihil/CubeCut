@@ -23,11 +23,8 @@ import android.media.MediaExtractor
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
-import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
 import kotlin.math.max
@@ -184,33 +181,30 @@ object ClipExporter {
             }
         }
         onProgress(clips.size, clips.size)
-        val where = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "Movies/$FOLDER" else "the app's Movies/$FOLDER folder"
+        val where = "Movies/$FOLDER"
         val message = if (failed.isEmpty()) "Exported $done clips to $where" else "Exported $done of ${clips.size} clips to $where. Problems: " + failed.joinToString("; ")
         return ExportResult(done, failed, message, files)
     }
 
-    private class Output(val pfd: ParcelFileDescriptor?, val uri: Uri?, val path: String?)
+    /** The new file in the phone's gallery (Movies/CubeCut): opened for writing, and its address. */
+    private class Output(val pfd: ParcelFileDescriptor, val uri: Uri)
 
     /** What one finished export reports back: where the new file is and where its first picture comes from in the source video. */
     private class Made(var uri: String? = null, var startUs: Long = -1L)
 
+    // (CubeCut needs Android 11 or newer, so the file always goes to the shared Movies/CubeCut folder, never an app-only one)
     private fun openOutput(context: Context, name: String): Output {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, name)
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/$FOLDER")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-            val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("couldn't create the file in the gallery")
-            val pfd = context.contentResolver.openFileDescriptor(uri, "rw")
-                ?: throw IOException("couldn't open the new file")
-            return Output(pfd, uri, null)
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/$FOLDER")
+            put(MediaStore.Video.Media.IS_PENDING, 1)
         }
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), FOLDER)
-        dir.mkdirs()
-        return Output(null, null, File(dir, name).absolutePath)
+        val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("couldn't create the file in the gallery")
+        val pfd = context.contentResolver.openFileDescriptor(uri, "rw")
+            ?: throw IOException("couldn't open the new file")
+        return Output(pfd, uri)
     }
 
     /**
@@ -239,8 +233,7 @@ object ClipExporter {
 
             val out = openOutput(context, name)
             output = out
-            val m = if (out.pfd != null) MediaMuxer(out.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            else MediaMuxer(out.path!!, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val m = MediaMuxer(out.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer = m
             m.setOrientationHint(rotation)
 
@@ -316,7 +309,7 @@ object ClipExporter {
             m.stop()
             started = false
             success = true
-            made.uri = out.uri?.toString() ?: out.path?.let { Uri.fromFile(File(it)).toString() }
+            made.uri = out.uri.toString()
             made.startUs = if (baseUs >= 0) baseUs else startUs
             return null
         } catch (e: Exception) {
@@ -346,4 +339,4 @@ object ClipExporter {
             }
         }
     }
-}
+}
