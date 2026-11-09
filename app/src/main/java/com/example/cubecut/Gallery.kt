@@ -2268,6 +2268,16 @@ fun ClipViewer(
     val player = remember { ExoPlayer.Builder(context).build() }
     DisposableEffect(Unit) { onDispose { player.release() } }
 
+    // leaving the app (home, another app, screen off) stops the sound: pause as soon as CubeCut is no longer in front
+    DisposableEffect(player) {
+        val lifecycle = context.findActivity()?.lifecycle
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) player.pause()
+        }
+        lifecycle?.addObserver(observer)
+        onDispose { lifecycle?.removeObserver(observer) }
+    }
+
     // changes made here are saved at once and also kept here, because the clip objects themselves never change
     val scrambleOv = remember { mutableStateMapOf<String, Boolean>() }
     val exportedNow = remember { mutableStateMapOf<String, ExportedClip>() }

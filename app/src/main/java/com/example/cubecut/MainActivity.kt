@@ -355,6 +355,18 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
+    // leaving the app (home, another app, screen off) stops the sound: pause as soon as CubeCut is no longer in front
+    DisposableEffect(exoPlayer) {
+        var host: Context? = context
+        while (host is android.content.ContextWrapper && host !is ComponentActivity) host = host.baseContext
+        val lifecycle = (host as? ComponentActivity)?.lifecycle
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) exoPlayer.pause()
+        }
+        lifecycle?.addObserver(observer)
+        onDispose { lifecycle?.removeObserver(observer) }
+    }
+
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
