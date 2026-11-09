@@ -76,6 +76,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -84,6 +85,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -100,6 +102,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -347,6 +350,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var analyzing by remember { mutableStateOf(false) }
     var analysisStatus by remember { mutableStateOf("") }
     var editIndex by remember { mutableStateOf(-1) }             // which cut is open in the edit window (-1 = none)
+    // cuts moved since the last save: where each was saved -> where it is now (the save moves their export records along)
+    val pendingMoves = remember { HashMap<Double, Double>() }
+    // where this video's exported clips are (to say "Already exported" in the Edit window); moves follow them
+    var exportedAt by remember { mutableStateOf<List<Double>>(emptyList()) }
     var selectedCut by remember { mutableStateOf(-1) }           // the cut you are looking at right now (-1 = none)
 
     // ---- video zoom (pinch the video) ----
@@ -445,6 +452,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     LaunchedEffect(videoUri) {
         val uri = videoUri ?: return@LaunchedEffect
         footageId = null        // first of all: stop saving into the previous video's record while the lists below are cleared
+        pendingMoves.clear()
+        exportedAt = emptyList()
         // the timer setup belongs to one video: a new video needs a new setup
         timerEngine?.release()
         timerEngine = null
@@ -575,13 +584,39 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         val before = beforePad
         val after = afterPad
         val scramble = scrambleAll
-        withContext(Dispatchers.IO) {
+        val moves = HashMap(pendingMoves)
+        pendingMoves.clear()
+        val saved = withContext(Dispatchers.IO) {
             try {
-                SessionStore.saveSession(context, id, snapshot, before, after, scramble)
+                SessionStore.saveSession(context, id, snapshot, before, after, scramble, moves)
+                true
             } catch (e: Exception) {
-                // saving is a bonus: if it fails the editor keeps working
+                false          // saving is a bonus: if it fails the editor keeps working
             }
         }
+        if (!saved) {
+            // not saved: keep the moves for the next save (joined with any move of the same cut made in the meantime)
+            for ((from, to) in moves) {
+                val later = pendingMoves.keys.firstOrNull { Math.abs(it - to) < 0.0005 }
+                if (later != null) pendingMoves[from] = pendingMoves.remove(later)!! else pendingMoves[from] = to
+            }
+        }
+    }
+
+    // where this video's exported clips are (read once when the video's record is open)
+    LaunchedEffect(footageId) {
+        val id = footageId ?: return@LaunchedEffect
+        exportedAt = withContext(Dispatchers.IO) {
+            try {
+                SessionStore.loadExports(context, id).filter { it.trashedMs == 0L }.map { it.stopSec }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+    }
+    fun isExported(i: Int): Boolean {
+        val c = cuts.getOrNull(i) ?: return false
+        return exportedAt.any { Math.abs(it - c.stopSec) < 0.05 }
     }
 
     // the clips that would be exported right now
@@ -933,9 +968,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 val before = beforePad
                 val after = afterPad
                 val scramble = scrambleAll
+                val moves = HashMap(pendingMoves)
+                pendingMoves.clear()
                 withContext(Dispatchers.IO) {
                     try {
-                        SessionStore.saveSession(context, id, snapshot, before, after, scramble)
+                        SessionStore.saveSession(context, id, snapshot, before, after, scramble, moves)
                     } catch (e: Exception) {
                     }
                 }
@@ -1789,43 +1826,109 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         if (editIndex in cuts.indices) {
             val item = cuts[editIndex]
             var text by remember(editIndex) { mutableStateOf(item.timeText) }
-            // moves the cut and shows the frame it now points at
+            // moves the cut (not the solve time) and shows the frame it now points at
             fun nudge(delta: Double) {
-                cuts[editIndex] = cuts[editIndex].copy(stopSec = (cuts[editIndex].stopSec + delta).coerceAtLeast(0.0), edited = true)
-                seekToSec(cuts[editIndex].stopSec)
+                val from = cuts[editIndex].stopSec
+                val to = (from + delta).coerceAtLeast(0.0)
+                cuts[editIndex] = cuts[editIndex].copy(stopSec = to, edited = true)
+                // remember the move for the save (a second move of the same cut continues the first one)
+                val earlier = pendingMoves.entries.firstOrNull { Math.abs(it.value - from) < 0.0005 }
+                if (earlier != null) earlier.setValue(to) else pendingMoves[from] = to
+                // the "Already exported" note follows the cut too
+                exportedAt = exportedAt.map { if (Math.abs(it - from) < 0.05) to else it }
+                seekToSec(to)
+            }
+            // the frame the cut is on, shown in this window (made again after each move, a moment after the last tap)
+            val cutMs = Math.round(item.stopSec * 1000.0)
+            val cutFrame by produceState<ImageBitmap?>(initialValue = null, cutMs, videoUri) {
+                val uri = videoUri ?: return@produceState
+                delay(150)
+                value = withContext(Dispatchers.IO) {
+                    try { ThumbCache.frame(context, uri, cutMs, 540)?.asImageBitmap() } catch (e: Exception) { null }
+                }
             }
             AlertDialog(
                 onDismissRequest = { editIndex = -1 },
                 title = { Text("Edit solve ${editIndex + 1}") },
                 text = {
-                    Column {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        if (isExported(editIndex)) {
+                            InfoNote(
+                                kind = NoteKind.CHECK,
+                                title = "Already exported",
+                                text = "Changes here don't change the file. Export it again to update it."
+                            )
+                            Spacer(Modifier.height(10.dp))
+                        }
+
+                        // ---- 1. the solve time ----
+                        Text("Solve time", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
                         OutlinedTextField(
                             value = text,
                             onValueChange = { text = it.filter { c -> c.isDigit() || c == '.' || c == ':' } },
-                            label = { Text("Time, e.g. 12.412") },
-                            supportingText = { Text("Leave empty if unknown") },
+                            label = { Text("Seconds, e.g. 12.412") },
+                            supportingText = { Text("What the timer showed. Leave empty if unknown.") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth()
                         )
+
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
                         Spacer(Modifier.height(10.dp))
+
+                        // ---- 2. where the cut is in the video (the buttons move this, not the time above) ----
+                        Text("Where the cut is", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Text(
-                            "Cut at ${"%.2f".format(item.stopSec)} s  (${formatTime((item.stopSec * 1000).toLong())})",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            "The first frame that shows the time",
+                            "On the first frame where the timer shows the final time. If it's off, move it:",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        val tight = PaddingValues(horizontal = 8.dp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            OutlinedButton(onClick = { nudge(-0.5) }, contentPadding = tight) { Text("-0.5") }
-                            OutlinedButton(onClick = { nudge(-0.1) }, contentPadding = tight) { Text("-0.1") }
-                            OutlinedButton(onClick = { nudge(0.1) }, contentPadding = tight) { Text("+0.1") }
-                            OutlinedButton(onClick = { nudge(0.5) }, contentPadding = tight) { Text("+0.5") }
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(150.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.Black),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val f = cutFrame
+                            if (f != null) {
+                                Image(bitmap = f, contentDescription = "The frame the cut is on", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                            } else {
+                                Text("Loading the frame...", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text(
+                                formatTime(cutMs),
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .background(Color(0x99000000))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
                         }
-                        OutlinedButton(onClick = { seekToSec(cuts[editIndex].stopSec) }) { Text("Jump to this frame") }
+                        Spacer(Modifier.height(6.dp))
+                        val tight = PaddingValues(horizontal = 6.dp)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    OutlinedButton(onClick = { nudge(-0.5) }, contentPadding = tight) { Text("\u25C2 0.5s") }
+                                    OutlinedButton(onClick = { nudge(-0.1) }, contentPadding = tight) { Text("\u25C2 0.1s") }
+                                }
+                                Text("earlier", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    OutlinedButton(onClick = { nudge(0.1) }, contentPadding = tight) { Text("0.1s \u25B8") }
+                                    OutlinedButton(onClick = { nudge(0.5) }, contentPadding = tight) { Text("0.5s \u25B8") }
+                                }
+                                Text("later", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        OutlinedButton(onClick = { seekToSec(cuts[editIndex].stopSec) }) { Text("Show it in the video") }
                         if (item.note.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
                             Text("Note: ${item.note}", style = MaterialTheme.typography.bodySmall)

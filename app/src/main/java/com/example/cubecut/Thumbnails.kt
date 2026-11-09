@@ -168,6 +168,9 @@ object ThumbCache {
         }
     }
 
+    /** One frame of the video, [height] pixels high, made fresh and not kept anywhere (the editor's Edit window uses it). */
+    fun frame(context: Context, uri: Uri, timeMs: Long, height: Int): Bitmap? = grab(context, uri, timeMs, height)
+
     private fun grab(context: Context, uri: Uri, timeMs: Long, targetHeight: Int): Bitmap? {
         val retriever = MediaMetadataRetriever()
         return try {

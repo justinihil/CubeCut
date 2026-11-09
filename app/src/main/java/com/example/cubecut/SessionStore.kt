@@ -356,7 +356,17 @@ object SessionStore {
     // ---------------------------------------------------------------- writing
 
     /** Saves the whole current state of one session (cuts and settings) in one go, all or nothing. */
-    fun saveSession(context: Context, footageId: Long, cuts: List<CutItem>, beforePad: Float, afterPad: Float, scrambleAll: Boolean) {
+    /**
+     * Saves the editor's cuts and settings for one video.
+     * [moves]: cuts you moved with the -0.5 / +0.5 buttons since the last save, as (where it was saved -> where it is now). An export
+     * is linked to its solve by where the cut is, so its record moves along, in the same step as the cuts (both are saved or neither).
+     * A record is not moved when the new spot is within 0.05 s of another cut or of another solve's export: two solves would then
+     * share one export. It then stays where it was, as before moves were followed.
+     */
+    fun saveSession(
+        context: Context, footageId: Long, cuts: List<CutItem>, beforePad: Float, afterPad: Float, scrambleAll: Boolean,
+        moves: Map<Double, Double> = emptyMap()
+    ) {
         val d = db(context)
         d.beginTransaction()
         try {
@@ -378,6 +388,19 @@ object SessionStore {
                 v.put("user_edited", if (cut.edited) 1 else 0)
                 v.put("reviewed", if (cut.reviewed) 1 else 0)
                 d.insert("cuts", null, v)
+            }
+            val id = footageId.toString()
+            for ((from, to) in moves) {
+                if (Math.abs(from - to) < 0.0005) continue                                  // moved back to where it was
+                if (cuts.count { Math.abs(it.stopSec - to) < 0.05 } > 1) continue          // another cut is right there
+                val taken = d.rawQuery(
+                    "SELECT COUNT(*) FROM exports WHERE footage_id = ? AND ABS(stop_sec - ?) < 0.05 AND ABS(stop_sec - ?) >= 0.05",
+                    arrayOf(id, to.toString(), from.toString())
+                ).use { c -> c.moveToFirst() && c.getInt(0) > 0 }
+                if (taken) continue                                                          // another solve's export is there
+                val v = ContentValues()
+                v.put("stop_sec", to)
+                d.update("exports", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.05", arrayOf(id, from.toString()))
             }
             d.setTransactionSuccessful()
         } finally {
@@ -689,4 +712,4 @@ fun togglePlatform(note: String, platform: String): String {
 class TrashedExport(val clip: ExportedClip, val footageTitle: String)
 
 /** What CubeCut moved to the phone's trash and can restore. */
-class TrashData(val videos: List<Footage>, val clips: List<TrashedExport>)
+class TrashData(val videos: List<Footage>, val clips: List<TrashedExport>)
