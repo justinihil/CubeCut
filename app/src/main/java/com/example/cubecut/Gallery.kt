@@ -655,7 +655,8 @@ private fun Modifier.flashRow(level: Float, blue: Color): Modifier =
         .border(2.dp, blue.copy(alpha = level), RoundedCornerShape(8.dp))
 
 /**
- * One solve as a picture, with its time at the upper right. [columns] tells how crowded the grid is, so small cells show less text.
+ * One solve as a picture, with its time at the lower right (just above "Solve N of M", clear of the tags at the upper left).
+ * [columns] tells how crowded the grid is, so small cells show less text.
  * While clips are being chosen ([selecting]) the cell shows its selection mark and a button to watch it full screen ([onPreview]).
  * A long-press is not handled here but by the list around it (dragToSelect), so a drag can go on over the next clips.
  */
@@ -675,7 +676,6 @@ private fun ClipCell(
     ) {
         Thumb(clipPictureKey(clip), clipPictureUri(clip, openable), clipPictureMs(clip), Modifier.fillMaxSize())
         if (!clip.cut.included || (selecting && !canPick)) Box(Modifier.fillMaxSize().background(Color(0x88000000)))
-        Badge(timeBadgeText(clip), Color(0xCC000000), modifier = Modifier.align(Alignment.TopEnd).padding(if (columns >= 5) 3.dp else 6.dp))
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 if (selecting && canPick) SelectMark(selected, 24.dp)
@@ -695,31 +695,43 @@ private fun ClipCell(
             Box(Modifier.align(Alignment.TopStart).padding(3.dp).size(10.dp).background(GREEN, RoundedCornerShape(5.dp)))
         }
         if (columns <= 4) {
-            Column(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .background(Color(0x99000000))
-                    .padding(start = 6.dp, top = 3.dp, bottom = 3.dp, end = if (selecting) 34.dp else 6.dp)
-            ) {
-                Text(
-                    if (clip.index >= 0) "Solve ${clip.index + 1} of ${clip.total}" else "Solve",
-                    style = MaterialTheme.typography.labelMedium, color = Color.White, maxLines = 1
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
+                // the solve time, at the right just above the "Solve N of M" band
+                Badge(
+                    timeBadgeText(clip), Color(0xCC000000),
+                    modifier = Modifier.align(Alignment.End).padding(end = 6.dp, bottom = if (selecting) 8.dp else 4.dp)
                 )
-                if (columns <= 3) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Color(0x99000000))
+                        .padding(start = 6.dp, top = 3.dp, bottom = 3.dp, end = if (selecting) 34.dp else 6.dp)
+                ) {
                     Text(
-                        clip.footage.title, style = MaterialTheme.typography.labelSmall, color = Color(0xFFDDDDDD),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                        if (clip.index >= 0) "Solve ${clip.index + 1} of ${clip.total}" else "Solve",
+                        style = MaterialTheme.typography.labelMedium, color = Color.White, maxLines = 1
                     )
-                    val shared = clip.sharedList
-                    if (shared.isNotEmpty()) {
+                    if (columns <= 3) {
                         Text(
-                            shared.joinToString(", "), style = MaterialTheme.typography.labelSmall, color = Color(0xFF90CAF9),
+                            clip.footage.title, style = MaterialTheme.typography.labelSmall, color = Color(0xFFDDDDDD),
                             maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
+                        val shared = clip.sharedList
+                        if (shared.isNotEmpty()) {
+                            Text(
+                                shared.joinToString(", "), style = MaterialTheme.typography.labelSmall, color = Color(0xFF90CAF9),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
+        } else {
+            // very small cells have no band: the time sits in the lower right corner (above the preview button while choosing)
+            Badge(
+                timeBadgeText(clip), Color(0xCC000000),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 3.dp, bottom = if (selecting) 24.dp else 3.dp)
+            )
         }
         if (selecting) {
             PreviewButton(if (columns >= 5) 14.dp else 18.dp, Modifier.align(Alignment.BottomEnd).padding(4.dp), onPreview)
