@@ -423,7 +423,7 @@ private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: I
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 // the clip itself still works (it plays from its exported file), so this tag is not red
-                if (clip.exportOnly) Badge("Raw unavailable", YELLOW_GREEN, Color.Black)
+                if (clip.exportOnly) Badge("Export only", YELLOW_GREEN, Color.Black)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
                 if (!clip.cut.included) Badge("Left out", GREY)
@@ -482,7 +482,7 @@ private fun ClipRow(clip: GalleryClip, openable: Map<Long, Boolean>, onClick: ()
             Text(
                 formatDate(dateOf(clip.footage)) +
                         (if (clip.index >= 0) "  |  Solve ${clip.index + 1} of ${clip.total}" else "") +
-                        (if (clip.exportOnly) "  |  raw footage unavailable" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
+                        (if (clip.exportOnly) "  |  export only (raw footage gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
                         (if (!clip.cut.included) "  |  left out" else "") +
                         (if (clip.needsCheck) "  |  check" else "") +
                         (if (clip.sharedList.isNotEmpty()) "  |  " + clip.sharedList.joinToString(", ") else ""),
@@ -1759,7 +1759,8 @@ fun ClipViewer(
     val stillAlpha = if (renderedKey == current.listKey) stillFade else 1f
     LaunchedEffect(renderedKey, current.listKey) {
         if (renderedKey == current.listKey) {
-            animate(stillFade, 0f, animationSpec = tween(250)) { v, _ -> stillFade = v }
+            delay(150)                       // let the player's first picture really reach the screen before the still starts to fade
+            animate(stillFade, 0f, animationSpec = tween(220)) { v, _ -> stillFade = v }
         } else {
             stillFade = 1f
         }
@@ -1769,9 +1770,16 @@ fun ClipViewer(
         for (offset in listOf(-1, 1)) {
             val neighbour = list.getOrNull(activePage + offset) ?: continue
             ThumbCache.get(
-                context, clipPictureKey(neighbour), clipPictureUri(neighbour, openable), clipPictureMs(neighbour), VIEWER_PICTURE_HEIGHT
+                context, stillKeyFor(neighbour), clipPictureUri(neighbour, openable), stillMsFor(neighbour), VIEWER_PICTURE_HEIGHT
             )
         }
+    }
+    /** The moment of the video a clip starts at (what the player shows first), so the still and the first frame are the same picture. */
+    fun stillMsFor(c: GalleryClip): Long =
+        if (c.exportOnly || c.index < 0) 0L else Math.round(clipWindow(c, cutsFor(c)).first * 1000.0)
+    fun stillKeyFor(c: GalleryClip): String {
+        val e = c.exported
+        return if (c.exportOnly && e != null) "xv_${e.id}" else "v_${c.key}_${stillMsFor(c)}"
     }
     val sourceOk = openable[footage.id] == true
     val playsExport = current.exportOnly && current.exported != null          // the video is gone: play the exported file instead
@@ -1956,14 +1964,14 @@ fun ClipViewer(
                             // until the player has drawn its first picture, the clip's own still picture stays in place (no black flash)
                             if (stillAlpha > 0.01f) {
                                 Thumb(
-                                    clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize().alpha(stillAlpha),
+                                    stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c), Modifier.fillMaxSize().alpha(stillAlpha),
                                     ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
                                 )
                             }
                         }
                     } else {
                         Thumb(
-                            clipPictureKey(c), clipPictureUri(c, openable), clipPictureMs(c), Modifier.fillMaxSize(),
+                            stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c), Modifier.fillMaxSize(),
                             ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black
                         )
                         if (page == activePage && !playable) {
