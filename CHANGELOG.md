@@ -6,7 +6,24 @@ All notable changes to CubeCut are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. Phases 1, 2 and 3a are tested on the phone; 3b and 3c are being tested (see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change.
+Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. All phases are built and running on the phone (Galaxy S25 Ultra); the 3.0.0 work is now in the **testing phase** (see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change.
+
+### Testing phase: navigation, wording and audio (2026-11-09)
+
+**Added**
+- **A scramble button on every solve card in the editor** (crossing arrows, left of *Edit*): blue with a blue border when the clip includes the scramble, grey and crossed out when it doesn't (`ScrambleButton`). Tapping it counts as an edit, so a re-scan keeps it. It is disabled for *left over* cuts and while Find solves runs.
+- **"You were just here" highlight.** Coming back from the full-screen viewer, the Clips tab scrolls so the clip you were **last on** (not the one you opened) is on screen, then it gets a blue border and a light blue glow that comes up quickly, holds and fades (about 1.7 s). Coming back from the editor does the same for the video on the **Footage** tab. Works in grid and list view; nothing is shown if the clip is hidden by the current filter.
+- **Shared note style** (`Notes.kt`): `InfoNote` (a small round symbol and one or two short lines on a soft tinted card: blue = information, amber = check, red = problem), `InfoButton` (a round "i" that opens a short window), `BulletLines`, `LeadAndBullets`, `kindOfMessage`. Colours come from `MaterialTheme` and `AppColors`.
+
+**Changed**
+- **"Include the scramble in all clips" moved again:** out of the Setup box (the old *3. Scramble*) to its own line directly above *Only show solves to check*. It shows as soon as a video is open. Flipping it sets **every** clip; a card's own scramble button can then change one clip again.
+- **The editor's Gallery button and Back now open the Footage tab** and point out the video you were editing. *View* on a solve card still opens that solve's clip in the viewer.
+- **Wording pass over the whole app.** Shorter lines (one idea each, say what to do), long explanations moved behind "i" buttons or into bullet lists, and messages shown as note cards: the Setup box, the Find solves window and progress card, the notes after a scan (*No solves found* with a short *What to try* list), the help for the solve cards, the Edit window, the Gallery's message banner (now a note with an *OK* action), the empty Gallery, and the export, trash, forget, reconnect and *Recently deleted* windows. The About window keeps every licence and credit term, now as four bullets.
+- **Timer setup screen:** a "Step 1 of 2" / "Step 2 of 2" heading with one-line instructions, a hint under the number box (for 1:02.34 type 102.34), and its messages as note cards.
+- **Notifications** are shorter ("Finding solves", "Reading the timer: 42%", "Find solves finished").
+
+**Fixed**
+- **Video audio kept playing after leaving the app** (home, another app, screen off), in both the editor and the Gallery's clip viewer. Both players now pause as soon as CubeCut is no longer in front. Playback does not start again by itself when you come back.
 
 ### Phase 3c: the new look
 
@@ -33,7 +50,7 @@ Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remem
 
 **Changed**
 - **The editor is for finding the real solves only.** The export switch and the *Include scramble* tick box are gone from the rows, the review bar has no switch, and there is **no export button** in the editor. Solves that were switched off by hand (or by the scan for a reason other than "left over from before the video") are now normal solves; only *left over* cuts stay out.
-- **"Include the scramble in all clips"** moved from the pinned area into the Setup box (**3. Scramble**), next to the buffers.
+- **"Include the scramble in all clips"** moved from the pinned area into the Setup box (**3. Scramble**), next to the buffers. *(Moved again in the testing phase, see above.)*
 
 ### Phase 3a: re-scans keep your edits
 
