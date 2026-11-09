@@ -78,7 +78,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 5
+    private const val DB_VERSION = 6
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -115,7 +115,8 @@ object SessionStore {
                         "note TEXT NOT NULL, " +
                         "include_scramble INTEGER NOT NULL, " +
                         "user_note TEXT NOT NULL DEFAULT '', " +
-                        "user_edited INTEGER NOT NULL DEFAULT 0)"
+                        "user_edited INTEGER NOT NULL DEFAULT 0, " +
+                        "reviewed INTEGER NOT NULL DEFAULT 0)"
             )
             db.execSQL("CREATE INDEX cuts_by_footage ON cuts(footage_id)")
             createExportsTable(db)
@@ -162,6 +163,10 @@ object SessionStore {
                     "UPDATE cuts SET user_edited = 1 WHERE user_note <> '' OR note = 'added by you' OR (included = 0 AND note = '') " +
                             "OR include_scramble <> (SELECT f.scramble_all FROM footage f WHERE f.id = cuts.footage_id)"
                 )
+            }
+            if (oldVersion < 6) {
+                // version 6: you can mark a cut's "check" as looked at
+                db.execSQL("ALTER TABLE cuts ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
             }
         }
     }
@@ -339,13 +344,13 @@ object SessionStore {
 
     fun loadCuts(context: Context, footageId: Long): List<CutItem> =
         db(context).query(
-            "cuts", arrayOf("stop_sec", "time_text", "included", "note", "include_scramble", "user_note", "user_edited"),
+            "cuts", arrayOf("stop_sec", "time_text", "included", "note", "include_scramble", "user_note", "user_edited", "reviewed"),
             "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
         ).use { c ->
             val out = ArrayList<CutItem>()
             while (c.moveToNext()) {
                 // every cut is a solve except the scan's "left over" ones (see normalizeIncluded in RescanMerge.kt)
-                out.add(normalizeIncluded(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1)))
+                out.add(normalizeIncluded(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1, c.getInt(7) == 1)))
             }
             out
         }
@@ -373,6 +378,7 @@ object SessionStore {
                 v.put("include_scramble", if (cut.includeScramble) 1 else 0)
                 v.put("user_note", cut.userNote)
                 v.put("user_edited", if (cut.edited) 1 else 0)
+                v.put("reviewed", if (cut.reviewed) 1 else 0)
                 d.insert("cuts", null, v)
             }
             d.setTransactionSuccessful()
@@ -520,6 +526,14 @@ object SessionStore {
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
+    /** Marks one cut's "check" as looked at (found by its stop time). The editor sees the change. */
+    fun markCutReviewed(context: Context, footageId: Long, stopSec: Double) {
+        val v = ContentValues()
+        v.put("reviewed", 1)
+        v.put("user_edited", 1)
+        db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
+    }
+
     /** Switches the scramble of one cut on or off (found by its stop time). The editor sees the change. */
     fun updateCutScramble(context: Context, footageId: Long, stopSec: Double, includeScramble: Boolean) {
         val v = ContentValues()
@@ -635,9 +649,10 @@ class GalleryClip(
     val key: String get() = "${footage.id}_${Math.round(cut.stopSec * 1000.0)}"
     val listKey: String get() = if (exportOnly && exported != null) "x${exported.id}" else "${footage.id}:$index"
     val seconds: Double? get() = parseTimeSeconds(cut.timeText)
-    val needsCheck: Boolean get() = (cut.note.isNotEmpty() && cut.note != "added by you") || warning.isNotEmpty()
+    private val noteNeedsCheck: Boolean get() = !cut.reviewed && cut.note.isNotEmpty() && cut.note != "added by you"
+    val needsCheck: Boolean get() = noteNeedsCheck || warning.isNotEmpty()
     /** Everything to check about this clip, in one line ("" = nothing). */
-    val checkText: String get() = listOf(if (cut.note != "added by you") cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
+    val checkText: String get() = listOf(if (noteNeedsCheck) cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
     val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
     val sharedList: List<String> get() = platformsIn(cut.userNote)
 }

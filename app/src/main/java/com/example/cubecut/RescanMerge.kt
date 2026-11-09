@@ -138,7 +138,9 @@ class CutChecks(val warnings: Map<Int, String>, val noClip: Set<Int>)
  */
 fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
     val found = HashMap<Int, MutableList<String>>()
-    fun flag(i: Int, text: String) {
+    // a cut you marked as checked is not flagged again, except when it has no clip at all (that can't be waved away)
+    fun flag(i: Int, text: String, evenIfChecked: Boolean = false) {
+        if (cuts[i].reviewed && !evenIfChecked) return
         val list = found.getOrPut(i) { ArrayList() }
         if (text !in list) list.add(text)
     }
@@ -151,7 +153,7 @@ fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
         if (prev >= 0) {
             val p = cuts[prev]
             if (i in noClip) {
-                flag(i, "too close to the solve before it, so it has no clip - delete one of them or move it")
+                flag(i, "too close to the solve before it, so it has no clip - delete one of them or move it", true)
                 flag(prev, "too close to the solve after it - one of the two is probably not a real solve")
             }
             val t = parseTimeSeconds(c.timeText)
@@ -160,7 +162,7 @@ fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
                 flag(prev, "the solve after it would have started before this one stopped - check this time or that one")
             }
         } else if (i in noClip) {
-            flag(i, "too close to the start of the video, so it has no clip")
+            flag(i, "too close to the start of the video, so it has no clip", true)
         }
         prev = i
     }

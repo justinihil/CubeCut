@@ -307,6 +307,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var clipKeys by mutableStateOf(ClipKey.parse(prefs.getString("clip_keys", null)))
     var footageSort by mutableStateOf(FootageSort.from(prefs.getString("footage_sort", null)))
     var exportFilter by mutableStateOf(ExportFilter.from(prefs.getString("export_filter", null)))
+    var checkOnly by mutableStateOf(prefs.getBoolean("check_only", false))   // show only clips that need a check
     // sessions switched off in the Clips tab (everything else is shown, so a new session shows up by itself)
     var hidden by mutableStateOf(
         (prefs.getString("hidden", "") ?: "").split(',').mapNotNull { it.toLongOrNull() }.toSet()
@@ -318,7 +319,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
         detail = clip
     }
 
-    val filterActive: Boolean get() = hidden.isNotEmpty() || exportFilter != ExportFilter.ALL
+    val filterActive: Boolean get() = hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly
 
     /** Remember the view, sort and filter choices for the next time the app opens. */
     fun save() {
@@ -330,6 +331,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("clip_keys", clipKeys.joinToString(",") { it.name })
             .putString("footage_sort", footageSort.name)
             .putString("export_filter", exportFilter.name)
+            .putBoolean("check_only", checkOnly)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
             .putBoolean("swipe_hint_seen", swipeHintSeen)
@@ -917,7 +919,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val clipsListState = rememberLazyListState()
     val footageGridState = rememberLazyGridState()
     val footageListState = rememberLazyListState()
-    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter) {
+    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly) {
         clipsGridState.scrollToItem(0)
         clipsListState.scrollToItem(0)
     }
@@ -1040,11 +1042,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
     }
     // the Clips tab's clips, filtered and sorted
-    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.clipKeys) {
+    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.clipKeys) {
         if (d == null) emptyList()
         else sortClips(
             d.clips.filter { c ->
-                c.footage.id !in ui.hidden && when (ui.exportFilter) {
+                c.footage.id !in ui.hidden && (!ui.checkOnly || c.needsCheck) && when (ui.exportFilter) {
                     ExportFilter.ALL -> true
                     ExportFilter.EXPORTED -> c.exported != null
                     ExportFilter.NOT_EXPORTED -> c.exported == null
@@ -1436,6 +1438,15 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 RadioButton(selected = ui.exportFilter == opt, onClick = { ui.exportFilter = opt; ui.save() })
                                 Text(opt.label, style = MaterialTheme.typography.bodyMedium)
                             }
+                        }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { ui.checkOnly = !ui.checkOnly; ui.save() },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = ui.checkOnly, onCheckedChange = { ui.checkOnly = it; ui.save() })
+                            Text("Only clips that need a check", style = MaterialTheme.typography.bodyMedium)
                         }
                         Spacer(Modifier.height(10.dp))
                         Text("From these videos", style = MaterialTheme.typography.labelLarge)
@@ -2060,6 +2071,7 @@ fun ClipViewer(
     val exportedNow = remember { mutableStateMapOf<String, ExportedClip>() }
     val noteDrafts = remember { mutableStateMapOf<String, String>() }
     val noteSaved = remember { mutableStateMapOf<String, String>() }
+    val checkedNow = remember { mutableStateMapOf<String, Boolean>() }      // clips marked as checked here (saved at once)
     var noteVersion by remember { mutableStateOf(0) }
     var overrideVersion by remember { mutableStateOf(0) }
     var controlsVisible by remember { mutableStateOf(false) }
@@ -2437,8 +2449,21 @@ fun ClipViewer(
                     if (playsExport) {
                         Text("The original video is gone, so this is the exported file.", style = MaterialTheme.typography.bodySmall)
                     }
-                    if (current.needsCheck) {
+                    if (current.needsCheck && checkedNow[current.listKey] == true) {
+                        Text("Marked as checked.", style = MaterialTheme.typography.bodySmall)
+                    } else if (current.needsCheck) {
                         Text(highlightCheck("check: " + current.checkText), style = MaterialTheme.typography.bodyMedium)
+                        if (editable && !current.cut.reviewed) {
+                            TextButton(onClick = {
+                                val c = current
+                                checkedNow[c.listKey] = true
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        try { SessionStore.markCutReviewed(context, c.footage.id, c.cut.stopSec) } catch (e: Exception) { }
+                                    }
+                                }
+                            }) { Text("It's fine: mark as checked", color = AMBER) }
+                        }
                     } else if (current.cut.note.isNotEmpty()) {
                         Text(current.cut.note, style = MaterialTheme.typography.bodySmall)
                     }

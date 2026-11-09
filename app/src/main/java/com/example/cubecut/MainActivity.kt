@@ -28,7 +28,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -240,6 +242,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
     var importProgress by remember { mutableStateOf(0f) }
 
     var showAbout by remember { mutableStateOf(false) }          // the About window (author credit and licence notice)
+    var showClearChecks by remember { mutableStateOf(false) }    // the "Clear all checks?" window
     var showFindConfirm by remember { mutableStateOf(false) }    // the "this may take a couple of minutes" window
     var analysisDone by remember { mutableStateOf(0) }           // progress of Find solves
     var analysisTotal by remember { mutableStateOf(0) }
@@ -445,6 +448,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
     }
     val clipByCut = remember(clips) { clips.associateBy { it.cutIndex } }
     val checks = remember(clips) { checkCuts(cuts, clips) }      // too close / overlapping solves (shown as "check")
+    var onlyCheck by remember { mutableStateOf(false) }          // the list shows only the solves that need a check
+    /** Does this cut need a look? (a scan note you haven't marked as checked, or a timing problem) */
+    fun needsCheck(i: Int): Boolean {
+        val c = cuts.getOrNull(i) ?: return false
+        return (!c.reviewed && c.note.isNotEmpty() && c.note != "added by you") || checks.warnings.containsKey(i)
+    }
+    fun markChecked(i: Int) {
+        if (i in cuts.indices) cuts[i] = cuts[i].copy(reviewed = true, edited = true)
+    }
     // rough time Find solves needs: about 0.3 s of work per second of video (an estimate)
     val estMin = maxOf(1, Math.round(durationMs / 1000.0 * 0.3 / 60.0).toInt())
 
@@ -553,14 +565,38 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
             undoCut = null
         }
     }
+    // after a delete (or an undo) the row now in that place flashes amber twice and is selected, so you can see where you are
+    var flashCut by remember { mutableStateOf(-1) }
+    var flashTick by remember { mutableStateOf(0) }
+    val flashLevel = remember { Animatable(0f) }
+    LaunchedEffect(flashTick) {
+        if (flashTick > 0) {
+            flashLevel.snapTo(0f)
+            repeat(2) {
+                flashLevel.animateTo(1f, tween(180))
+                flashLevel.animateTo(0f, tween(420))
+            }
+            flashCut = -1
+        }
+    }
+    fun flashRow(i: Int) {
+        if (i !in cuts.indices) return
+        selectedCut = i
+        seekToSec(cuts[i].stopSec - 0.5)
+        flashCut = i
+        flashTick++
+    }
     fun deleteCut(index: Int) {
         if (index !in cuts.indices) return
         undoCut = Pair(index, cuts[index])
         undoVideo = videoUri
         cuts.removeAt(index)
         rowBoxes.clear()
-        selectedCut = -1
         editIndex = -1
+        selectedCut = -1
+        // the next solve has moved up into this place (or, after the last one, the one before it)
+        val next = (index until cuts.size).firstOrNull { !onlyCheck || needsCheck(it) } ?: (index - 1)
+        flashRow(next)
     }
     fun undoDelete() {
         val u = undoCut ?: return
@@ -569,7 +605,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
         val at = u.first.coerceIn(0, cuts.size)
         cuts.add(at, u.second)
         rowBoxes.clear()
-        selectedCut = at
+        flashRow(at)
     }
 
     // jump to cut number [target] (used by the Prev / Next buttons)
@@ -589,6 +625,19 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 scope.launch { listScroll.animateScrollTo(maxOf(0, target)) }
             }
         }
+    }
+
+    // Prev / Next: step through the rows the list shows (only the ones to check while that filter is on)
+    fun stepCut(dir: Int) {
+        val shown = cuts.indices.filter { !onlyCheck || needsCheck(it) }
+        if (shown.isEmpty()) return
+        val sel = selectedCut
+        val target = when {
+            sel !in cuts.indices -> if (dir > 0) shown.first() else shown.last()
+            dir > 0 -> shown.firstOrNull { it > sel } ?: shown.last()
+            else -> shown.lastOrNull { it < sel } ?: shown.first()
+        }
+        goToCut(target)
     }
 
     // opened from a Gallery clip: once the list has been laid out, scroll so the selected row is in view
@@ -782,7 +831,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = { goToCut(if (selValid) sel - 1 else cuts.size - 1) }) { Text("\u2039 Prev") }
+                    TextButton(onClick = { stepCut(-1) }) { Text("\u2039 Prev") }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             if (selValid) "Solve ${sel + 1} of ${cuts.size}" else "${cuts.size} solves",
@@ -793,13 +842,13 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                 if (selValid) {
                                     (if (cuts[sel].timeText.isNotEmpty()) "${cuts[sel].timeText} s" else "time unknown") +
                                             (if (cuts[sel].includeScramble) "  |  with scramble" else "  |  solve only") +
-                                            (if ((cuts[sel].note.isNotEmpty() && cuts[sel].note != "added by you") || checks.warnings.containsKey(sel)) "  |  check this one" else "")
+                                            (if (needsCheck(sel)) "  |  check this one" else "")
                                 } else "tap Next or a row below"
                             ),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    TextButton(onClick = { goToCut(if (selValid) sel + 1 else 0) }) { Text("Next \u203A") }
+                    TextButton(onClick = { stepCut(1) }) { Text("Next \u203A") }
                 }
             }
             val undone = undoCut
@@ -1131,17 +1180,36 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 if (cuts.isNotEmpty()) {
                     Text(
                         "One row per solve. Tap a row to jump to just before the time first appears. Use Edit to fix a time or a position, " +
-                                "Delete removes a cut that isn't a solve (Undo brings it back). Rows marked check need a look. To export, select clips in the Gallery.",
+                                "Delete removes a cut that isn't a solve (Undo brings it back). Rows marked check need a look: fix them, " +
+                                "or tap Checked if they are fine. To export, select clips in the Gallery.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    // ===== only the solves to check, and a way to clear every check at once =====
+                    val toCheck = cuts.indices.count { needsCheck(it) }
+                    val canClear = cuts.indices.count { needsCheck(it) && !cuts[it].reviewed }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            highlightCheck(if (toCheck == 0) "Nothing to check" else "Only show solves to check ($toCheck)"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (canClear > 0) TextButton(onClick = { showClearChecks = true }) { Text("Clear all") }
+                        Switch(
+                            checked = onlyCheck,
+                            onCheckedChange = { onlyCheck = it; rowBoxes.clear() },
+                            enabled = toCheck > 0 || onlyCheck
+                        )
+                    }
                     // one row per cut: tap the row to jump there, Edit to fix or delete it, Gallery to see its clip
                     cuts.forEachIndexed { index, item ->
+                        if (onlyCheck && !needsCheck(index)) return@forEachIndexed
                         val clip = clipByCut[index]
                         val isSelected = index == selectedCut
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                                .background(if (index == flashCut) CHECK_COLOR.copy(alpha = 0.55f * flashLevel.value) else Color.Transparent)
                                 .padding(vertical = 2.dp)
                                 .onGloballyPositioned { rowBoxes[index] = it },
                             verticalAlignment = Alignment.CenterVertically
@@ -1177,7 +1245,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                     if (line.isNotEmpty()) Text(highlightCheck(line), style = MaterialTheme.typography.bodySmall)
                                     val warning = checks.warnings[index]
                                     if (warning != null) Text(highlightCheck("check: $warning"), style = MaterialTheme.typography.bodySmall)
-                                    if (item.note.isNotEmpty() && item.note != "added by you") {
+                                    if (!item.reviewed && item.note.isNotEmpty() && item.note != "added by you") {
                                         Text(highlightCheck("check: ${item.note}"), style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
@@ -1197,8 +1265,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                     }
                                 }
                                 // go straight to this solve's page in the Gallery (your edits are saved first)
-                                TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && footageId != null) {
+                                TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && footageId != null, contentPadding = tight) {
                                     Text("Gallery")
+                                }
+                                // it was looked at and is fine: stop flagging it
+                                if (needsCheck(index) && !item.reviewed) {
+                                    TextButton(onClick = { markChecked(index) }, contentPadding = tight) {
+                                        Text("Checked \u2713", color = CHECK_COLOR)
+                                    }
                                 }
                             }
                         }
@@ -1250,6 +1324,30 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                     }
                 },
                 confirmButton = { }
+            )
+        }
+
+        // ===== mark every check as looked at =====
+        if (showClearChecks) {
+            val n = cuts.indices.count { needsCheck(it) && !cuts[it].reviewed }
+            AlertDialog(
+                onDismissRequest = { showClearChecks = false },
+                title = { Text("Clear all checks?") },
+                text = {
+                    Text(
+                        "The $n solves marked check are marked as looked at and stop being flagged, here and in the Gallery. " +
+                                "A solve that is too close to the one before it stays flagged, because it has no clip until you delete or move one of them.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        showClearChecks = false
+                        for (i in cuts.indices) if (needsCheck(i) && !cuts[i].reviewed) markChecked(i)
+                        onlyCheck = false
+                    }) { Text("Clear all") }
+                },
+                dismissButton = { TextButton(onClick = { showClearChecks = false }) { Text("Cancel") } }
             )
         }
 
