@@ -32,7 +32,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -172,6 +171,7 @@ private val AMBER = Color(0xFFFFB74D)
 private val GREY = Color(0xFF757575)
 private val GREEN = Color(0xFF2E7D32)
 private val RED = Color(0xFFC62828)
+private val YELLOW_GREEN = Color(0xFF9ACD32)
 
 /** A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). */
 class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean) {
@@ -422,7 +422,8 @@ private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: I
         Badge(timeBadgeText(clip), Color(0xCC000000), modifier = Modifier.align(Alignment.TopEnd).padding(if (columns >= 5) 3.dp else 6.dp))
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (clip.exportOnly) Badge(if (clip.footage.trashedMs > 0) "Raw in trash" else "Raw deleted", RED)
+                // the clip itself still works (it plays from its exported file), so this tag is not red
+                if (clip.exportOnly) Badge(if (clip.footage.trashedMs > 0) "Raw in trash" else "Raw deleted", YELLOW_GREEN, Color.Black)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
                 if (!clip.cut.included) Badge("Left out", GREY)
@@ -518,7 +519,7 @@ private fun FootageCell(f: Footage, stats: FootageStats?, openable: Boolean, hid
         )
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (f.trashedMs > 0) Badge("Raw in trash", RED) else if (!openable) Badge("Raw deleted", RED)
+                if (f.trashedMs > 0) Badge("In trash", RED) else if (!openable) Badge("Video deleted", RED)
                 if ((stats?.check ?: 0) > 0) Badge("${stats?.check} to check", AMBER, Color.Black)
                 if (f.lastScanMs == 0L && f.cutCount == 0) Badge("Not scanned", GREY)
                 if (hidden) Badge("Hidden in Clips", GREY)
@@ -562,7 +563,7 @@ private fun FootageRow(f: Footage, stats: FootageStats?, openable: Boolean, hidd
                 formatDate(dateOf(f)) + "  |  " + formatTime(f.durationMs) + "  |  ${stats?.solves ?: 0} " + (if (openable) "solves" else "exported") +
                         (if (stats?.best != null) "  |  best ${stats.bestText}" else "") +
                         (if ((stats?.check ?: 0) > 0) "  |  ${stats?.check} to check" else "") +
-                        (if (f.trashedMs > 0) "  |  raw footage in trash" else if (!openable) "  |  raw footage deleted" else "") +
+                        (if (f.trashedMs > 0) "  |  in trash" else if (!openable) "  |  video deleted" else "") +
                         (if (hidden) "  |  hidden in Clips" else ""),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2
@@ -1746,11 +1747,26 @@ fun ClipViewer(
             .sortedBy { it.index }
             .map { c -> c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c)) }
 
-    // the clip's still picture covers the player until the player has drawn its own first picture, then fades away
-    val stillAlpha by animateFloatAsState(
-        targetValue = if (renderedKey == current.listKey) 0f else 1f,
-        animationSpec = tween(if (renderedKey == current.listKey) 250 else 0)
-    )
+    // The clip's still picture covers the player until the player has drawn its own first picture, then fades away. While the player has
+    // not drawn it, the still is fully visible from the very first frame of the new page (no animation involved, so there is no gap).
+    var stillFade by remember { mutableStateOf(1f) }
+    val stillAlpha = if (renderedKey == current.listKey) stillFade else 1f
+    LaunchedEffect(renderedKey, current.listKey) {
+        if (renderedKey == current.listKey) {
+            animate(stillFade, 0f, animationSpec = tween(250)) { v, _ -> stillFade = v }
+        } else {
+            stillFade = 1f
+        }
+    }
+    // make the still pictures of the neighbouring clips ready before they are swiped to
+    LaunchedEffect(pagerState.currentPage) {
+        for (offset in listOf(-1, 1)) {
+            val neighbour = list.getOrNull(pagerState.currentPage + offset) ?: continue
+            ThumbCache.get(
+                context, clipPictureKey(neighbour), clipPictureUri(neighbour, openable), clipPictureMs(neighbour), VIEWER_PICTURE_HEIGHT
+            )
+        }
+    }
     val sourceOk = openable[footage.id] == true
     val playsExport = current.exportOnly && current.exported != null          // the video is gone: play the exported file instead
     val editable = sourceOk && !current.exportOnly && current.index >= 0
