@@ -1949,39 +1949,36 @@ fun ClipViewer(
                         .pointerInput(Unit) { detectTapGestures(onTap = { controlsVisible = !controlsVisible }) },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (page == activePage && playable) {
-                        Box(Modifier.fillMaxSize()) {
-                            AndroidView(
-                                factory = { ctx ->
-                                    val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
-                                    pv.useController = false          // the controls are drawn by CubeCut (PlayerOverlay), not by the player
-                                    pv.setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)    // no black cover while the player starts
-                                    pv.setKeepContentOnPlayerReset(true)
-                                    pv.player = player
-                                    pv
-                                },
-                                modifier = Modifier.fillMaxSize()
-                            )
-                            // until the player has drawn its first picture, the clip's own still picture stays in place (no black flash)
-                            if (stillAlpha > 0.01f) {
-                                Thumb(
-                                    stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c), Modifier.fillMaxSize().alpha(stillAlpha),
-                                    ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black, placeholderKey = clipPictureKey(c)
-                                )
-                            }
-                        }
-                    } else {
-                        Thumb(
-                            stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c), Modifier.fillMaxSize(),
-                            ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black, placeholderKey = clipPictureKey(c)
+                    val playing = page == activePage && playable
+                    if (playing) {
+                        AndroidView(
+                            factory = { ctx ->
+                                val pv = LayoutInflater.from(ctx).inflate(R.layout.video_player_view, null) as PlayerView
+                                pv.useController = false          // the controls are drawn by CubeCut (PlayerOverlay), not by the player
+                                pv.setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)    // no black cover while the player starts
+                                pv.setKeepContentOnPlayerReset(true)
+                                pv.player = player
+                                pv
+                            },
+                            modifier = Modifier.fillMaxSize()
                         )
-                        if (page == activePage && !playable) {
-                            Text(
-                                "The video can't be opened right now.",
-                                color = Color.White, style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.background(Color(0xAA000000)).padding(8.dp)
-                            )
-                        }
+                    }
+                    // the clip's still picture. It is the SAME picture before and after the page becomes the playing one (it is never
+                    // removed and made again), so it never has to load again and there is no empty (black) frame when the swipe ends.
+                    // Over the player it stays until the player has drawn its first picture, then fades out.
+                    // (it is kept even when fully faded, see-through, so it is not made again when the page stops playing)
+                    Thumb(
+                        stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c),
+                        Modifier.fillMaxSize().alpha(if (playing) stillAlpha else 1f),
+                        ContentScale.Fit, VIEWER_PICTURE_HEIGHT, if (playing) Color.Transparent else Color.Black,
+                        placeholderKey = clipPictureKey(c)
+                    )
+                    if (page == activePage && !playable) {
+                        Text(
+                            "The video can't be opened right now.",
+                            color = Color.White, style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.background(Color(0xAA000000)).padding(8.dp)
+                        )
                     }
                 }
             }

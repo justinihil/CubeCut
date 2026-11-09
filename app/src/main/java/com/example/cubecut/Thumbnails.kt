@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -70,8 +71,14 @@ object ThumbCache {
      * The picture for [key]. [uri] and [timeMs] say where to take it from if it doesn't exist yet
      * (a null [uri] = the video can't be opened, so only an already made picture can be returned).
      */
+    /** The picture for [key] if it is already in memory, without waiting (so a picture that is ready is drawn in the very first frame). */
+    fun peek(key: String, height: Int = TARGET_HEIGHT): Bitmap? = memory.get(nameOf(key, height))
+
+    private fun nameOf(key: String, height: Int): String =
+        if (height == TARGET_HEIGHT) key else "${key}_h$height"      // bigger pictures (for the full-screen viewer) are kept apart
+
     suspend fun get(context: Context, key: String, uri: Uri?, timeMs: Long, height: Int = TARGET_HEIGHT): Bitmap? {
-        val name = if (height == TARGET_HEIGHT) key else "${key}_h$height"      // bigger pictures (for the full-screen viewer) are kept apart
+        val name = nameOf(key, height)
         val cached = memory.get(name)
         if (cached != null) return cached
         return withContext(Dispatchers.IO) {
@@ -141,12 +148,17 @@ fun Thumb(
     placeholderKey: String? = null
 ) {
     val context = LocalContext.current
-    val picture by produceState<ImageBitmap?>(initialValue = null, key, uri, height) {
-        value = ThumbCache.get(context, key, uri, timeMs, height)?.asImageBitmap()
+    // a picture already in memory is used straight away; only a missing one is waited for
+    val ready = remember(key, height) { ThumbCache.peek(key, height)?.asImageBitmap() }
+    val picture by produceState(initialValue = ready, key, uri, height) {
+        value = ready            // (also when the key changes: never keep showing the previous picture)
+        if (value == null) value = ThumbCache.get(context, key, uri, timeMs, height)?.asImageBitmap()
     }
     // a picture that is already made (e.g. the grid's small one) is shown while the wanted one is still being made, so there is no empty frame
-    val placeholder by produceState<ImageBitmap?>(initialValue = null, placeholderKey) {
-        value = if (placeholderKey == null) null else ThumbCache.get(context, placeholderKey, null, 0L)?.asImageBitmap()
+    val placeholderReady = remember(placeholderKey) { placeholderKey?.let { ThumbCache.peek(it)?.asImageBitmap() } }
+    val placeholder by produceState(initialValue = placeholderReady, placeholderKey) {
+        value = placeholderReady
+        if (value == null && placeholderKey != null) value = ThumbCache.get(context, placeholderKey, null, 0L)?.asImageBitmap()
     }
     Box(modifier.background(background)) {
         val p = picture ?: placeholder
