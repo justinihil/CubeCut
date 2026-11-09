@@ -171,7 +171,6 @@ private val AMBER = Color(0xFFFFB74D)
 private val GREY = Color(0xFF757575)
 private val GREEN = Color(0xFF2E7D32)
 private val RED = Color(0xFFC62828)
-private val YELLOW_GREEN = Color(0xFF9ACD32)
 
 /** A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). */
 class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean) {
@@ -423,7 +422,7 @@ private fun ClipCell(clip: GalleryClip, openable: Map<Long, Boolean>, columns: I
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 // the clip itself still works (it plays from its exported file), so this tag is not red
-                if (clip.exportOnly) Badge("Export only", YELLOW_GREEN, Color.Black)
+                if (clip.exportOnly) Badge("Export only", GREEN)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
                 if (!clip.cut.included) Badge("Left out", GREY)
