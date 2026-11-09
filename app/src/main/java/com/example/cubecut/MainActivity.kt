@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -543,6 +544,34 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
         }
     }
 
+    // ---- delete a cut straight from its row; the last deletion can be undone ----
+    var undoCut by remember { mutableStateOf<Pair<Int, CutItem>?>(null) }      // (where it was, the cut) of the last deleted cut
+    var undoVideo by remember { mutableStateOf<Uri?>(null) }                   // the video it was deleted from (another video: no Undo)
+    LaunchedEffect(undoCut) {
+        if (undoCut != null) {
+            delay(8000)                         // the Undo bar goes away by itself after a while
+            undoCut = null
+        }
+    }
+    fun deleteCut(index: Int) {
+        if (index !in cuts.indices) return
+        undoCut = Pair(index, cuts[index])
+        undoVideo = videoUri
+        cuts.removeAt(index)
+        rowBoxes.clear()
+        selectedCut = -1
+        editIndex = -1
+    }
+    fun undoDelete() {
+        val u = undoCut ?: return
+        undoCut = null
+        if (undoVideo != videoUri) return
+        val at = u.first.coerceIn(0, cuts.size)
+        cuts.add(at, u.second)
+        rowBoxes.clear()
+        selectedCut = at
+    }
+
     // jump to cut number [target] (used by the Prev / Next buttons)
     fun goToCut(target: Int) {
         if (cuts.isEmpty()) return
@@ -771,6 +800,24 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                         )
                     }
                     TextButton(onClick = { goToCut(if (selValid) sel + 1 else 0) }) { Text("Next \u203A") }
+                }
+            }
+            val undone = undoCut
+            if (undone != null && undoVideo == videoUri) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Deleted " + (if (undone.second.timeText.isNotEmpty()) "the ${undone.second.timeText} s solve" else "a cut") +
+                                " at ${formatTime((undone.second.stopSec * 1000).toLong())}",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { undoDelete() }) { Text("Undo") }
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -1084,7 +1131,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 if (cuts.isNotEmpty()) {
                     Text(
                         "One row per solve. Tap a row to jump to just before the time first appears. Use Edit to fix a time or a position, " +
-                                "or to delete a cut that isn't a solve. Rows marked check need a look. Choosing what to export happens in the Gallery.",
+                                "Delete removes a cut that isn't a solve (Undo brings it back). Rows marked check need a look. To export, select clips in the Gallery.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     // one row per cut: tap the row to jump there, Edit to fix or delete it, Gallery to see its clip
@@ -1136,11 +1183,18 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                                 }
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                TextButton(onClick = {
-                                    selectedCut = index
-                                    editIndex = index
-                                }) {
-                                    Text(if (item.timeText.isEmpty()) "Add time" else "Edit")
+                                val tight = PaddingValues(horizontal = 8.dp)
+                                Row {
+                                    TextButton(onClick = {
+                                        selectedCut = index
+                                        editIndex = index
+                                    }, contentPadding = tight) {
+                                        Text(if (item.timeText.isEmpty()) "Add time" else "Edit")
+                                    }
+                                    // not a solve: delete it at once (the Undo bar at the top brings it back)
+                                    TextButton(onClick = { deleteCut(index) }, enabled = !analyzing, contentPadding = tight) {
+                                        Text("Delete", color = Color(0xFFEF5350))
+                                    }
                                 }
                                 // go straight to this solve's page in the Gallery (your edits are saved first)
                                 TextButton(onClick = { leaveToGallery(index) }, enabled = !analyzing && footageId != null) {
@@ -1149,21 +1203,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                             }
                         }
                     }
-                    // ===== export: only at the very end of the list. Choosing and exporting happen in the Gallery =====
-                    Spacer(Modifier.height(4.dp))
-                    Button(
-                        onClick = { leaveToGallery(selectToExport = true) },
-                        enabled = footageId != null && !analyzing,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Export clips...") }
-                    Text(
-                        "Opens the Gallery with this video's clips that aren't exported yet already selected. Change the selection, then Export.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
                     val unknownCount = clips.count { it.timeText.isBlank() }
                     if (unknownCount > 0) {
                         Text(
-                            "$unknownCount clips have no time yet (they export as \"unknown\"; use Add time).",
+                            "$unknownCount solves have no time yet (their clips are named \"unknown\"; use Add time).",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -1304,12 +1347,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?, Boolean) -> U
                 },
                 dismissButton = {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TextButton(onClick = {
-                            cuts.removeAt(editIndex)
-                            rowBoxes.clear()
-                            selectedCut = -1
-                            editIndex = -1
-                        }) { Text("Delete cut") }
+                        TextButton(onClick = { deleteCut(editIndex) }) { Text("Delete cut") }
                         TextButton(onClick = { editIndex = -1 }) { Text("Close") }
                     }
                 }

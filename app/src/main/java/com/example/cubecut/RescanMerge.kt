@@ -131,25 +131,38 @@ fun normalizeIncluded(c: CutItem): CutItem = if (c.included || isLeftover(c)) c 
 class CutChecks(val warnings: Map<Int, String>, val noClip: Set<Int>)
 
 /**
- * Looks for impossible timing. [clips] must be computeClips(cuts, ...) for the same [cuts].
+ * Looks for impossible timing between neighbouring solves, and flags BOTH solves of each pair, because either one can be the wrong one.
+ * [clips] must be computeClips(cuts, ...) for the same [cuts].
  *  - too close: computeClips makes no clip for a solve that ends less than a second after the one before it;
  *  - overlap: a solve that started before the previous one stopped (worked out from the times shown) can't be right.
  */
 fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
-    val warnings = HashMap<Int, String>()
+    val found = HashMap<Int, MutableList<String>>()
+    fun flag(i: Int, text: String) {
+        val list = found.getOrPut(i) { ArrayList() }
+        if (text !in list) list.add(text)
+    }
     val withClip = clips.map { it.cutIndex }.toSet()
     val noClip = cuts.indices.filter { !isLeftover(cuts[it]) && it !in withClip }.toSet()
-    for (i in noClip) warnings[i] = "too close to the solve before it, so it has no clip - delete one of them or move it"
-    var previous: CutItem? = null
+    var prev = -1                                       // index of the previous real solve (in time order)
     for (i in cuts.indices.sortedBy { cuts[it].stopSec }) {
         val c = cuts[i]
         if (isLeftover(c)) continue
-        val p = previous
-        val t = parseTimeSeconds(c.timeText)
-        if (p != null && t != null && i !in warnings && c.stopSec - t < p.stopSec - SLACK_SEC) {
-            warnings[i] = "it would have started before the previous solve stopped - check this time or the previous one"
+        if (prev >= 0) {
+            val p = cuts[prev]
+            if (i in noClip) {
+                flag(i, "too close to the solve before it, so it has no clip - delete one of them or move it")
+                flag(prev, "too close to the solve after it - one of the two is probably not a real solve")
+            }
+            val t = parseTimeSeconds(c.timeText)
+            if (t != null && c.stopSec - t < p.stopSec - SLACK_SEC) {
+                flag(i, "it would have started before the solve before it stopped - check this time or that one")
+                flag(prev, "the solve after it would have started before this one stopped - check this time or that one")
+            }
+        } else if (i in noClip) {
+            flag(i, "too close to the start of the video, so it has no clip")
         }
-        previous = c
+        prev = i
     }
-    return CutChecks(warnings, noClip)
+    return CutChecks(found.mapValues { it.value.joinToString("; ") }, noClip)
 }

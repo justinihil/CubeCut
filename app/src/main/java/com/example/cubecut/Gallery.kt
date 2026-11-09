@@ -872,6 +872,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             ui.refresh++
         }
     }
+    /** Switches the scramble on or off for all the chosen clips at once (saved at once; the editor sees it too). */
+    fun setScrambleForSelected(on: Boolean, chosen: List<GalleryClip>) {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                for (c in chosen) {
+                    if (c.cut.includeScramble == on || c.index < 0) continue
+                    try { SessionStore.updateCutScramble(context, c.footage.id, c.cut.stopSec, on) } catch (e: Exception) { }
+                }
+            }
+            ui.refresh++                    // reload, so every clip shows its new setting
+        }
+    }
     BackHandler(enabled = ui.selecting) { exitSelection() }
 
     // Android can't tell CubeCut when a video is deleted or restored while the app is open, so everything is checked again each time you
@@ -1063,6 +1075,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         Text(if (allOn) "None" else "All")
                     }
                     Button(onClick = { askExport = true }, enabled = ui.selected.isNotEmpty() && batchDone < 0) { Text("Export") }
+                }
+                // one switch for the scramble of every chosen clip (each one can still differ: change it in the player)
+                val chosenNow = d.clips.filter { it.listKey in ui.selected && selectable(it, d.openable) }
+                if (chosenNow.isNotEmpty()) {
+                    val onCount = chosenNow.count { it.cut.includeScramble }
+                    Row(Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Include the scramble in the ${chosenNow.size} selected clips" +
+                                    (if (onCount == 0 || onCount == chosenNow.size) "" else " (mixed: $onCount on)"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(checked = onCount == chosenNow.size, onCheckedChange = { on -> setScrambleForSelected(on, chosenNow) })
+                    }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
