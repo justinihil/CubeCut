@@ -6,7 +6,37 @@ All notable changes to CubeCut are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-Work towards **3.0.0** (branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. All phases are built and running on the phone (Galaxy S25 Ultra); the planned testing turned into the review fixes below, and the **full test pass of 3.0.0 starts now** (2026-11-10, on the merged `dev-v3.0.0`; see `docs/V3_HANDOVER.md`). How solves are found, how digits are read and how clips are calculated did **not** change. A code review and the fixes from testing followed (*Review fixes* below); from 3.0.0 CubeCut needs **Android 11 or newer**.
+Nothing yet. Planned for 3.1: see *Next build* in `docs/V3_HANDOVER.md`.
+
+## [3.0.0] - 2026-11-10
+
+**Saved sessions and the Gallery** (developed on branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. All phases are built and running on the phone (Galaxy S25 Ultra); the planned testing turned into the review fixes below, and a full test pass on the merged `dev-v3.0.0` (2026-11-10) brought the last fixes. How solves are found, how digits are read and how clips are calculated did **not** change. A code review and the fixes from testing followed (*Review fixes* below); from 3.0.0 CubeCut needs **Android 11 or newer**.
+
+### Test pass fixes (2026-11-10)
+
+From a second code review and the full test pass on `dev-v3.0.0`. How solves are found, how digits are read and how clips are calculated did **not** change.
+
+**Changed**
+- **Video sound behaves like other video apps:** music from another app pauses while a clip or the editor plays, a call or another app's sound pauses CubeCut, and unplugging headphones pauses playback instead of switching to the speaker.
+- "Exported as …" in the viewer and the timer dot on the Setup box line use the theme's green and amber, so they are readable in light and dark mode.
+
+**Added**
+- **"Too fast" check:** a solve that ends less than 6 seconds after the one before it is flagged *check*, both solves of the pair (nobody can reset the timer, scramble and solve that quickly). It catches misreads where the time still on the display loses its last digit, for example 11.517 read as 1.151. *It's fine* clears it as usual.
+
+**Fixed**
+- **The "to check" number after Find solves didn't match the list.** The status line and the notification now count solves and checks exactly like *Only solves to check* (the scan's notes and the timing checks, after a re-scan's merge).
+- **Tapping or dragging on the editor's timeline selected nothing or the wrong solve** after opening a saved video, after Find solves or after a delete (until the zoom was moved).
+- **Exporting a solve again removed an earlier, deleted copy from *Recently deleted*.** A file in the trash now stays listed and can still be restored.
+- **The file name shown after exporting again was wrong** when Android had added " (1)" to it. CubeCut now records the name the file really got.
+- An export whose file Android couldn't finish is now reported as failed and removed, instead of counting as done.
+- **Saving a new timer setup or importing a video while *Read timer here* was still reading** could free the reader's memory while it was in use (a rare crash). Each timer setup is now freed only after its last reading has finished.
+- Exported file names always use the digits 0-9, whatever language the phone is set to.
+
+**Clean-up** (no visible change)
+- Shared names for values that were repeated in several files (the "added by you" note, the 0.05 s same-solve tolerance, picture names); a duplicate function in `RescanMerge.kt` and unused highlight words removed; outdated comments corrected.
+
+**Checked**
+- The OpenCV libraries are 16 KB aligned (needed by newer Android phones), and the app still has no internet permission.
 
 ### Review fixes (2026-11-09, branch `dev-v3.0.0-review-fixes`)
 
