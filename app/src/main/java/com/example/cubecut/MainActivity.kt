@@ -787,11 +787,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
                     }
                     val seconds = (System.currentTimeMillis() - started) / 1000
+                    // counted exactly like the list: every real solve, and every cut the "Only solves to check" switch would show
+                    // (the scan's notes AND the timing checks, after the merge)
+                    val nowChecks = checkCuts(merged.cuts, computeClips(merged.cuts, beforePad.toDouble(), afterPad.toDouble(), dur / 1000.0))
+                    val solveCount = merged.cuts.count { !isLeftover(it) }
+                    val toCheck = merged.cuts.indices.count { merged.cuts[it].noteNeedsCheck() || nowChecks.warnings.containsKey(it) }
                     analysisStatus = if (saved.isEmpty()) {
-                        "Done in ${seconds}s: ${report.solves.count { it.include && it.note.isEmpty() }} solves, " +
-                                "${report.solves.count { it.note.isNotEmpty() }} to check"
+                        "Done in ${seconds}s: $solveCount solves, $toCheck to check"
                     } else {
-                        "Re-scan done in ${seconds}s: " + merged.summary()
+                        "Re-scan done in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "")
                     }
                     finishedText = analysisStatus
                     setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job

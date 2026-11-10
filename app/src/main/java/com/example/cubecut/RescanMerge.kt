@@ -34,6 +34,13 @@ const val NOT_FOUND_AGAIN_NOTE = "not found again by the last Find solves - chec
 private const val SLACK_SEC = 0.3                  // both times known: the solve parts may be this far apart and still match
 private const val SLACK_UNKNOWN_SEC = 1.5          // a time unknown: only the stop moments can be compared, so allow more
 
+/**
+ * The shortest time from the end of one solve to the end of the next that a person can manage: reset the timer, scramble and solve.
+ * The fastest WCA scrambles (2x2, Pyraminx, Skewb) take a very fast person about 3-4 s, plus about 1 s for the timer and 1-2 s for a
+ * world-class solve. Less than this is almost always a misread of the time still on the display (e.g. 11.517 read as 1151 = 1.151).
+ */
+private const val MIN_SOLVE_CYCLE_SEC = 6.0
+
 /** What a re-scan did to the saved cuts. */
 class RescanResult(val cuts: List<CutItem>, val added: Int, val updated: Int, val kept: Int, val notFound: Int) {
     /** "2 new, 1 updated, 12 kept as you left them, 1 not found again (check them)" */
@@ -133,7 +140,8 @@ class CutChecks(val warnings: Map<Int, String>, val noClip: Set<Int>)
  * Looks for impossible timing between neighbouring solves, and flags BOTH solves of each pair, because either one can be the wrong one.
  * [clips] must be computeClips(cuts, ...) for the same [cuts].
  *  - too close: computeClips makes no clip for a solve that ends less than a second after the one before it;
- *  - overlap: a solve that started before the previous one stopped (worked out from the times shown) can't be right.
+ *  - overlap: a solve that started before the previous one stopped (worked out from the times shown) can't be right;
+ *  - too fast: a solve that ended less than MIN_SOLVE_CYCLE_SEC after the previous one (no time to scramble and solve).
  */
 fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
     val found = HashMap<Int, MutableList<String>>()
@@ -151,14 +159,23 @@ fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
         if (isLeftover(c)) continue
         if (prev >= 0) {
             val p = cuts[prev]
+            var paired = false                          // this pair already has a reason, so the "too fast" one isn't added as well
             if (i in noClip) {
                 flag(i, "too close to the solve before it, so it has no clip - delete one of them or move it", true)
                 flag(prev, "too close to the solve after it - one of the two is probably not a real solve")
+                paired = true
             }
             val t = parseTimeSeconds(c.timeText)
             if (t != null && c.stopSec - t < p.stopSec - SLACK_SEC) {
                 flag(i, "it would have started before the solve before it stopped - check this time or that one")
                 flag(prev, "the solve after it would have started before this one stopped - check this time or that one")
+                paired = true
+            }
+            val cycle = c.stopSec - p.stopSec
+            if (!paired && cycle < MIN_SOLVE_CYCLE_SEC) {
+                val s = "%.1f".format(cycle)
+                flag(i, "ended only $s s after the solve before it - too fast to scramble and solve, so one of the two is probably a misread")
+                flag(prev, "the solve after it ended only $s s after this one - one of the two is probably a misread")
             }
         } else if (i in noClip) {
             flag(i, "too close to the start of the video, so it has no clip", true)
