@@ -158,6 +158,7 @@ object SessionStore {
                 // version 5: has the user changed this cut? (a re-scan with Find solves leaves changed cuts alone)
                 db.execSQL("ALTER TABLE cuts ADD COLUMN user_edited INTEGER NOT NULL DEFAULT 0")
                 // older cuts have no such record: count the ones that clearly show a change as changed, so a re-scan never undoes it
+                // ('added by you' is ADDED_BY_YOU_NOTE as it was then; an old upgrade step is never edited)
                 db.execSQL(
                     "UPDATE cuts SET user_edited = 1 WHERE user_note <> '' OR note = 'added by you' OR (included = 0 AND note = '') " +
                             "OR include_scramble <> (SELECT f.scramble_all FROM footage f WHERE f.id = cuts.footage_id)"
@@ -355,12 +356,11 @@ object SessionStore {
 
     // ---------------------------------------------------------------- writing
 
-    /** Saves the whole current state of one session (cuts and settings) in one go, all or nothing. */
     /**
-     * Saves the editor's cuts and settings for one video.
+     * Saves the editor's cuts and settings for one video, in one go (all or nothing).
      * [moves]: cuts you moved with the -0.5 / +0.5 buttons since the last save, as (where it was saved -> where it is now). An export
      * is linked to its solve by where the cut is, so its record moves along, in the same step as the cuts (both are saved or neither).
-     * A record is not moved when the new spot is within 0.05 s of another cut or of another solve's export: two solves would then
+     * A record is not moved when the new spot is within SAME_SOLVE_SEC (0.05 s) of another cut or of another solve's export: two solves would then
      * share one export. It then stays where it was, as before moves were followed.
      */
     fun saveSession(
@@ -392,15 +392,15 @@ object SessionStore {
             val id = footageId.toString()
             for ((from, to) in moves) {
                 if (Math.abs(from - to) < 0.0005) continue                                  // moved back to where it was
-                if (cuts.count { Math.abs(it.stopSec - to) < 0.05 } > 1) continue          // another cut is right there
+                if (cuts.count { Math.abs(it.stopSec - to) < SAME_SOLVE_SEC } > 1) continue          // another cut is right there
                 val taken = d.rawQuery(
-                    "SELECT COUNT(*) FROM exports WHERE footage_id = ? AND ABS(stop_sec - ?) < 0.05 AND ABS(stop_sec - ?) >= 0.05",
+                    "SELECT COUNT(*) FROM exports WHERE footage_id = ? AND ABS(stop_sec - ?) < $SAME_SOLVE_SEC AND ABS(stop_sec - ?) >= $SAME_SOLVE_SEC",
                     arrayOf(id, to.toString(), from.toString())
                 ).use { c -> c.moveToFirst() && c.getInt(0) > 0 }
                 if (taken) continue                                                          // another solve's export is there
                 val v = ContentValues()
                 v.put("stop_sec", to)
-                d.update("exports", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.05", arrayOf(id, from.toString()))
+                d.update("exports", v, "footage_id = ? AND ABS(stop_sec - ?) < $SAME_SOLVE_SEC", arrayOf(id, from.toString()))
             }
             d.setTransactionSuccessful()
         } finally {
@@ -427,11 +427,11 @@ object SessionStore {
             if (sourceOk) {
                 val checks = checkCuts(cuts, computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0))
                 for ((i, c) in cuts.withIndex()) {
-                    val e = exports.filter { Math.abs(it.stopSec - c.stopSec) < 0.05 }.maxByOrNull { it.exportedMs }
+                    val e = exports.filter { Math.abs(it.stopSec - c.stopSec) < SAME_SOLVE_SEC }.maxByOrNull { it.exportedMs }
                     clips.add(GalleryClip(f, i, cuts.size, c, e, false, checks.warnings[i] ?: "", i in checks.noClip))
                 }
                 // exported files whose solve is gone (deleted in the editor): shown from the file, newest export per spot
-                val orphans = exports.filter { e -> cuts.none { Math.abs(it.stopSec - e.stopSec) < 0.05 } }
+                val orphans = exports.filter { e -> cuts.none { Math.abs(it.stopSec - e.stopSec) < SAME_SOLVE_SEC } }
                     .groupBy { Math.round(it.stopSec * 20.0) }.map { entry -> entry.value.maxByOrNull { it.exportedMs }!! }
                 for (e in orphans) {
                     clips.add(GalleryClip(f, -1, cuts.size, CutItem(e.stopSec, e.timeText, true, "", true), e, true, solveDeleted = true))
@@ -477,7 +477,7 @@ object SessionStore {
         try {
             for (e in items) {
                 d.delete(
-                    "exports", "footage_id = ? AND ABS(stop_sec - ?) < 0.05 AND trashed_ms = 0",
+                    "exports", "footage_id = ? AND ABS(stop_sec - ?) < $SAME_SOLVE_SEC AND trashed_ms = 0",
                     arrayOf(footageId.toString(), e.stopSec.toString())
                 )
                 val v = ContentValues()
@@ -672,16 +672,22 @@ class GalleryClip(
     val footage: Footage, val index: Int, val total: Int, val cut: CutItem, val exported: ExportedClip?, val exportOnly: Boolean,
     val warning: String = "", val noClip: Boolean = false, val solveDeleted: Boolean = false
 ) {
-    val key: String get() = "${footage.id}_${Math.round(cut.stopSec * 1000.0)}"
+    val key: String get() = cutKey(footage.id, cut.stopSec)
     val listKey: String get() = if (exportOnly && exported != null) "x${exported.id}" else "${footage.id}:$index"
     val seconds: Double? get() = parseTimeSeconds(cut.timeText)
-    private val noteNeedsCheck: Boolean get() = !cut.reviewed && cut.note.isNotEmpty() && cut.note != "added by you"
+    private val noteNeedsCheck: Boolean get() = cut.noteNeedsCheck()
     val needsCheck: Boolean get() = noteNeedsCheck || warning.isNotEmpty()
     /** Everything to check about this clip, in one line ("" = nothing). */
     val checkText: String get() = listOf(if (noteNeedsCheck) cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
     val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
     val sharedList: List<String> get() = platformsIn(cut.userNote)
 }
+
+/**
+ * A cut's name for its pictures: its session and the moment it stops, e.g. "12_83417". The Gallery's grid picture of a clip is
+ * "c_" + this; the editor's delete window uses the same picture.
+ */
+fun cutKey(footageId: Long, stopSec: Double): String = "${footageId}_${Math.round(stopSec * 1000.0)}"
 
 /** "Sunday practice \u00B7 Solve 03 \u00B7 11.263s" ([number] 0 or less = the solve's place in the session is unknown) */
 fun clipTitle(footageTitle: String, number: Int, timeText: String): String {

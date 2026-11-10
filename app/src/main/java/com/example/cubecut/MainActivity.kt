@@ -195,8 +195,7 @@ fun AppRoot(ui: GalleryUiState) {
 
 // words that mean "look at this one" - they are shown in bold amber in the solves list
 private val CHECK_KEYWORDS = listOf(
-    "check", "couldn't read", "couldn't see", "not steady", "already on the timer", "time unknown",
-    "no time", "too close", "will be skipped"
+    "check", "not steady", "already on the timer", "time unknown", "no time", "too close"
 )
 
 fun highlightCheck(text: String): AnnotatedString = buildAnnotatedString {
@@ -359,8 +358,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
     // ---- saved sessions (version 3) ----
     var footageId by remember { mutableStateOf<Long?>(null) }    // this video's saved record (null = none yet, or still loading it)
-    var pendingSeek by remember { mutableStateOf(request.seekSec) }
-    var scrollToSelected by remember { mutableStateOf(false) }          // after opening from a Gallery clip: bring its row into view     // a solve to jump to once the video has loaded (from a Gallery clip)
+    var pendingSeek by remember { mutableStateOf(request.seekSec) }    // a solve to jump to once the video has loaded (from a Gallery clip)
+    var scrollToSelected by remember { mutableStateOf(false) }          // after opening from a Gallery clip: bring its row into view
 
     // ---- settings ----
     var beforePad by remember { mutableStateOf(2.5f) }           // seconds kept BEFORE the solve starts (used when the scramble is left out)
@@ -426,23 +425,35 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var setupBusy by remember { mutableStateOf(false) }
     var setupMessage by remember { mutableStateOf("") }
 
-    // The timer engine holds OpenCV memory that the garbage collector can't see, so it is freed by hand when the editor closes.
-    // A background job that is still reading with it (Find solves, Read timer here) must finish first, or it
-    // would read with freed memory: each one counts itself in and out here, and the last one out frees the engine.
-    // (plain arrays, not screen state: only the main thread touches them, and changing them must not redraw anything)
-    val engineUsers = remember { IntArray(1) }
+    // A timer engine holds OpenCV memory that the garbage collector can't see, so it is freed by hand: when a new setup or a new
+    // video replaces it, and when the editor closes. A background job that is still reading with it (Find solves, Read timer here)
+    // must finish first, or it would read with freed memory: each job counts itself in and out per engine, and an engine that was
+    // replaced (or the editor closed) is freed when its last job is out.
+    // (plain collections, not screen state: only the main thread touches them, and changing them must not redraw anything)
+    val engineUses = remember { HashMap<TimerEngine, Int>() }
+    val retiredEngines = remember { HashSet<TimerEngine>() }
     val editorClosed = remember { BooleanArray(1) }
-    fun startUsing() {
-        engineUsers[0]++
+    fun startUsing(engine: TimerEngine) {
+        engineUses[engine] = (engineUses[engine] ?: 0) + 1
     }
     fun stopUsing(engine: TimerEngine) {
-        engineUsers[0]--
-        if (editorClosed[0] && engineUsers[0] == 0) engine.release()
+        val left = (engineUses[engine] ?: 1) - 1
+        if (left > 0) {
+            engineUses[engine] = left
+            return
+        }
+        engineUses.remove(engine)
+        if (editorClosed[0] || retiredEngines.remove(engine)) engine.release()
+    }
+    /** The engine is no longer the current one: free it now, or when the last job reading with it is done. */
+    fun retireEngine(engine: TimerEngine?) {
+        if (engine == null) return
+        if ((engineUses[engine] ?: 0) == 0) engine.release() else retiredEngines.add(engine)
     }
     DisposableEffect(Unit) {
         onDispose {
             editorClosed[0] = true
-            if (engineUsers[0] == 0) timerEngine?.release()
+            retireEngine(timerEngine)
         }
     }
 
@@ -493,7 +504,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         pendingMoves.clear()
         exportedAt = emptyList()
         // the timer setup belongs to one video: a new video needs a new setup
-        timerEngine?.release()
+        retireEngine(timerEngine)
         timerEngine = null
         timerDebug = null
         timerMessage = ""
@@ -611,7 +622,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
     }
 
-    // the timer setup is not kept between runs any more; remove the files an older version left behind
+    // version 1.x saved one timer setup for the whole app (since 3.0.0 the setup is saved per video in SessionStore);
+    // remove the files that old version left behind
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { TimerStore.clear(context) }
     }
@@ -659,11 +671,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             }
         }
         // cuts moved but not saved yet: the saved records are still at the old spots, so follow the moves here
-        exportedAt = found.map { at -> pendingMoves.entries.firstOrNull { Math.abs(it.key - at) < 0.05 }?.value ?: at }
+        exportedAt = found.map { at -> pendingMoves.entries.firstOrNull { Math.abs(it.key - at) < SAME_SOLVE_SEC }?.value ?: at }
     }
     fun isExported(i: Int): Boolean {
         val c = cuts.getOrNull(i) ?: return false
-        return exportedAt.any { Math.abs(it - c.stopSec) < 0.05 }
+        return exportedAt.any { Math.abs(it - c.stopSec) < SAME_SOLVE_SEC }
     }
 
     // the clips that would be exported right now
@@ -677,7 +689,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     /** Does this cut need a look? (a scan note you haven't marked as checked, or a timing problem) */
     fun needsCheck(i: Int): Boolean {
         val c = cuts.getOrNull(i) ?: return false
-        return (!c.reviewed && c.note.isNotEmpty() && c.note != "added by you") || checks.warnings.containsKey(i)
+        return c.noteNeedsCheck() || checks.warnings.containsKey(i)
     }
     fun markChecked(i: Int) {
         if (i in cuts.indices) cuts[i] = cuts[i].copy(reviewed = true, edited = true)
@@ -733,7 +745,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         if (uri != null && engine != null && dur > 0 && !analyzing) {
             exoPlayer.pause()
             scope.launch {
-                startUsing()                            // the scan reads with the timer engine (see stopUsing in finally)
+                startUsing(engine)                      // the scan reads with the timer engine (see stopUsing in finally)
                 analyzing = true
                 setupExpanded = false                   // fold the Setup box away as soon as the scan starts
                 cancelScan = false
@@ -873,7 +885,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             val export = withContext(Dispatchers.IO) {
                 try {
                     SessionStore.loadExports(context, id)
-                        .filter { it.trashedMs == 0L && Math.abs(it.stopSec - c.stopSec) < 0.05 && SessionStore.canOpen(context, Uri.parse(it.uri)) }
+                        .filter { it.trashedMs == 0L && Math.abs(it.stopSec - c.stopSec) < SAME_SOLVE_SEC && SessionStore.canOpen(context, Uri.parse(it.uri)) }
                         .maxByOrNull { it.exportedMs }
                 } catch (e: Exception) {
                     null
@@ -898,7 +910,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     withContext(Dispatchers.IO) {
                         try { SessionStore.setExportTrashed(context, p.second.id, System.currentTimeMillis()) } catch (e: Exception) { }
                     }
-                    exportedAt = exportedAt.filter { Math.abs(it - p.first.stopSec) >= 0.05 }
+                    exportedAt = exportedAt.filter { Math.abs(it - p.first.stopSec) >= SAME_SOLVE_SEC }
                     deleteCut(cuts.indexOf(p.first))
                     status = "Deleted the solve and its file. The file can be restored from Recently deleted in the Gallery."
                 }
@@ -1400,7 +1412,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         }
 
                         if (setupExpanded) {
-                            // the open box scrolls inside itself if it is taller than its allowed height
                             Column {
                                 Spacer(Modifier.height(8.dp))
                                 Text("1. Timer", style = MaterialTheme.typography.titleSmall)
@@ -1437,18 +1448,19 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                             if (uri != null && engine != null) {
                                                 scope.launch {
                                                     timerMessage = "Reading..."
-                                                    val bmp = withContext(Dispatchers.IO) { grabFrame(context, uri, atMs) }
-                                                    if (bmp == null) {
-                                                        timerMessage = "Couldn't read a picture here"
-                                                    } else {
-                                                        startUsing()
-                                                        val res = try {
-                                                            withContext(Dispatchers.Default) { engine.readFrame(bmp) }
-                                                        } finally {
-                                                            stopUsing(engine)
+                                                    // counted in from the start: a new setup made while the picture loads must not free this engine
+                                                    startUsing(engine)
+                                                    try {
+                                                        val bmp = withContext(Dispatchers.IO) { grabFrame(context, uri, atMs) }
+                                                        if (bmp == null) {
+                                                            timerMessage = "Couldn't read a picture here"
+                                                        } else {
+                                                            val res = withContext(Dispatchers.Default) { engine.readFrame(bmp) }
+                                                            timerMessage = res.message
+                                                            timerDebug = res.debug
                                                         }
-                                                        timerMessage = res.message
-                                                        timerDebug = res.debug
+                                                    } finally {
+                                                        stopUsing(engine)
                                                     }
                                                 }
                                             }
@@ -1727,7 +1739,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     }
                                     val warning = checks.warnings[index]
                                     if (warning != null) Text(highlightCheck("check: $warning"), style = MaterialTheme.typography.bodySmall)
-                                    if (!item.reviewed && item.note.isNotEmpty() && item.note != "added by you") {
+                                    if (item.noteNeedsCheck()) {
                                         Text(highlightCheck("check: ${item.note}"), style = MaterialTheme.typography.bodySmall)
                                     }
                                     // it was looked at and is fine: stop flagging it
@@ -1946,7 +1958,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 } else {
                                     var position = cuts.indexOfFirst { it.stopSec > newCutAt }
                                     if (position < 0) position = cuts.size
-                                    cuts.add(position, CutItem(newCutAt, typed, true, "added by you", scrambleAll, edited = true))
+                                    cuts.add(position, CutItem(newCutAt, typed, true, ADDED_BY_YOU_NOTE, scrambleAll, edited = true))
                                     rowBoxes.clear()
                                     addCutAt = null
                                     selectedCut = position
@@ -1979,7 +1991,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 .height(120.dp)
                                 .clip(RoundedCornerShape(8.dp))
                         ) {
-                            Thumb("c_${footageId}_$stopMs", videoUri, stopMs, Modifier.fillMaxSize())
+                            Thumb("c_" + cutKey(footageId ?: -1L, askCut.stopSec), videoUri, stopMs, Modifier.fillMaxSize())
                             Text(
                                 if (askCut.timeText.isBlank()) "time unknown" else "${askCut.timeText} s",
                                 color = Color.White,
@@ -2034,7 +2046,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 val earlier = pendingMoves.entries.firstOrNull { Math.abs(it.value - from) < 0.0005 }
                 if (earlier != null) earlier.setValue(to) else pendingMoves[from] = to
                 // the "Already exported" note follows the cut too
-                exportedAt = exportedAt.map { if (Math.abs(it - from) < 0.05) to else it }
+                exportedAt = exportedAt.map { if (Math.abs(it - from) < SAME_SOLVE_SEC) to else it }
                 seekToSec(to)
             }
             // the frame the cut is on, shown in this window (made again after each move, a moment after the last tap)
@@ -2167,7 +2179,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         val ref = res.reference
                         if (setup != null && ref != null) {
                             val newEngine = withContext(Dispatchers.Default) { TimerEngine(setup, ref) }
-                            timerEngine?.release()
+                            retireEngine(timerEngine)
                             timerEngine = newEngine
                             val zeroWarning = if (typed.any { it.isDigit() } && typed.all { !it.isDigit() || it == '0' })
                                 "\nA zero doesn't teach the timer much. Set up again on a frame that shows a finished time."

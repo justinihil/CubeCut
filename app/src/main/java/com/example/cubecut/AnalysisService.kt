@@ -29,9 +29,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 /**
- * A "foreground service": it does no work itself. Its only job is to show a notification while
- * Find solves is running (update() is given percent, 100), which tells Android "this app is busy, please don't put it to sleep"
- * - so the work keeps going when you switch to another app.
+ * A "foreground service": it does no work itself. Its only job is to show a notification while Find solves is running, which tells
+ * Android "this app is busy, please don't put it to sleep" - so the work keeps going when you switch to another app.
+ * The progress bar is set with update(context, percent, 100).
  * The actual work still happens in MainActivity (runFindSolves).
  *
  * Android asks what kind of work it is. Reading a video is "media processing" (the right label, which Google Play checks), but that

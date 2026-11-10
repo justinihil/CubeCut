@@ -181,6 +181,8 @@ private const val VIEWER_PICTURE_HEIGHT = 900
 private const val MIN_COLUMNS = 2
 private const val MAX_COLUMNS = 6
 
+// tag colours on top of pictures: fixed on purpose (a picture looks the same in light and dark mode); everything on a plain
+// background takes its colours from Theme.kt instead
 private val AMBER = Color(0xFFFFB74D)
 private val GREY = Color(0xFF757575)
 private val GREEN = Color(0xFF2E7D32)
@@ -1188,7 +1190,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val request = ui.openClip
             if (request != null) {
                 ui.openClip = null
-                val found = loaded.clips.firstOrNull { it.footage.id == request.first && Math.abs(it.cut.stopSec - request.second) < 0.05 }
+                val found = loaded.clips.firstOrNull { it.footage.id == request.first && Math.abs(it.cut.stopSec - request.second) < SAME_SOLVE_SEC }
                 if (found != null) {
                     ui.tab = 0
                     ui.openViewer(loaded.clips.filter { it.footage.id == found.footage.id }.sortedBy { it.index }, found)
@@ -1331,7 +1333,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val shown = latestShown
             // the same clip, found by its key, or else by its video and its place in the video (in case the key changed, e.g. after an export)
             var i = shown.indexOfFirst { it.listKey == back.listKey }
-            if (i < 0) i = shown.indexOfFirst { it.footage.id == back.footage.id && Math.abs(it.cut.stopSec - back.cut.stopSec) < 0.05 }
+            if (i < 0) i = shown.indexOfFirst { it.footage.id == back.footage.id && Math.abs(it.cut.stopSec - back.cut.stopSec) < SAME_SOLVE_SEC }
             if (i < 0) return@LaunchedEffect          // filtered out of the Clips tab: nothing to point at
             if (ui.clipsGrid) revealGridItem(clipsGridState, i) else revealListItem(clipsListState, i)
             key = "c_" + shown[i].listKey
@@ -2193,7 +2195,7 @@ private fun clipWindow(clip: GalleryClip, cuts: List<CutItem>): Pair<Double, Dou
     val durSec = f.durationMs / 1000.0
     val computed = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), durSec).firstOrNull { it.cutIndex == clip.index }
     if (computed != null) return Pair(computed.startSec, computed.endSec)
-    // a cut that is switched off has no exported clip; show the stretch leading up to it instead
+    // a solve with no clip (too close to the one before, or left over from before the video): show the stretch leading up to it instead
     return Pair(max(0.0, clip.cut.stopSec - 20.0), min(durSec, clip.cut.stopSec + f.afterPad))
 }
 

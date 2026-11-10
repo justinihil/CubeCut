@@ -27,6 +27,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 
@@ -38,12 +39,24 @@ data class CutItem(
     val stopSec: Double,                  // the first frame that shows the final time, in seconds from the start of the video
     val timeText: String,                 // what the timer showed, e.g. "11.263" ("" = unknown)
     val included: Boolean,                // true = a real solve; false only for a cut left over from before the video began (see isLeftover)
-    val note: String,                     // why it needs a look, or "added by you"
+    val note: String,                     // why it needs a look, or ADDED_BY_YOU_NOTE
     val includeScramble: Boolean = true,  // true = clip runs from the end of the previous clip (scramble included); false = the solve only
     val userNote: String = "",            // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
     val edited: Boolean = false,          // true once you changed this cut yourself (its scramble, time, position, note or check) or added it: Find solves then leaves it alone
     val reviewed: Boolean = false         // you marked its "check" as looked at: its scan note and timing warnings stop flagging it (a solve with no clip stays flagged)
 )
+
+/** The note on a cut added by hand (Add a missed solve). It is not a reason to check the cut. */
+const val ADDED_BY_YOU_NOTE = "added by you"
+
+/**
+ * Two stop times closer than this belong to the same solve. Used everywhere an exported file, a Gallery clip or an editor request is
+ * linked to its cut by where the cut is.
+ */
+const val SAME_SOLVE_SEC = 0.05
+
+/** True if the scan left a note on this cut that you haven't marked as checked yet. */
+fun CutItem.noteNeedsCheck(): Boolean = !reviewed && note.isNotEmpty() && note != ADDED_BY_YOU_NOTE
 
 /** One video file that will be exported. */
 class Clip(
@@ -151,15 +164,17 @@ object ClipExporter {
     fun safeTitle(title: String): String = title.replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), "_").trim().take(40).trim()
 
     /**
-     * "Solve_03_11.263s.mp4", or "Solve_03_unknown.mp4" when the time is not known.
-     * With a [prefix] (the session's title): "Sunday practice_Solve_03_11.263s.mp4", numbered like the Gallery ("Solve 3 of 20"),
-     * so clips from different videos never get the same name.
+     * "Sunday practice_Solve_03_11.263s.mp4" ([prefix] = the session's title), or "..._Solve_03_unknown.mp4" when the time is not known.
+     * Numbered like the Gallery ("Solve 3 of 20"), so clips from different videos never get the same name. Without a prefix (never
+     * the case now, every export passes the title) it is just "Solve_03_11.263s.mp4", with the same numbering.
+     * The digits are always plain 0-9, whatever language the phone is set to (Locale.ROOT).
      */
     fun fileName(c: Clip, prefix: String = ""): String {
         val t = safeTime(c.timeText)
         val tail = if (t == "unknown") t else t + "s"
         val p = safeTitle(prefix)
-        return if (p.isEmpty()) "Solve_%02d_%s.mp4".format(c.number, tail) else "%s_Solve_%02d_%s.mp4".format(p, c.cutIndex + 1, tail)
+        val solve = "Solve_%02d_%s.mp4".format(Locale.ROOT, c.cutIndex + 1, tail)
+        return if (p.isEmpty()) solve else "${p}_$solve"
     }
 
     /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. [prefix]: see fileName. */

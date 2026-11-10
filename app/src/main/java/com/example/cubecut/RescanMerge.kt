@@ -31,7 +31,6 @@ package com.example.cubecut
 /** The note given to an untouched cut that the latest scan did not find again. */
 const val NOT_FOUND_AGAIN_NOTE = "not found again by the last Find solves - check it"
 
-private const val EXPORT_MATCH_SEC = 0.05          // the same tolerance SessionStore uses to link an exported file to its cut
 private const val SLACK_SEC = 0.3                  // both times known: the solve parts may be this far apart and still match
 private const val SLACK_UNKNOWN_SEC = 1.5          // a time unknown: only the stop moments can be compared, so allow more
 
@@ -67,7 +66,7 @@ private fun sameSolve(a: CutItem, b: CutItem): Boolean {
  * video (an exported cut is kept as it is, so its link to the exported file is never lost).
  */
 fun mergeRescan(saved: List<CutItem>, found: List<CutItem>, exportedStops: List<Double>): RescanResult {
-    fun keepAsIs(c: CutItem) = c.edited || exportedStops.any { Math.abs(it - c.stopSec) < EXPORT_MATCH_SEC }
+    fun keepAsIs(c: CutItem) = c.edited || exportedStops.any { Math.abs(it - c.stopSec) < SAME_SOLVE_SEC }
 
     val matched = BooleanArray(saved.size)
     val out = ArrayList<CutItem>()
@@ -169,19 +168,13 @@ fun checkCuts(cuts: List<CutItem>, clips: List<Clip>): CutChecks {
     return CutChecks(found.mapValues { it.value.joinToString("; ") }, noClip)
 }
 // ---------------------------------------------------------------------------------------
-// Checks for a cut added by hand ("+ Cut at playhead"). The user puts the playhead on the first frame of the final time and types the
+// Checks for a cut added by hand ("Add a missed solve at the playhead", solveSpan above gives where each solve runs). The user puts the playhead on the first frame of the final time and types the
 // solve time; the solve then runs from (playhead - time) to the playhead. Two solves can't overlap, so:
 //  - a playhead inside an existing solve can't take a new cut (that would be the same solve again, or one of the two isn't real);
 //  - a typed time that makes the new solve start before an earlier solve stopped is refused.
 // The same 0.3 s slack as checkCuts is used, so a cut added here is never flagged by checkCuts for overlapping, and nothing checkCuts
 // accepts is refused here.
 // ---------------------------------------------------------------------------------------
-
-/** Where the solve of cut [c] runs (from its start to its stop); just its stop moment if its time is unknown. */
-private fun solveRange(c: CutItem): Pair<Double, Double> {
-    val t = parseTimeSeconds(c.timeText)
-    return if (t != null) Pair(c.stopSec - t, c.stopSec) else Pair(c.stopSec, c.stopSec)
-}
 
 /**
  * The index of the solve the playhead at [atSec] sits inside (its solve part, or within 0.3 s after its stop, which would be the same
@@ -192,7 +185,7 @@ fun solveAtPlayhead(cuts: List<CutItem>, atSec: Double): Int {
     for (i in cuts.indices) {
         val c = cuts[i]
         if (isLeftover(c)) continue
-        val (start, stop) = solveRange(c)
+        val (start, stop) = solveSpan(c)
         val inside = if (stop > start) atSec > start + SLACK_SEC && atSec < stop + SLACK_SEC else Math.abs(atSec - stop) < SLACK_SEC
         if (inside && (best < 0 || Math.abs(cuts[best].stopSec - atSec) > Math.abs(c.stopSec - atSec))) best = i
     }
@@ -209,7 +202,7 @@ fun solveOverlappedBy(cuts: List<CutItem>, stopSec: Double, timeSec: Double): In
     for (i in cuts.indices) {
         val c = cuts[i]
         if (isLeftover(c)) continue
-        val (start, stop) = solveRange(c)
+        val (start, stop) = solveSpan(c)
         val overlaps = if (stop > start) newStart < stop - SLACK_SEC && start < stopSec - SLACK_SEC
         else stop > newStart + SLACK_SEC && stop < stopSec + SLACK_SEC
         if (overlaps && (best < 0 || Math.abs(cuts[best].stopSec - stopSec) > Math.abs(c.stopSec - stopSec))) best = i
