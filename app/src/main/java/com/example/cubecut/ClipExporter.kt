@@ -172,10 +172,13 @@ object ClipExporter {
             onProgress(i, clips.size)
             val made = Made()
             val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix), made, buffer)
+                ?: made.failure                        // the copy worked, but the file couldn't be finished in the gallery
             if (error == null) {
                 done++
                 val uri = made.uri
-                if (uri != null) files.add(ExportedFile(clip, uri, fileName(clip, prefix), if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
+                // the name Android really gave the file (it adds " (1)" when the name is taken, e.g. after exporting again)
+                val savedName = made.fileName ?: fileName(clip, prefix)
+                if (uri != null) files.add(ExportedFile(clip, uri, savedName, if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
             } else {
                 failed.add("${fileName(clip, prefix)}: $error")
             }
@@ -189,8 +192,20 @@ object ClipExporter {
     /** The new file in the phone's gallery (Movies/CubeCut): opened for writing, and its address. */
     private class Output(val pfd: ParcelFileDescriptor, val uri: Uri)
 
-    /** What one finished export reports back: where the new file is and where its first picture comes from in the source video. */
-    private class Made(var uri: String? = null, var startUs: Long = -1L)
+    /**
+     * What one finished export reports back: where the new file is, its real name, and where its first picture comes from in the source
+     * video. [failure] is set when the copy worked but the file couldn't be made visible in the gallery (it is removed again then).
+     */
+    private class Made(var uri: String? = null, var startUs: Long = -1L, var fileName: String? = null, var failure: String? = null)
+
+    /** The name the gallery gave the file at [uri], or null if it doesn't say. */
+    private fun savedName(context: Context, uri: Uri): String? = try {
+        context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
+        }
+    } catch (e: Exception) {
+        null
+    }
 
     // (CubeCut needs Android 11 or newer, so the file always goes to the shared Movies/CubeCut folder, never an app-only one)
     private fun openOutput(context: Context, name: String): Output {
@@ -330,11 +345,24 @@ object ClipExporter {
             }
             val uri = output?.uri
             if (uri != null) {
+                var keep = success
                 if (success) {
-                    val values = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-                    context.contentResolver.update(uri, values, null, null)
-                } else {
-                    context.contentResolver.delete(uri, null, null)       // don't leave a broken file behind
+                    // make the finished file visible in the gallery; if Android refuses, it counts as a failed export
+                    try {
+                        val values = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+                        context.contentResolver.update(uri, values, null, null)
+                        made.fileName = savedName(context, uri)
+                    } catch (e: Exception) {
+                        keep = false
+                        made.uri = null
+                        made.failure = "couldn't finish saving the file: ${e.message ?: e.javaClass.simpleName}"
+                    }
+                }
+                if (!keep) {
+                    try {
+                        context.contentResolver.delete(uri, null, null)       // don't leave a broken file behind
+                    } catch (e: Exception) {
+                    }
                 }
             }
         }

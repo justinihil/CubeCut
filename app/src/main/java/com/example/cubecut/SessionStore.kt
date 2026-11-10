@@ -467,13 +467,19 @@ object SessionStore {
             out
         }
 
-    /** Remembers the clips an export has just written. A clip exported again replaces the earlier record for the same solve. */
+    /**
+     * Remembers the clips an export has just written. A clip exported again replaces the earlier record for the same solve, except
+     * a record whose file is in the phone's trash: that one is kept, so the file stays in Recently deleted and can still be restored.
+     */
     fun recordExports(context: Context, footageId: Long, items: List<ExportedClip>) {
         val d = db(context)
         d.beginTransaction()
         try {
             for (e in items) {
-                d.delete("exports", "footage_id = ? AND ABS(stop_sec - ?) < 0.05", arrayOf(footageId.toString(), e.stopSec.toString()))
+                d.delete(
+                    "exports", "footage_id = ? AND ABS(stop_sec - ?) < 0.05 AND trashed_ms = 0",
+                    arrayOf(footageId.toString(), e.stopSec.toString())
+                )
                 val v = ContentValues()
                 v.put("footage_id", footageId)
                 v.put("stop_sec", e.stopSec)

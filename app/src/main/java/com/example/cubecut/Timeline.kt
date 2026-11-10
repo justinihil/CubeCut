@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -53,6 +55,8 @@ class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Doubl
  * markerStates: 1 = a solve (green), anything else (2) = a cut left over from before the video began, which makes no clip (grey).
  * A cut marker sits on the FIRST frame that shows the final time (the moment the timer stopped).
  * clipBars: dim green = scramble part of a clip, bright green = the solve part (solve with its buffers).
+ * onSeek: the touch handlers below are set up once and keep running, so they always call the newest onSeek (rememberUpdatedState);
+ * otherwise a tap would still use the solves list from when the handler was set up (after Find solves or a delete).
  * position: where the playhead is, in ms. It is a function, read only while drawing the red line,
  * so the playhead moving redraws just that line: the film strip, the clip bars, the markers and the rest of the editor stay as
  * they are.
@@ -72,6 +76,7 @@ fun Timeline(
 ) {
     fun fraction(): Float = if (durationMs > 0) (position().toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val zoomed = zoom > 1.01f
+    val seek by rememberUpdatedState(onSeek)
 
     BoxWithConstraints(
         Modifier
@@ -92,20 +97,20 @@ fun Timeline(
                 Modifier
                     .width(viewportWidth * zoom)
                     .fillMaxHeight()
-                    // tap anywhere on the timeline to jump there
-                    .pointerInput(durationMs, zoom) {
+                    // tap anywhere on the timeline to jump there (size is read at the moment of the tap, so a zoom change needs no restart)
+                    .pointerInput(durationMs) {
                         detectTapGestures { tap ->
                             if (durationMs > 0) {
-                                onSeek((tap.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
+                                seek((tap.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
                             }
                         }
                     }
                     // at zoom 1: drag a finger along it to scrub (when zoomed, dragging scrolls instead)
-                    .pointerInput(durationMs, zoom) {
+                    .pointerInput(durationMs, zoomed) {
                         if (!zoomed) {
                             detectHorizontalDragGestures { change, _ ->
                                 if (durationMs > 0) {
-                                    onSeek((change.position.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
+                                    seek((change.position.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
                                 }
                             }
                         }

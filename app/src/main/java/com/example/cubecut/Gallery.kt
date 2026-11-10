@@ -142,6 +142,8 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items as listItems
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -2660,7 +2662,14 @@ fun ClipViewer(
     val current = list[activePage.coerceIn(0, list.size - 1)]
     val footage = current.footage
 
-    val player = remember { ExoPlayer.Builder(context).build() }
+    val player = remember {
+        ExoPlayer.Builder(context)
+            // CubeCut asks for the sound like any video app: music elsewhere pauses while a video plays, a call or another app
+            // playing sound pauses this one, and pulling out headphones pauses it instead of switching to the speaker
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+    }
     DisposableEffect(Unit) { onDispose { player.release() } }
 
     // leaving the app (home, another app, screen off) stops the sound: pause as soon as CubeCut is no longer in front
@@ -3109,7 +3118,7 @@ fun ClipViewer(
                         if (exportedFile != null) "Exported as ${exportedFile.fileName} on ${formatDate(exportedFile.exportedMs)}"
                         else "Not exported yet",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (exportedFile != null) GREEN else MaterialTheme.colorScheme.onSurface
+                        color = if (exportedFile != null) AppColors.keep else MaterialTheme.colorScheme.onSurface
                     )
                     if (playsExport) {
                         Text("The original video is gone, so this is the exported file.", style = MaterialTheme.typography.bodySmall)

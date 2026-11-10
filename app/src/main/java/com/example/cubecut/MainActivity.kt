@@ -121,6 +121,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -445,7 +447,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
 
     // ---- the video player ----
-    val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context)
+            // CubeCut asks for the sound like any video app: music elsewhere pauses while a video plays, a call or another app
+            // playing sound pauses this one, and pulling out headphones pauses it instead of switching to the speaker
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+    }
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
     // leaving the app (home, another app, screen off) stops the sound: pause as soon as CubeCut is no longer in front
@@ -1374,7 +1383,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             Box(
                                 Modifier
                                     .size(12.dp)
-                                    .background(if (engineNow != null) Color(0xFF4CAF50) else Color(0xFFFF9800), CircleShape)
+                                    .background(if (engineNow != null) AppColors.keep else AppColors.check, CircleShape)
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
