@@ -23,13 +23,11 @@ import android.media.MediaExtractor
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
-import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 
@@ -40,10 +38,25 @@ import kotlin.math.min
 data class CutItem(
     val stopSec: Double,                  // the first frame that shows the final time, in seconds from the start of the video
     val timeText: String,                 // what the timer showed, e.g. "11.263" ("" = unknown)
-    val included: Boolean,                // true = this cut is exported as a clip
-    val note: String,                     // why it needs a look, or "added by you"
-    val includeScramble: Boolean = true   // true = clip runs from the end of the previous clip (scramble included); false = the solve only
+    val included: Boolean,                // true = a real solve; false only for a cut left over from before the video began (see isLeftover)
+    val note: String,                     // why it needs a look, or ADDED_BY_YOU_NOTE
+    val includeScramble: Boolean = true,  // true = clip runs from the end of the previous clip (scramble included); false = the solve only
+    val userNote: String = "",            // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
+    val edited: Boolean = false,          // true once you changed this cut yourself (its scramble, time, position, note or check) or added it: Find solves then leaves it alone
+    val reviewed: Boolean = false         // you marked its "check" as looked at: its scan note and timing warnings stop flagging it (a solve with no clip stays flagged)
 )
+
+/** The note on a cut added by hand (Add a missed solve). It is not a reason to check the cut. */
+const val ADDED_BY_YOU_NOTE = "added by you"
+
+/**
+ * Two stop times closer than this belong to the same solve. Used everywhere an exported file, a Gallery clip or an editor request is
+ * linked to its cut by where the cut is.
+ */
+const val SAME_SOLVE_SEC = 0.05
+
+/** True if the scan left a note on this cut that you haven't marked as checked yet. */
+fun CutItem.noteNeedsCheck(): Boolean = !reviewed && note.isNotEmpty() && note != ADDED_BY_YOU_NOTE
 
 /** One video file that will be exported. */
 class Clip(
@@ -121,7 +134,10 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
     return clips
 }
 
-class ExportResult(val done: Int, val failed: List<String>, val message: String)
+/** One exported file: the clip it came from, where the file is, and where in that file the final time first shows. */
+class ExportedFile(val clip: Clip, val uri: String, val fileName: String, val startSec: Double)
+
+class ExportResult(val done: Int, val failed: List<String>, val message: String, val files: List<ExportedFile> = emptyList())
 
 object ClipExporter {
     private const val FOLDER = "CubeCut"
@@ -129,8 +145,14 @@ object ClipExporter {
     private const val MAX_BUFFER = 64 * 1024 * 1024
     private const val AUDIO_SLACK_US = 25_000L   // one audio frame is about 21 ms; keep the one that starts just before the keyframe
 
-    // one buffer for all clips (clips are exported one after another); it only grows if a sample doesn't fit
-    private var sampleBuffer: ByteBuffer = ByteBuffer.allocate(START_BUFFER)
+    /**
+     * The memory one sample is copied through. Each export() call has its own (shared by its clips, which are exported one after
+     * another), so two exports running at the same time (the player's and a batch) can never write into each other's buffer.
+     * It starts at 4 MB and only grows if a sample doesn't fit.
+     */
+    private class SampleBuffer {
+        var bytes: ByteBuffer = ByteBuffer.allocate(START_BUFFER)
+    }
 
     /** "1:02.345" -> "1m02.345", "" -> "unknown" (colons are not allowed in file names). */
     fun safeTime(timeText: String): String {
@@ -138,47 +160,81 @@ object ClipExporter {
         return if (t.isEmpty()) "unknown" else t
     }
 
-    /** "Solve_03_11.263s.mp4", or "Solve_03_unknown.mp4" when the time is not known. */
-    fun fileName(c: Clip): String {
+    /** A session title made safe for a file name: no characters Android or PCs refuse, at most 40 characters. */
+    fun safeTitle(title: String): String = title.replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), "_").trim().take(40).trim()
+
+    /**
+     * "Sunday practice_Solve_03_11.263s.mp4" ([prefix] = the session's title), or "..._Solve_03_unknown.mp4" when the time is not known.
+     * Numbered like the Gallery ("Solve 3 of 20"), so clips from different videos never get the same name. Without a prefix (never
+     * the case now, every export passes the title) it is just "Solve_03_11.263s.mp4", with the same numbering.
+     * The digits are always plain 0-9, whatever language the phone is set to (Locale.ROOT).
+     */
+    fun fileName(c: Clip, prefix: String = ""): String {
         val t = safeTime(c.timeText)
         val tail = if (t == "unknown") t else t + "s"
-        return "Solve_%02d_%s.mp4".format(c.number, tail)
+        val p = safeTitle(prefix)
+        val solve = "Solve_%02d_%s.mp4".format(Locale.ROOT, c.cutIndex + 1, tail)
+        return if (p.isEmpty()) solve else "${p}_$solve"
     }
 
-    /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. */
-    fun export(context: Context, source: Uri, clips: List<Clip>, onProgress: (Int, Int) -> Unit): ExportResult {
+    /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. [prefix]: see fileName. */
+    fun export(context: Context, source: Uri, clips: List<Clip>, prefix: String = "", onProgress: (Int, Int) -> Unit): ExportResult {
         val failed = mutableListOf<String>()
+        val files = mutableListOf<ExportedFile>()
         var done = 0
+        val buffer = SampleBuffer()
         for ((i, clip) in clips.withIndex()) {
             onProgress(i, clips.size)
-            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip))
-            if (error == null) done++ else failed.add("${fileName(clip)}: $error")
+            val made = Made()
+            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix), made, buffer)
+                ?: made.failure                        // the copy worked, but the file couldn't be finished in the gallery
+            if (error == null) {
+                done++
+                val uri = made.uri
+                // the name Android really gave the file (it adds " (1)" when the name is taken, e.g. after exporting again)
+                val savedName = made.fileName ?: fileName(clip, prefix)
+                if (uri != null) files.add(ExportedFile(clip, uri, savedName, if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
+            } else {
+                failed.add("${fileName(clip, prefix)}: $error")
+            }
         }
         onProgress(clips.size, clips.size)
-        val where = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "Movies/$FOLDER" else "the app's Movies/$FOLDER folder"
+        val where = "Movies/$FOLDER"
         val message = if (failed.isEmpty()) "Exported $done clips to $where" else "Exported $done of ${clips.size} clips to $where. Problems: " + failed.joinToString("; ")
-        return ExportResult(done, failed, message)
+        return ExportResult(done, failed, message, files)
     }
 
-    private class Output(val pfd: ParcelFileDescriptor?, val uri: Uri?, val path: String?)
+    /** The new file in the phone's gallery (Movies/CubeCut): opened for writing, and its address. */
+    private class Output(val pfd: ParcelFileDescriptor, val uri: Uri)
 
-    private fun openOutput(context: Context, name: String): Output {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, name)
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/$FOLDER")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-            val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("couldn't create the file in the gallery")
-            val pfd = context.contentResolver.openFileDescriptor(uri, "rw")
-                ?: throw IOException("couldn't open the new file")
-            return Output(pfd, uri, null)
+    /**
+     * What one finished export reports back: where the new file is, its real name, and where its first picture comes from in the source
+     * video. [failure] is set when the copy worked but the file couldn't be made visible in the gallery (it is removed again then).
+     */
+    private class Made(var uri: String? = null, var startUs: Long = -1L, var fileName: String? = null, var failure: String? = null)
+
+    /** The name the gallery gave the file at [uri], or null if it doesn't say. */
+    private fun savedName(context: Context, uri: Uri): String? = try {
+        context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
         }
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), FOLDER)
-        dir.mkdirs()
-        return Output(null, null, File(dir, name).absolutePath)
+    } catch (e: Exception) {
+        null
+    }
+
+    // (CubeCut needs Android 11 or newer, so the file always goes to the shared Movies/CubeCut folder, never an app-only one)
+    private fun openOutput(context: Context, name: String): Output {
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/$FOLDER")
+            put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+        val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("couldn't create the file in the gallery")
+        val pfd = context.contentResolver.openFileDescriptor(uri, "rw")
+            ?: throw IOException("couldn't open the new file")
+        return Output(pfd, uri)
     }
 
     /**
@@ -186,7 +242,7 @@ object ClipExporter {
      * Because of that, a clip can start a little earlier than asked: it must begin on a "keyframe" (usually within a second).
      * Returns null on success, or a short error message.
      */
-    private fun exportOne(context: Context, source: Uri, startUs: Long, endUs: Long, name: String): String? {
+    private fun exportOne(context: Context, source: Uri, startUs: Long, endUs: Long, name: String, made: Made, sample: SampleBuffer): String? {
         val extractor = MediaExtractor()
         var muxer: MediaMuxer? = null
         var output: Output? = null
@@ -207,8 +263,7 @@ object ClipExporter {
 
             val out = openOutput(context, name)
             output = out
-            val m = if (out.pfd != null) MediaMuxer(out.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            else MediaMuxer(out.path!!, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val m = MediaMuxer(out.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer = m
             m.setOrientationHint(rotation)
 
@@ -261,19 +316,19 @@ object ClipExporter {
                 if (outTrack != null) {
                     var size = -1
                     while (true) {
-                        sampleBuffer.clear()
+                        sample.bytes.clear()
                         try {
-                            size = extractor.readSampleData(sampleBuffer, 0)
+                            size = extractor.readSampleData(sample.bytes, 0)
                             break
                         } catch (e: IllegalArgumentException) {
                             // this sample (a big keyframe) is larger than the buffer: make it bigger and read it again
-                            val bigger = sampleBuffer.capacity() * 2
+                            val bigger = sample.bytes.capacity() * 2
                             if (bigger > MAX_BUFFER) throw IOException("a video frame is too large to copy")
-                            sampleBuffer = ByteBuffer.allocate(bigger)
+                            sample.bytes = ByteBuffer.allocate(bigger)
                         }
                     }
                     if (size < 0) break
-                    val buffer = sampleBuffer
+                    val buffer = sample.bytes
                     if (baseUs < 0) baseUs = timeUs
                     val flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                     info.set(0, size, max(0L, timeUs - baseUs), flags)
@@ -284,6 +339,8 @@ object ClipExporter {
             m.stop()
             started = false
             success = true
+            made.uri = out.uri.toString()
+            made.startUs = if (baseUs >= 0) baseUs else startUs
             return null
         } catch (e: Exception) {
             return e.message ?: e.javaClass.simpleName
@@ -303,11 +360,24 @@ object ClipExporter {
             }
             val uri = output?.uri
             if (uri != null) {
+                var keep = success
                 if (success) {
-                    val values = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-                    context.contentResolver.update(uri, values, null, null)
-                } else {
-                    context.contentResolver.delete(uri, null, null)       // don't leave a broken file behind
+                    // make the finished file visible in the gallery; if Android refuses, it counts as a failed export
+                    try {
+                        val values = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+                        context.contentResolver.update(uri, values, null, null)
+                        made.fileName = savedName(context, uri)
+                    } catch (e: Exception) {
+                        keep = false
+                        made.uri = null
+                        made.failure = "couldn't finish saving the file: ${e.message ?: e.javaClass.simpleName}"
+                    }
+                }
+                if (!keep) {
+                    try {
+                        context.contentResolver.delete(uri, null, null)       // don't leave a broken file behind
+                    } catch (e: Exception) {
+                    }
                 }
             }
         }

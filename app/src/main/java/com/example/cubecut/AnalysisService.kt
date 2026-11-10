@@ -29,10 +29,15 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 /**
- * A "foreground service": it does no work itself. Its only job is to show a notification while
- * Find solves is running (update() is given percent, 100), which tells Android "this app is busy, please don't put it to sleep"
- * - so the work keeps going when you switch to another app.
+ * A "foreground service": it does no work itself. Its only job is to show a notification while Find solves is running, which tells
+ * Android "this app is busy, please don't put it to sleep" - so the work keeps going when you switch to another app.
+ * The progress bar is set with update(context, percent, 100).
  * The actual work still happens in MainActivity (runFindSolves).
+ *
+ * Android asks what kind of work it is. Reading a video is "media processing" (the right label, which Google Play checks), but that
+ * label only exists from Android 15; on Android 11 to 14 it is "data sync" (the closest one there). Both must be listed for the
+ * service in AndroidManifest.xml, each with its own permission. From Android 15 either kind may run about 6 hours a day at most;
+ * when that runs out Android calls onTimeout, and the service stops itself (Find solves then only keeps going while CubeCut is open).
  */
 class AnalysisService : Service() {
 
@@ -42,17 +47,22 @@ class AnalysisService : Service() {
         ensureChannels(this)
         try {
             val notification = buildProgressNotification(this, 0, 0)
-            if (Build.VERSION.SDK_INT >= 29) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
+            val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+            else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            startForeground(NOTIFICATION_ID, notification, type)
             running = true
         } catch (e: Exception) {
             // if Android refuses, Find solves still works - it just won't survive in the background
             stopSelf()
         }
         return START_NOT_STICKY
+    }
+
+    // Android 15+: the day's time for background work is used up. The service must stop within seconds, or Android closes the app.
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        running = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -70,15 +80,13 @@ class AnalysisService : Service() {
         private var running = false
 
         private fun ensureChannels(context: Context) {
-            if (Build.VERSION.SDK_INT >= 26) {
-                val nm = context.getSystemService(NotificationManager::class.java) ?: return
-                nm.createNotificationChannel(
-                    NotificationChannel(PROGRESS_CHANNEL, "Find solves progress", NotificationManager.IMPORTANCE_LOW)
-                )
-                nm.createNotificationChannel(
-                    NotificationChannel(DONE_CHANNEL, "Find solves finished", NotificationManager.IMPORTANCE_DEFAULT)
-                )
-            }
+            val nm = context.getSystemService(NotificationManager::class.java) ?: return
+            nm.createNotificationChannel(
+                NotificationChannel(PROGRESS_CHANNEL, "Find solves progress", NotificationManager.IMPORTANCE_LOW)
+            )
+            nm.createNotificationChannel(
+                NotificationChannel(DONE_CHANNEL, "Find solves finished", NotificationManager.IMPORTANCE_DEFAULT)
+            )
         }
 
         private fun openAppIntent(context: Context): PendingIntent {
@@ -91,8 +99,8 @@ class AnalysisService : Service() {
         private fun buildProgressNotification(context: Context, done: Int, total: Int) =
             NotificationCompat.Builder(context, PROGRESS_CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentTitle("CubeCut is finding solves")
-                .setContentText(if (total > 0) "Reading the timer along the video: ${done * 100 / total}%" else "Starting...")
+                .setContentTitle("Finding solves")
+                .setContentText(if (total > 0) "Reading the timer: ${done * 100 / total}%" else "Starting...")
                 .setProgress(total, done, total == 0)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -134,7 +142,7 @@ class AnalysisService : Service() {
                 ensureChannels(context)
                 val n = NotificationCompat.Builder(context, DONE_CHANNEL)
                     .setSmallIcon(android.R.drawable.stat_notify_sync)
-                    .setContentTitle("CubeCut: Find solves finished")
+                    .setContentTitle("Find solves finished")
                     .setContentText(text)
                     .setAutoCancel(true)
                     .setContentIntent(openAppIntent(context))

@@ -92,7 +92,8 @@ object SegmentReader : DisplayReader {
  *     autoBand for the straightening and the digit band - they don't depend on the font.
  *  3. Return DigitLayout(invert, shear, bandTop, bandBottom, digitW, offsets = IntArray(0), canvasW, canvasH,
  *     decimals, readerId = "glyph", readerData = "<model name or version>"). Unused numbers can be 0 / empty.
- *     readerData travels with the layout for as long as the app runs (setups are not saved to disk any more).
+ *     The layout itself is not saved: SessionStore keeps the corners and the typed number per video, and learn() runs again
+ *     when the video is opened, so readerData is worked out afresh each time.
  *  4. read(): same segmentation, run the model, return the digits. Return null whenever any glyph is unsure
  *     (the vote in SolveAnalyzer relies on "null when unsure" rather than a wrong guess).
  *  5. If the model works better on grayscale than black-and-white, add a grayscale variant of TimerVision.prep

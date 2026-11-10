@@ -143,14 +143,13 @@ fun TimerSetupScreen(
             .imePadding()
             .padding(8.dp)
     ) {
-        Text(
-            if (c == null) {
-                "Step 1: tap the timer's display (pinch to zoom first if it is small)"
+        InfoNote(
+            title = if (c == null) "Step 1 of 2" else "Step 2 of 2",
+            text = if (c == null) {
+                "Tap the timer's display. Pinch to zoom first if it's small."
             } else {
-                "Step 2: pinch to zoom, drag to move the picture. Drag each orange dot onto its corner of the " +
-                        "display (keep them in order), then type the number the display shows."
-            },
-            style = MaterialTheme.typography.bodyMedium
+                "Drag each orange dot onto a corner of the display, then type the number it shows. Pinch to zoom, drag to move."
+            }
         )
         Spacer(Modifier.height(6.dp))
 
@@ -346,14 +345,16 @@ fun TimerSetupScreen(
             OutlinedTextField(
                 value = typed,
                 onValueChange = { typed = it.filter { ch -> ch.isDigit() || ch == '.' } },
-                label = { Text("Number shown now, e.g. 11.108 (1:02.34 = 102.34)") },
+                label = { Text("Number on the display, e.g. 11.108") },
+                supportingText = { Text("For 1:02.34, type 102.34") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth()
             )
         }
         if (message.isNotEmpty()) {
-            Text(message, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(4.dp))
+            InfoNote(message, kind = kindOfMessage(message))
         }
         Row(
             Modifier.padding(top = 6.dp),
@@ -376,7 +377,7 @@ fun TimerSetupScreen(
                     }
                 },
                 enabled = c != null && handles.size == 4 && typed.count { it.isDigit() } >= 3 && !busy
-            ) { Text(if (busy) "Learning..." else "Save timer setup") }
+            ) { Text(if (busy) "Saving..." else "Save timer setup") }
         }
     }
 }
