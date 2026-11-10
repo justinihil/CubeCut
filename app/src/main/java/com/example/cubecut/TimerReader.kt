@@ -1040,7 +1040,10 @@ object TimerStore {
     private const val JSON_FILE = "timer_setup.json"
     private const val PNG_FILE = "timer_reference.png"
 
-    /** Deletes any timer setup saved by an older version of the app (setups are no longer kept between runs). Can go once nobody runs 1.x any more. */
+    /**
+     * Deletes the single timer setup that version 1.x saved for the whole app (since 3.0.0 the setup is saved per video, in
+     * SessionStore). Can go once nobody runs 1.x any more.
+     */
     fun clear(context: Context) {
         try {
             File(context.filesDir, JSON_FILE).delete()

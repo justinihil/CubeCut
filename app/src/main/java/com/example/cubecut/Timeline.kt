@@ -33,7 +33,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -43,7 +44,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import kotlin.math.max
 
 /** What one exported clip covers, for drawing: [startSec]..[solveStartSec] is the scramble part, [solveStartSec]..[endSec] the solve part. */
 class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Double)
@@ -52,9 +52,14 @@ class ClipBar(val startSec: Double, val solveStartSec: Double, val endSec: Doubl
  * The editor timeline: film strip on top, a strip below it showing what each clip will contain, markers for the cuts
  * and a red playhead.
  * At zoom 1 the whole video fits the screen; above that you scroll sideways. Tap to jump; at zoom 1 you can also drag to scrub.
- * markerStates: 1 = a cut that will be exported (green), 2 = a cut left out (grey), anything else = orange.
+ * markerStates: 1 = a solve (green), anything else (2) = a cut left over from before the video began, which makes no clip (grey).
  * A cut marker sits on the FIRST frame that shows the final time (the moment the timer stopped).
  * clipBars: dim green = scramble part of a clip, bright green = the solve part (solve with its buffers).
+ * onSeek: the touch handlers below are set up once and keep running, so they always call the newest onSeek (rememberUpdatedState);
+ * otherwise a tap would still use the solves list from when the handler was set up (after Find solves or a delete).
+ * position: where the playhead is, in ms. It is a function, read only while drawing the red line,
+ * so the playhead moving redraws just that line: the film strip, the clip bars, the markers and the rest of the editor stay as
+ * they are.
  */
 @Composable
 fun Timeline(
@@ -63,14 +68,15 @@ fun Timeline(
     selectedIndex: Int = -1,        // the cut being looked at (drawn bigger, in white); -1 = none
     clipBars: List<ClipBar> = emptyList(),
     thumbs: List<ImageBitmap>,
-    positionMs: Long,
+    position: () -> Long,
     durationMs: Long,
     zoom: Float,
     scrollState: ScrollState,
     onSeek: (Long) -> Unit
 ) {
-    val fraction = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    fun fraction(): Float = if (durationMs > 0) (position().toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val zoomed = zoom > 1.01f
+    val seek by rememberUpdatedState(onSeek)
 
     BoxWithConstraints(
         Modifier
@@ -79,19 +85,8 @@ fun Timeline(
             .background(Color(0xFF1B1B1F))
     ) {
         val viewportWidth = maxWidth
-        val viewportPx = constraints.maxWidth
-        val contentPx = viewportPx * zoom
 
-        // when zoomed in, keep the playhead on screen
-        LaunchedEffect(positionMs / 400, zoom) {
-            if (zoomed && durationMs > 0) {
-                val x = (contentPx * fraction).toInt()
-                val left = scrollState.value
-                if (x < left + viewportPx * 0.1f || x > left + viewportPx * 0.9f) {
-                    scrollState.scrollTo(max(0, x - viewportPx / 2))
-                }
-            }
-        }
+        // (keeping the playhead on screen when zoomed in is done by the editor, in keepTimelineOn: it knows when the playhead jumps)
 
         Box(
             Modifier
@@ -102,20 +97,20 @@ fun Timeline(
                 Modifier
                     .width(viewportWidth * zoom)
                     .fillMaxHeight()
-                    // tap anywhere on the timeline to jump there
-                    .pointerInput(durationMs, zoom) {
+                    // tap anywhere on the timeline to jump there (size is read at the moment of the tap, so a zoom change needs no restart)
+                    .pointerInput(durationMs) {
                         detectTapGestures { tap ->
                             if (durationMs > 0) {
-                                onSeek((tap.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
+                                seek((tap.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
                             }
                         }
                     }
                     // at zoom 1: drag a finger along it to scrub (when zoomed, dragging scrolls instead)
-                    .pointerInput(durationMs, zoom) {
+                    .pointerInput(durationMs, zoomed) {
                         if (!zoomed) {
                             detectHorizontalDragGestures { change, _ ->
                                 if (durationMs > 0) {
-                                    onSeek((change.position.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
+                                    seek((change.position.x / size.width * durationMs).toLong().coerceIn(0L, durationMs))
                                 }
                             }
                         }
@@ -167,11 +162,7 @@ fun Timeline(
                     if (durationMs > 0) {
                         for ((i, t) in stops.withIndex()) {
                             val x = (size.width * (t * 1000.0 / durationMs)).toFloat()
-                            val markerColor = when (markerStates.getOrElse(i) { 0 }) {
-                                1 -> Color(0xFF66BB6A)
-                                2 -> Color(0xFF9E9E9E)
-                                else -> Color(0xFFFFA726)
-                            }
+                            val markerColor = if (markerStates.getOrElse(i) { 1 } == 1) Color(0xFF66BB6A) else Color(0xFF9E9E9E)
                             drawLine(markerColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2f)
                             drawCircle(color = markerColor, radius = 7f, center = Offset(x, 7f))
                             if (i == selectedIndex) {
@@ -183,7 +174,7 @@ fun Timeline(
                 }
                 // red playhead
                 Canvas(Modifier.fillMaxSize()) {
-                    val x = size.width * fraction
+                    val x = size.width * fraction()
                     drawLine(Color.Red, Offset(x, 0f), Offset(x, size.height), strokeWidth = 3f)
                 }
             }
