@@ -1017,11 +1017,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
     }
 
-    // ---- the selected solve follows the playhead while the video plays or you tap / scrub the timeline ----
+    // ---- a tap on the timeline (or the end of a drag) selects the solve there and scrolls the list to its card ----
+    // (3.0.1) Playing does NOT change the selection: the selected solve stays what you chose (a card, the arrows, Undo or a
+    // tap on the timeline) while the video plays on. The arrows step from that selection.
     // Each solve owns the stretch from the end of the clip before it to the end of its own clip: its scramble and its solve,
     // even when its clip leaves the scramble out. While "Only solves to check" is on, a solve the list hides is never selected.
-    // When the selection changes, the list scrolls so its card is in view. Tapping a card, Prev / Next and Undo choose the
-    // solve themselves and are not overruled.
     fun solveUnder(ms: Long): Int {
         val t = ms / 1000.0
         var zoneStart = 0.0
@@ -1033,17 +1033,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
         return -1
     }
-    fun followPlayhead(ms: Long) {
+    /** A tap on the timeline at [ms]: select the solve there and bring its card into view. No solve there: keep the selection. */
+    fun pickSolveAt(ms: Long) {
         val i = solveUnder(ms)
-        if (i == selectedCut) return
-        // a leftover cut (from before the video began) makes no clip, so the playhead is never "in" it: keep it selected
-        // until the playhead reaches a real clip, instead of dropping it straight after Prev / Next chose it
-        if (i < 0 && selectedCut in cuts.indices && clips.none { it.cutIndex == selectedCut }) return
+        if (i < 0) return
         selectedCut = i
-        if (i >= 0) scrollListTo(i)
+        scrollListTo(i)
     }
-    // the playhead loop below keeps running across screen updates, so it calls the newest version of these (with the newest cuts)
-    val followNow = rememberUpdatedState<(Long) -> Unit> { ms -> followPlayhead(ms) }
+    // the playhead loop below keeps running across screen updates, so it calls the newest version of this (with the newest zoom)
     val keepTimelineNow = rememberUpdatedState<(Long) -> Unit> { ms -> keepTimelineOn(ms) }
 
     // zooming the timeline keeps the playhead on screen
@@ -1058,8 +1055,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 delay(33)
                 val ms = exoPlayer.currentPosition
                 positionMs = ms
-                followNow.value(ms)
-                keepTimelineNow.value(ms)
+                keepTimelineNow.value(ms)                // (the selection doesn't follow the playhead: see pickSolveAt)
             }
         }
     }
@@ -1237,9 +1233,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             Box(Modifier.fillMaxWidth().onGloballyPositioned { timelineWidth[0] = it.size.width }) {
                 Timeline(
                     stops = cuts.map { it.stopSec },
-                    markerStates = cuts.map { if (it.included) 1 else 2 },
+                    // 1 = solve (green), 2 = left over (grey), 3 = needs a check (the same amber as "check" on the cards)
+                    markerStates = cuts.indices.map { i -> if (!cuts[i].included) 2 else if (needsCheck(i)) 3 else 1 },
                     selectedIndex = selectedCut,
-                    clipBars = clips.map { ClipBar(it.startSec, it.solveStartSec, it.endSec) },
+                    clipBars = clips.map { ClipBar(it.startSec, it.solveStartSec, it.endSec, it.cutIndex) },
                     thumbs = thumbs,
                     position = { positionMs },
                     durationMs = durationMs,
@@ -1248,8 +1245,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     onSeek = { ms ->
                         exoPlayer.seekTo(ms)
                         positionMs = ms
-                        followPlayhead(ms)          // scrubbing or tapping the timeline selects the solve under the playhead
-                    }
+                    },
+                    // a tap, or letting go after a drag: select the solve there (playing or paused)
+                    onPick = { ms -> pickSolveAt(ms) }
                 )
             }
 
