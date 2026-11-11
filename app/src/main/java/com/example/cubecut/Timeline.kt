@@ -68,6 +68,22 @@ private val HALO = Color(0x99000000)                  // dark edge around lines,
 private val SELECTED_BAND = Color(0x1FFFFFFF)         // light band over the selected solve's clip
 private val PLAYHEAD = Color(0xFFFF3B30)
 
+// Markers and clip bars get thinner when the timeline is crowded (many solves at zoom 1) and thicker when there is room
+// (few solves, or zoomed in). The room each cut has on screen decides it: up to CROWDED_DP per cut = thinnest,
+// from ROOMY_DP per cut = thickest, in between = in between.
+private const val CROWDED_DP = 8f
+private const val ROOMY_DP = 36f
+
+/** 0 = crowded, 1 = plenty of room, for [count] cuts on a timeline [widthPx] wide (the whole zoomed width). */
+private fun roominess(widthPx: Float, count: Int, density: Float): Float {
+    if (count <= 0 || density <= 0f) return 1f
+    val roomDp = widthPx / count / density
+    return ((roomDp - CROWDED_DP) / (ROOMY_DP - CROWDED_DP)).coerceIn(0f, 1f)
+}
+
+/** [thin] when crowded, [thick] with plenty of room. */
+private fun mix(thin: Float, thick: Float, room: Float) = thin + (thick - thin) * room
+
 /**
  * The editor timeline: film strip on top, a strip below it showing what each clip will contain, markers for the cuts
  * and a red playhead.
@@ -182,10 +198,12 @@ fun Timeline(
                             .weight(1f)
                     ) {
                         if (durationMs > 0) {
+                            val room = roominess(size.width, stops.size, density)
                             val top = 4.dp.toPx()
                             val barHeight = (size.height - 7.dp.toPx()).coerceAtLeast(2f)
-                            val corner = CornerRadius(3.dp.toPx(), 3.dp.toPx())
-                            val gap = 1.dp.toPx()                       // neighbouring clips touch; this keeps them apart
+                            val r = mix(1f, 3f, room).dp.toPx()
+                            val corner = CornerRadius(r, r)
+                            val gap = mix(0.5f, 1f, room).dp.toPx()     // neighbouring clips touch; this keeps them apart
                             // the empty lane, so the strip doesn't look blank where there is no clip
                             drawRoundRect(TRACK, Offset(0f, top), Size(size.width, barHeight), corner)
                             for (bar in clipBars) {
@@ -226,11 +244,14 @@ fun Timeline(
                                 if (x1 > x0) drawRect(SELECTED_BAND, Offset(x0, 0f), Size(x1 - x0, size.height))
                             }
                         }
-                        val line = 2.5.dp.toPx()
-                        val selectedLine = 3.5.dp.toPx()
-                        val halo = 1.dp.toPx()
-                        val dot = 4.5.dp.toPx()
-                        val dotY = dot + 2.dp.toPx()
+                        // thin when crowded, thick with room (see roominess); the selected one always stays easy to see
+                        val room = roominess(size.width, stops.size, density)
+                        val line = mix(1f, 2.5f, room).dp.toPx()
+                        val selectedLine = mix(2f, 3.5f, room).dp.toPx()
+                        val halo = mix(0f, 1f, room).dp.toPx()          // no dark edge when crowded: it made the strip look heavy
+                        val dot = mix(2f, 4.5f, room).dp.toPx()
+                        val selectedDot = mix(3f, 4.5f, room).dp.toPx()
+                        val dotY = 7.5.dp.toPx()                           // room above the dot for the selected one's white ring
                         fun marker(i: Int, t: Double) {
                             val x = (size.width * (t * 1000.0 / durationMs)).toFloat()
                             val selected = i == selectedIndex
@@ -240,14 +261,17 @@ fun Timeline(
                                 else -> LEFTOVER_MARKER
                             }
                             val w = if (selected) selectedLine else line
+                            val d = if (selected) selectedDot else dot
                             val center = Offset(x, dotY)
-                            drawLine(HALO, Offset(x, 0f), Offset(x, size.height), strokeWidth = w + 2 * halo)
+                            if (halo > 0.5f) {
+                                drawLine(HALO, Offset(x, 0f), Offset(x, size.height), strokeWidth = w + 2 * halo)
+                                drawCircle(HALO, radius = d + halo, center = center)
+                            }
                             drawLine(color, Offset(x, 0f), Offset(x, size.height), strokeWidth = w)
-                            drawCircle(HALO, radius = dot + halo, center = center)
-                            drawCircle(color, radius = dot, center = center)
+                            drawCircle(color, radius = d, center = center)
                             if (selected) {
                                 // the cut you are looking at: white ring around its dot
-                                drawCircle(Color.White, radius = dot + 3.dp.toPx(), center = center, style = Stroke(width = 2.dp.toPx()))
+                                drawCircle(Color.White, radius = d + 3.dp.toPx(), center = center, style = Stroke(width = 2.dp.toPx()))
                             }
                         }
                         for ((i, t) in stops.withIndex()) if (i != selectedIndex) marker(i, t)
