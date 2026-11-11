@@ -8,6 +8,15 @@ All notable changes to CubeCut are listed here, newest first. The format follows
 
 Nothing yet. Planned for 3.1: see *Next build* in `docs/V3_HANDOVER.md`.
 
+## [3.0.1] - 2026-11-11
+
+A patch on top of 3.0.0 (developed on branch `dev-patch-v3.0.1`, branched from `dev`). How solves are found, how digits are read and how clips are calculated did **not** change.
+
+### Changed
+- **Playing the video no longer changes the selected solve** in the editor. The selected card stays the one you chose while the video plays on, and the list doesn't scroll by itself. The arrows step from the selected solve.
+- **Tapping the timeline selects the solve there** and scrolls the list to its card, whether the video is playing or paused. Dragging along the timeline moves the playhead, and the solve is selected where you let go. Tapping a spot with no solve keeps the current selection.
+- **The timeline has a new look:** markers that size themselves to the room they have (thin when many solves share the timeline at zoom 1, thicker with a dark edge when zoomed in or with few solves), a solve that needs a check has an **amber marker** (the same amber as "check" on the cards), rounded clip bars on a faint lane with a small gap between clips, the selected solve's clip outlined in white with a light band over it, a red playhead with a small triangle on top, and rounded corners.
+
 ## [3.0.0] - 2026-11-10
 
 **Saved sessions and the Gallery** (developed on branch `dev-v3.0.0`, branched from `dev`): CubeCut remembers your sessions, and a Gallery of all clips is built on top of that. This covers **Phase 1 (saved sessions)**, **Phase 2 (the Gallery, with the full-screen clip viewer)** and **Phase 3a-3c (re-scans keep your edits; the editor only finds solves while choosing and exporting moves to the Gallery; checks; the new look and dark mode)**. All phases are built and running on the phone (Galaxy S25 Ultra); the planned testing turned into the review fixes below, and a full test pass on the merged `dev-v3.0.0` (2026-11-10) brought the last fixes. How solves are found, how digits are read and how clips are calculated did **not** change. A code review and the fixes from testing followed (*Review fixes* below); from 3.0.0 CubeCut needs **Android 11 or newer**.
