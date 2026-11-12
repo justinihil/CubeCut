@@ -75,6 +75,10 @@ For each pattern, copy the example named in the last column.
 - **Update the docs in the same commit as the code.** Add a CHANGELOG `[Unreleased]` line for anything a user would notice.
 - When a behaviour change is ambiguous, ask before building. Flag any change the owner didn't ask for.
 - Give the owner exact, numbered test steps for the phone: which screen, what to tap, what to expect.
+- When the owner says "answer questions first", answer only and change nothing.
+- For design choices, offer options with what each means in everyday use, then let the owner decide.
+- Sort review findings by what a user would actually notice, not by theoretical risk.
+- For visual glitches, ask for a screen recording and examine every frame (`ffmpeg -fps_mode passthrough`) before theorising.
 
 ## Where facts live
 
