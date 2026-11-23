@@ -126,6 +126,8 @@ Rules:
 
 **Fix:** the still's background is black on the playing page too, and it fades with the still. Nothing else in the handover changed. The one still per page is still never removed.
 
+Built and phone-tested (2026-11-23): `ClipViewer` (`Gallery.kt`).
+
 Where to start:
 - `ClipViewer` and `PlayerOverlay` (`Gallery.kt`).
 - `res/layout/video_player_view.xml`.
