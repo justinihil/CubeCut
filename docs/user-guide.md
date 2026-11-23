@@ -13,8 +13,8 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 4. **Review** the list. The arrows step through solves. Tapping the timeline selects the solve there; playing the video doesn't change the selection.
    - **Missed solve:** put the playhead on the first frame that shows its final time, tap **Add a missed solve at the playhead**, and type the time. The list jumps to the new solve, which blinks briefly.
    - **Wrong time or cut point:** use **Edit**. It shows the frame the cut is on, zoomed onto the timer, and ◂ 0.1s / 0.1s ▸ buttons move the cut. Tap **Whole frame** to see all of it.
-   - **Not a solve:** delete it. Undo is available for 8 s. An exported solve asks whether to keep its file.
-   - **Flagged *check*:** *Only show solves to check* narrows the list. **It's fine** clears a flag.
+   - **Not a solve:** delete it. The next solve is selected, and the Undo bar says which one (*now on Solve 7*). Undo is available for 8 s. An exported solve asks whether to keep its file.
+   - **Flagged *check*:** *Only show solves to check* narrows the list. **It's fine** clears a flag and moves to the next solve to check. While the filter is on, solves you fix stay in the list, marked **✓ Fixed** or **✓ Checked**, until you switch it off.
 5. **Choose what each clip contains:** with the scramble, or the solve only, plus the **before** and **after** buffers (2.5 s each by default, in the Setup box). The switch above the list sets the scramble for every clip, and each card's scramble button changes one clip.
 6. **Export** from the Gallery. Long-press a clip, drag over others to tick them, then tap **Export**. Files go to `Movies/CubeCut` and are named like `Sunday practice_Solve_03_11.263s.mp4`. Clips exported before are pointed out, so you don't make a second copy by accident.
 

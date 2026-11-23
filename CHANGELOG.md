@@ -18,6 +18,11 @@ Notes on history:
 - **Replay** in the clip viewer (next to *Skip*): clips loop while it is on. The choice is remembered.
 - **Double-tap to skip** in the clip viewer: the left half skips back, the right half forward, by the *Skip* length. Further quick taps keep skipping, and a hint shows the total (−5 s, −10 s…). A single tap now shows or hides the controls about 0.3 s later.
 
+### Changed
+- **Only solves to check** keeps its list while it is on. A solve that no longer needs a check stays, marked **✓ Fixed** or **✓ Checked**, instead of vanishing. Switch the filter off and on to tidy the list.
+- **It's fine** keeps the card in place and jumps to the next solve that still needs a check.
+- After a delete, the Undo bar says which solve is now selected: *Deleted the 12.34 s solve · now on Solve 7 (9.87 s)*.
+
 ### Fixed
 - Opening a clip from the Gallery no longer sometimes flashes the top and bottom of the screen for a moment.
 - *Find solves* no longer says *again* (and the result no longer says *Re-scan*) when only solves added by hand exist and it has never run on the video.
