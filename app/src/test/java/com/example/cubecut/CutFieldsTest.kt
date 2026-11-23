@@ -120,6 +120,33 @@ class CutFieldsTest {
         assertEquals("Solve 3 of 5", s.placeText)
     }
 
+    private fun video(id: Long, name: String, size: Long, durationMs: Long) = Footage(
+        id = id, uri = "", displayName = name, sizeBytes = size, durationMs = durationMs, title = name, dateTakenMs = 0,
+        addedMs = 0, lastScanMs = 0, beforePad = 2.5f, afterPad = 2.5f, scrambleAll = true, cutCount = 0, timerFrameMs = -1,
+        timerCorners = "", timerTyped = "", trashedMs = 0
+    )
+
+    @Test
+    fun restore_matchesVideosByNameSizeAndLength() {
+        val a = video(1, "a.mp4", 1000, 60_000)
+        val b = video(2, "b.mp4", 2000, 90_000)
+        val list = listOf(a, b)
+        assertEquals(a, matchVideo("a.mp4", 1000, 60_000, list))
+        assertEquals(a, matchVideo("a.mp4", 1000, 60_400, list))        // read a little differently on another phone
+        assertEquals(b, matchVideo("renamed.mp4", 2000, 90_000, list))  // renamed: same size and length
+        assertEquals(null, matchVideo("a.mp4", 1000, 75_000, list))     // same name and size, another length: another video
+        assertEquals(null, matchVideo("a.mp4", 999, 60_000, list))      // another size
+        assertEquals(null, matchVideo("", -1, 60_000, list))            // nothing to go on
+    }
+
+    @Test
+    fun restore_matchesExportsByExactFileName() {
+        val e = ExportedClip(5, 1, 10.0, "9.000", "", "Sunday_Solve_03_9.000s.mp4", 0.0, 0)
+        assertEquals(e, matchExport("Sunday_Solve_03_9.000s.mp4", listOf(e)))
+        assertEquals(null, matchExport("Sunday_Solve_03_9.000s (1).mp4", listOf(e)))
+        assertEquals(null, matchExport("", listOf(e)))
+    }
+
     @Test
     fun newVideo_isASession_untrimmed() {
         val f = footage()

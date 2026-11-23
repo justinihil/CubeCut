@@ -28,7 +28,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 - **Export has no foreground service.** Leaving the app during a long batch export could interrupt it. The screen is kept on.
 - **Swiping the app away stops Find solves.** Vendor battery savers may too ([ADR-0011](adr/0011-foreground-service-for-notification-only.md)).
 - **Portrait only**, with no landscape layout ([ADR-0010](adr/0010-portrait-lock-config-changes.md)).
-- **No backup or transfer** ([ADR-0009](adr/0009-no-backup-or-transfer.md)).
+- **The backup holds no videos** ([ADR-0015](adr/0015-user-saved-backup-file.md)). After a restore, videos and exported clips must be reconnected by picking them. Restore never overwrites a video this phone already has. An exported file renamed by hand can't be matched.
 - **Trash needs a MediaStore uri.** Videos picked from a folder view can't be trashed from CubeCut. Persisted grants are capped at 512.
 - **A video that changes size or length** (re-encoded by another app) is treated as a new video ([ADR-0005](adr/0005-video-identity-heuristics.md)).
 - **The timeline shows at most 12 film-strip pictures** (`THUMB_COUNT`), so long videos look coarse at high zoom.
@@ -44,6 +44,7 @@ Only the Samsung Galaxy S25 Ultra has been used. These have not been checked:
 - HDR or 10-bit footage, 4K, frame rates other than 30 and 60 fps, the frame-source fallback actually triggering;
 - a timer showing 2 decimals (supported in code, never tried);
 - renaming an exported file CubeCut no longer owns (after a reinstall: `createWriteRequest`), 3.2-C;
+- a restore on a second phone, and on a phone after a reinstall (3.2-G), including large backups;
 - large galleries;
 - whether the export buffer grows as intended on a keyframe over 4 MB (it relies on `readSampleData` throwing `IllegalArgumentException`);
 - a signed release build on a second phone;

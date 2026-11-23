@@ -49,7 +49,8 @@ Picking the same video again says *Already in your Gallery*. The editor's own *I
 - **Penalty (+2 / DNF):** set it in the editor's *Edit* window or in the viewer's details. Tap *+2* again for each extra +2; *No penalty* clears it. Times show as `13.263 (+2)` or `DNF(11.263)`, and sorting and *best* count the penalty (a DNF sorts last). The solve-only clip still starts from the time on the timer.
 - **An exported clip is a copy.** Moving its cut or fixing its time later doesn't change the file; export it again. A **penalty renames** the file to match (`…_13.263s_plus2.mp4`, `…_DNF_11.263s.mp4`). After a reinstall, Android asks first. Changing an exported clip's **buffers** in the viewer asks *Re-export now?*; after the new file is made you can move the old one to the trash (or keep both).
 - **Typing times:** in the Edit window, use a colon for a minute or more (`1:02.34`). A plain `102.34` there means 102.34 s. Only the timer-setup box reads `102.34` as 1:02.34.
-- **CubeCut's saved list is not backed up** and doesn't move to a new phone. Uninstalling clears the Gallery, though exported files in `Movies/CubeCut` stay.
+- **Back up your Gallery:** *⋮ → Backup and restore → Back up now* saves one small file (no videos) where you choose. Keep a copy off the phone. Uninstalling still clears the Gallery; exported files in `Movies/CubeCut` stay.
+- **Restore** (new phone or after a reinstall): copy your videos over, then *Restore from a backup*. Videos already in the Gallery stay as they are. Then tap **Reconnect videos** and pick all the videos at once, and **Reconnect exported clips** and pick the files in `Movies/CubeCut`. Importing a video again also reconnects it.
 - Swiping CubeCut out of recent apps stops Find solves. Some phones' battery savers stop it too: set CubeCut's battery use to *Unrestricted*.
 
 ## Troubleshooting

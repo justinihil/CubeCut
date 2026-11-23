@@ -19,6 +19,7 @@ Rough sizes are given to warn you what you are opening.
 | `TagPicker.kt` | (3.2-B) The puzzle and type window, for a video or for clips | `TagDialog(title, puzzle, category, forClip, …, onDone(TagChoice))`, `TagChoice` | Starts from stored values (`null` = mixed: nothing chosen, *leave as it is*). For clips it adds *As the video* (`''`) and its *Not tagged* stores `NO_TAG`; for a video *Not tagged* stores `''` |
 | `ClipSettings.kt` | (3.2-C on) Controls for one clip, shared by the Edit window and the viewer sheet | `ChoiceChip`, `PenaltyPicker`, `PadEditor` (3.2-D, *Follow video* / *Custom*), `rememberExportRenamer` / `ExportRenamer.rename`, `penaltyRename` | The renamer asks Android (`createWriteRequest`) when CubeCut no longer owns the file, and records the new name in the same IO block |
 | `SingleSolve.kt` | (3.2-F) Import and edit of single solves | `ImportKindDialog` (*A session* / *One solve*), `SingleSolveDialog` (time, penalty, puzzle, trim with `RangeSlider` and two frame pictures), `KnownSingleDialog`, `SingleSolveInput` | Used by the Gallery only. Editing from the viewer asks only time and trim (the sheet has the rest), then the viewer reopens on the moved stop |
+| `Backup.kt` | (3.2-G) Backup file, restore, bulk reconnect | `Backup.write` / `restore` / `suggestedName`, `BackupDialog`, `RestoreResult`, `BackupFormatException` | Uses `org.json` (Android's own), so it has no JVM unit test; the matching rules it relies on (`matchVideo`, `matchExport`) do. A new saved field must be added here too |
 | `Notes.kt` | Shared message style | `InfoNote`, `InfoButton`, `BulletLines`, `LeadAndBullets`, `NoteKind`, `kindOfMessage` | Use these instead of grey paragraphs |
 | `Theme.kt` | Colours and dark mode | `CubeCutTheme(mode)`, `ThemeMode`, `AppColors` (`check`, `keep`, `danger`), `LogoBlue` | The **only** theme. `ui/theme/*` is dead template code; don't import it |
 
@@ -41,7 +42,7 @@ Rough sizes are given to warn you what you are opening.
 ### Storage and platform
 | File | Responsibility | Main entry points | Gotchas |
 |---|---|---|---|
-| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `createSingle` / `updateSingle` (3.2-F), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, v7 `updateCutTags` / `updateCutPenalty` / `updateCutPads` / `updateCutSharedOn` (all through private `updateCut`, which sets `user_edited`), `updateFootageTags`, trash helpers, `delete`; `Footage` (`KIND_SESSION` / `KIND_SINGLE`), `GalleryClip`, `ExportedClip`, `cutKey`, social-note and `encodeSharedOn` / `decodeSharedOn` helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The DB is v7. *Shared on* has its own field and chips (3.2-E): `toggleShared`, `sharedMatches`; `updateCutNote` writes only the note |
+| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `createSingle` / `updateSingle` (3.2-F), `restoreVideo` / `reconnectVideos` / `reconnectExports` / `loadAllExports` (3.2-G), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, v7 `updateCutTags` / `updateCutPenalty` / `updateCutPads` / `updateCutSharedOn` (all through private `updateCut`, which sets `user_edited`), `updateFootageTags`, trash helpers, `delete`; `Footage` (`KIND_SESSION` / `KIND_SINGLE`), `GalleryClip`, `ExportedClip`, `cutKey`, social-note and `encodeSharedOn` / `decodeSharedOn` helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The DB is v7. *Shared on* has its own field and chips (3.2-E): `toggleShared`, `sharedMatches`; `updateCutNote` writes only the note |
 | `Thumbnails.kt` | On-demand picture cache | `ThumbCache.get` / `peek` / `frame` / `timerFrame` / `forgetFootage`, `Thumb` composable | At most 2 pictures made at once. Disk capped at 100 MB. `timerFrame` crops around the saved timer corners (full-size frame pixels) with `ZOOM_MARGIN`; it doesn't follow a camera that moved |
 | `MediaTools.kt` | Small media helpers | `readDurationMs`, `buildThumbnails` (film strip), `grabFrame`, `formatTime` | — |
 | `AnalysisService.kt` | Foreground notification during Find solves | `AnalysisService.start` / `update` / `stop` / `notifyDone` | Does no work itself ([ADR-0011](../docs/adr/0011-foreground-service-for-notification-only.md)) |
@@ -49,7 +50,7 @@ Rough sizes are given to warn you what you are opening.
 ### Resources
 - `res/layout/video_player_view.xml`: the TextureView `PlayerView`, required for editor pinch zoom and for the viewer.
 - `res/values(-night)/themes.xml` and `colors.xml`: window background only (`window_background`). The `black` and `white` colours are template leftovers.
-- `res/xml/data_extraction_rules.xml`: excludes everything from backup and transfer.
+- `res/xml/data_extraction_rules.xml`: excludes everything from Google backup and transfer (the app has its own backup file, `Backup.kt`).
 - `res/drawable/cubecut_logo.png`: the header logo. `mipmap-*`: the launcher icon.
 - `strings.xml` holds only `app_name`. **UI text is written directly in Kotlin** (see [CLAUDE.md conventions](../CLAUDE.md#conventions)).
 
@@ -58,7 +59,7 @@ Rough sizes are given to warn you what you are opening.
 `src/test` holds plain JUnit tests of the pure functions (no Android needed):
 - `ComputeClipsTest`: `parseTimeSeconds` and `computeClips`, including per-clip buffers;
 - `RescanMergeTest`: `mergeRescan` and `checkCuts`;
-- `CutFieldsTest`: *Shared on* storage, toggling and filter, the v7 fill from notes, and tag fallback;
+- `CutFieldsTest`: *Shared on* storage, toggling and filter, the v7 fill from notes, tag fallback, single-solve clips (`clipsFor`), and restore matching (`matchVideo`, `matchExport`);
 - `TagsTest`: tag resolving, labels, filter, selection rules and tagged file names;
 - `PenaltyTest`: penalty display, file-name part, renaming an exported name, and that a penalty never moves a clip.
 

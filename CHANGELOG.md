@@ -28,6 +28,8 @@ Notes on history:
 - **Shared on:** the viewer's platform buttons now mark where a clip was shared, separately from the note. *Filter* → *Shared on: TikTok* (or any platform) or *Not shared yet*.
 - **Single solves:** *Import video* asks **A session** or **One solve**. A single solve skips Find solves: type its time (penalty and puzzle optional), and trim it if you like. Untrimmed, the file itself is the clip; trimmed, it exports as a copy.
 - Single solves are in the Clips tab (marked *One solve*), not under Footage. Their viewer details have **Edit** (time and trim), **Delete video** and **Forget this solve**. *Filter* switches all single solves on or off together.
+- **Backup and restore** (*⋮ → Backup and restore*): save one small file with your solves, tags, penalties, buffers, notes, *Shared on* and exports (no videos) wherever you choose. Restore adds what this phone doesn't have yet and never replaces anything.
+- **Reconnect videos** and **Reconnect exported clips** after a restore or a reinstall: pick many files at once; each is matched by name, size and length (exported clips by file name).
 
 ### Changed
 - The platform buttons no longer add words to your note. Notes you wrote before keep their text; where they named a platform, the clip already counts as shared there.

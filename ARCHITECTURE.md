@@ -168,6 +168,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf`; many exported files at once: `startBatchTrash` and `PendingTrash.batch` (one request) |
 | Destructive-action warnings | `DangerButton`, `EffectLine`, `FootageHeader` (`Gallery.kt`) |
 | Permissions, SDK, backup, signing | [docs/android.md](docs/android.md) |
+| Backup file, restore, reconnect many videos / exports | `Backup.kt` (`Backup.write` / `restore`, `BackupDialog`); `SessionStore.restoreVideo` / `reconnectVideos` / `reconnectExports`, `matchVideo` / `matchExport`; format in [data-model](docs/data-model.md#backup-file-32-g) |
 | Tuning numbers | [algorithms § Tuning map](docs/algorithms.md#7-tuning-map) |
 
 ## Recipes
@@ -195,7 +196,8 @@ Use a boolean or a nullable "target" (`var confirmX by remember { mutableStateOf
 3. **Writes:** `saveSession` deletes and reinserts every cut, so add the column to that insert. A single-field update from the Gallery needs its own `update…` function shaped like `updateCutScramble`, which also sets `user_edited = 1`.
 4. **Re-scan:** a field only the user sets goes into `withUserFieldsOf` (`RescanMerge.kt`), so a re-scan carries it over. A user-set value must also mark the cut `edited` (invariant 4); Gallery writes do that through `updateCut`.
 5. **Gallery:** expose it on `GalleryClip`, then wire sort and filter (`ClipKey`, `ExportFilter`, the Filter dialog, `GalleryUiState` persistence).
-6. Update [data-model.md](docs/data-model.md) and the CHANGELOG in the same commit.
+6. **Backup:** write it in `Backup.write` and read it with a default in `Backup.restore` (3.2-G).
+7. Update [data-model.md](docs/data-model.md) and the CHANGELOG in the same commit.
 
 ### New display reader (another font)
 Implement `DisplayReader` (`id`, `available`, `learn`, `read`, optionally `learnUnverified`) in `DisplayReaders.kt` and add it to `DisplayReaders.all`, cheapest first. The winning reader's `id` is stored in `DigitLayout.readerId`. `readerData` is free for the new reader's own data. Return `null` when unsure. Steps 1–3 of the pipeline (find, straighten, binarise) are shared. See [ADR-0014](docs/adr/0014-display-reader-seam.md).

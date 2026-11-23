@@ -1127,6 +1127,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var showMore by remember { mutableStateOf(false) }
     var showTrash by remember { mutableStateOf(false) }                  // the "Recently deleted" window
+    var showBackup by remember { mutableStateOf(false) }                 // (3.2-G) the "Backup and restore" window
     var trashData by remember { mutableStateOf<TrashData?>(null) }
     var pendingTrash by remember { mutableStateOf<PendingTrash?>(null) } // waiting for the system's confirmation
     var confirmTrashFootage by remember { mutableStateOf<Footage?>(null) }   // our own warning before moving a video to the trash
@@ -1693,6 +1694,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
                         DropdownMenuItem(text = { Text("Refresh") }, onClick = { showMore = false; ui.refresh++ })
                         DropdownMenuItem(text = { Text("Recently deleted") }, onClick = { showMore = false; showTrash = true })
+                        DropdownMenuItem(
+                            text = { Text("Backup and restore") }, enabled = batchDone < 0,
+                            onClick = { showMore = false; showBackup = true }
+                        )
                         DropdownMenuItem(text = { Text("Settings") }, onClick = { showMore = false; showSettings = true })
                     }
                 }
@@ -2601,6 +2606,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 },
                 dismissButton = { TextButton(onClick = { forgetting = null }) { Text("Cancel") } }
             )
+        }
+
+        // ===== (3.2-G) backup file, restore, reconnect in bulk =====
+        if (showBackup) {
+            BackupDialog(onMessage = { message = it }, onChanged = { ui.refresh++ }, onDismiss = { showBackup = false })
         }
 
         if (showAbout) AboutDialog { showAbout = false }

@@ -239,7 +239,7 @@ Rules:
 - A single solve can't be turned into a session: forget it and import again as *A session*.
 - Built without asking (flag for the owner): only the Gallery's *Import video* asks session / one solve; the editor's import is sessions only and refuses a known single solve. A single solve is titled without a number (`Title · 11.263s`, card *One solve*) but its file is still `…_Solve_01_…`. Untrimmed singles can't be ticked for export. A single solve with no video and no file still shows (*Video missing*) so it can be reconnected or forgotten. The Filter dialog has one *Single solves* switch instead of one line per file. A time is required to save.
 
-### 3.2-G Backup and restore ⬜
+### 3.2-G Backup and restore 🔶
 **#4:** a backup that survives an uninstall and reinstall, and moves the Gallery from an old phone to a new one.
 
 **Decided:**
@@ -270,6 +270,11 @@ Where to start:
 Rules:
 - The README promises that nothing leaves the phone without the user's action.
 - Stored uris are SAF grants that don't survive a reinstall.
+
+**Decided** at the start of the phase (2026-11-23), recorded in [ADR-0015](adr/0015-user-saved-backup-file.md):
+- Exported clips are reconnected by the user picking them (matched by file name). No `READ_MEDIA_VIDEO`.
+- Restore merges and the phone wins: a video already here is left as it is.
+- Built without asking (flag for the owner): the backup leaves out uris (an old MediaStore uri can point at another video on a new phone) and trashed exports; video lengths may differ by up to 1 s when matching; the backup window lives in the Gallery's ⋮ menu.
 
 ### 3.2-Z Release prep 3.2 ⬜
 Set `versionName "3.2.0"`. Test the upgrade from 3.1 on a phone with real data.

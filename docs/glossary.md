@@ -35,6 +35,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Recently deleted / trash** | Items CubeCut moved to Android's trash | `trashed_ms`, `loadTrash`, `createTrashRequest` |
 | **Forget (session)** | Delete CubeCut's records of a video. The file is untouched | `SessionStore.delete`, `releaseAccess` |
 | **Reconnect video** | Attach a new file link to a saved session | `SessionStore.relink` |
+| **Backup / restore / reconnect in bulk** | A JSON file of the saved data (no videos) the user saves; restore adds what the phone lacks; *Reconnect videos* / *Reconnect exported clips* match many picked files at once | `Backup.write` / `restore`, `BackupDialog` (`Backup.kt`), `SessionStore.restoreVideo` / `reconnectVideos` / `reconnectExports`, `matchVideo`, `matchExport`, `BACKUP_FORMAT` |
 | **Gallery: Clips / Footage tabs** | The two tabs of the start screen | `GalleryScreen`, `GalleryUiState.tab` (0 = Clips, 1 = Footage) |
 | **Viewer** | The full-screen clip player with the swipe-up sheet | `ClipViewer`, `ui.detail` |
 | **Replay** | The viewer's auto-replay switch: clips loop while it is on | `GalleryUiState.autoReplay`, `REPEAT_MODE_ONE` |

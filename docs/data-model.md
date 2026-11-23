@@ -140,8 +140,18 @@ Clips are worked out with `clipsFor(footage, cuts)`: `computeClips` for a sessio
 
 `MediaStore.createTrashRequest` needs a MediaStore uri. `mediaStoreUriOf` derives one from `media` uris and `media.documents` `video:` ids. A video picked through a folder view has none and cannot be trashed from CubeCut. On `RESULT_OK` the app stores `trashed_ms`; restoring sets it back to 0. Android empties its trash after about 30 days. Rationale: [ADR-0008](adr/0008-never-delete-permanently.md).
 
+## Backup file (3.2-G)
+
+`Backup.kt` ([ADR-0015](adr/0015-user-saved-backup-file.md)). One JSON object: `app` = `"CubeCut"`, `format` = `BACKUP_FORMAT` (1), `made_ms`, and `videos`: one object per `footage` row with every column **except** `id`, `uri` and `trashed_ms`, plus its `cuts` (every column except `id` / `footage_id`; `shared_on` as stored) and its live `exports` (`stop_sec`, `time_text`, `file_name`, `offset_sec`, `exported_ms`; no uri). A trim or per-clip pad that is NULL is JSON `null`.
+
+- **Restore** (`Backup.restore` → `SessionStore.restoreVideo`, one transaction per video): a video that `matchVideo` finds among the saved ones is skipped (the phone wins). Others are inserted with `uri = ''` and `trashed_ms = 0`, their cuts through `saveSession` (so `user_edited` etc. come back as saved) and their exports through `recordExports` with `uri = ''`. `canOpen('')` is false, so they show as missing until reconnected.
+- **`matchVideo`**: same name + size, else same size (> 0), with the length within `SAME_LENGTH_MS` (1 s) either way. Used by restore and by **Reconnect videos** (`reconnectVideos`, only videos that can't be opened and aren't trashed).
+- **Reconnect exported clips** (`reconnectExports`): exact `file_name` against export records that can't be opened.
+- A picked file that matches nothing gets its persisted grant released.
+- **Adding a field**: write it in `Backup.write` and read it with a default in `Backup.restore`. A change of meaning bumps `BACKUP_FORMAT`; a newer format is refused.
+
 ## Constraints for planned features
 
-- **Backup and transfer** ([roadmap](roadmap.md) phase 3.2-G; decided: a backup file the user saves, restored with bulk reconnect, superseding ADR-0009): stored `uri`s are SAF grants that don't survive a reinstall. A restore must re-identify videos by name+size+duration (step 2 above), or reconnect them in bulk. `allowBackup="false"` and `data_extraction_rules.xml` currently exclude everything.
+- Stored `uri`s are SAF grants that don't survive a reinstall; the backup leaves them out on purpose (an old MediaStore uri can point at another video on a new phone).
 - **A new per-cut field** must go through `saveSession`'s insert, `loadCuts` and `withUserFieldsOf` in `RescanMerge.kt`. Follow the recipe in [ARCHITECTURE](../ARCHITECTURE.md#new-per-video-or-per-clip-field-for-example-a-tag-or-a-penalty).
 - **A penalty is stored apart from `time_text`** (`plus2_count`, `dnf`), so the solve-only start stays on the raw time. **Changing `time_text`** changes the clip's solve-only start and the name of a later export, but not the export link, because the link uses `stop_sec`.

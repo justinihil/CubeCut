@@ -50,7 +50,7 @@ Download the `.apk` from this repository's **Releases** page, open it on the pho
 
 ## Privacy
 
-The app has no internet permission and uploads nothing. Its saved list of sessions is left out of Android backup and phone-to-phone transfer, so nothing leaves the phone. The extra permissions added by the video player and AndroidX libraries don't allow internet access; the full list is in [docs/android.md](docs/android.md#permissions). Videos are opened with Android's file picker and only read. Clips are written to your own `Movies/CubeCut` folder.
+The app has no internet permission and uploads nothing. Its saved list of sessions is left out of Android backup and phone-to-phone transfer, so nothing leaves the phone. To keep it, save a backup file yourself (*⋮ → Backup and restore*; no videos inside) wherever you choose. The extra permissions added by the video player and AndroidX libraries don't allow internet access; the full list is in [docs/android.md](docs/android.md#permissions). Videos are opened with Android's file picker and only read. Clips are written to your own `Movies/CubeCut` folder.
 
 ## Support
 

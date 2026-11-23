@@ -783,6 +783,104 @@ object SessionStore {
         return "Reconnected \"${footage.title}\". Its clips are back."
     }
 
+    // ---------------------------------------------------------------- (3.2-G) backup, restore and reconnecting in bulk
+
+    /** Every exported-file record of every video (Backup writes the live ones). */
+    fun loadAllExports(context: Context): List<ExportedClip> =
+        listFootage(context).flatMap { loadExports(context, it.id) }
+
+    /**
+     * (3.2-G) Adds one video from a backup, unless this phone already has it ([matchVideo] against every saved video: the phone
+     * wins, nothing here is changed). It comes back with no link to its file (`uri` = ''): Reconnect videos, or importing the video
+     * again, gives it one. Its exports come back without a link too (Reconnect exported clips). All or nothing. Returns false when
+     * the video was already here.
+     */
+    fun restoreVideo(context: Context, f: Footage, cuts: List<CutItem>, exports: List<ExportedClip>): Boolean {
+        val d = db(context)
+        d.beginTransaction()
+        try {
+            if (matchVideo(f.displayName, f.sizeBytes, f.durationMs, listFootage(context)) != null) return false
+            val v = ContentValues()
+            v.put("uri", "")
+            v.put("display_name", f.displayName)
+            v.put("size_bytes", f.sizeBytes)
+            v.put("duration_ms", f.durationMs)
+            v.put("title", f.title)
+            v.put("date_taken_ms", f.dateTakenMs)
+            v.put("added_ms", f.addedMs)
+            v.put("last_scan_ms", f.lastScanMs)
+            v.put("before_pad", f.beforePad.toDouble())
+            v.put("after_pad", f.afterPad.toDouble())
+            v.put("scramble_all", if (f.scrambleAll) 1 else 0)
+            v.put("timer_frame_ms", f.timerFrameMs)
+            v.put("timer_corners", f.timerCorners)
+            v.put("timer_typed", f.timerTyped)
+            v.put("puzzle", f.puzzle)
+            v.put("category", f.category)
+            v.put("kind", f.kind)
+            putPad(v, "trim_start_sec", f.trimStartSec)
+            putPad(v, "trim_end_sec", f.trimEndSec)
+            val id = d.insertOrThrow("footage", null, v)
+            saveSession(context, id, cuts, f.beforePad, f.afterPad, f.scrambleAll)
+            recordExports(context, id, exports.map {
+                ExportedClip(0L, id, it.stopSec, it.timeText, "", it.fileName, it.offsetSec, it.exportedMs)
+            })
+            d.setTransactionSuccessful()
+            return true
+        } finally {
+            d.endTransaction()
+        }
+    }
+
+    /**
+     * (3.2-G) Reconnects many videos at once: each picked file is matched by name, size and length ([matchVideo]) to a saved video
+     * whose file can't be opened. A picked file that matches nothing gets its permission back (the phone keeps at most 512).
+     * Returns (reconnected, not matched).
+     */
+    fun reconnectVideos(context: Context, uris: List<Uri>): Pair<Int, Int> {
+        val waiting = listFootage(context).filter { it.trashedMs == 0L && !canOpen(context, Uri.parse(it.uri)) }.toMutableList()
+        var done = 0
+        for (uri in uris) {
+            val (name, size) = nameAndSize(context, uri)
+            val dur = try { readDurationMs(context, uri) } catch (e: Exception) { -1L }
+            val f = if (dur > 0) matchVideo(name, size, dur, waiting) else null
+            if (f == null) {
+                releaseAccess(context, uri.toString())
+                continue
+            }
+            val v = ContentValues()
+            v.put("uri", uri.toString())
+            if (name.isNotEmpty()) v.put("display_name", name)
+            db(context).update("footage", v, "id = ?", arrayOf(f.id.toString()))
+            waiting.remove(f)
+            done++
+        }
+        return Pair(done, uris.size - done)
+    }
+
+    /**
+     * (3.2-G) Reconnects exported clips after a restore or a reinstall: each picked file is matched by its exact file name to an
+     * export record whose file can't be opened. Returns (reconnected, not matched).
+     */
+    fun reconnectExports(context: Context, uris: List<Uri>): Pair<Int, Int> {
+        val waiting = loadAllExports(context).filter { it.trashedMs == 0L && !canOpen(context, Uri.parse(it.uri)) }.toMutableList()
+        var done = 0
+        for (uri in uris) {
+            val name = nameAndSize(context, uri).first
+            val e = matchExport(name, waiting)
+            if (e == null) {
+                releaseAccess(context, uri.toString())
+                continue
+            }
+            val v = ContentValues()
+            v.put("uri", uri.toString())
+            db(context).update("exports", v, "id = ?", arrayOf(e.id.toString()))
+            waiting.remove(e)
+            done++
+        }
+        return Pair(done, uris.size - done)
+    }
+
     /** Gives a session a new title (an empty title is ignored). */
     fun renameFootage(context: Context, footageId: Long, title: String) {
         val t = title.trim()
@@ -1054,6 +1152,25 @@ fun sharedMatches(shared: List<String>, filter: String?): Boolean = when (filter
     "" -> shared.isEmpty()
     else -> filter in shared
 }
+
+/** (3.2-G) Two lengths of the same file read on different phones may differ a little; more than this is another video. */
+private const val SAME_LENGTH_MS = 1000L
+
+/**
+ * (3.2-G) The video among [candidates] that a file with this [name], [size] and [durationMs] is: the same name and size (moved to
+ * another phone), else the same size under another name (renamed). The length must agree within SAME_LENGTH_MS either way. Null =
+ * none. These are the identity rules of ADR-0005 (steps 2 and 3), for files whose old link is gone.
+ */
+fun matchVideo(name: String, size: Long, durationMs: Long, candidates: List<Footage>): Footage? {
+    fun lengthFits(f: Footage) = Math.abs(f.durationMs - durationMs) <= SAME_LENGTH_MS
+    if (name.isNotEmpty()) candidates.firstOrNull { it.displayName == name && it.sizeBytes == size && lengthFits(it) }?.let { return it }
+    if (size > 0) candidates.firstOrNull { it.sizeBytes == size && lengthFits(it) }?.let { return it }
+    return null
+}
+
+/** (3.2-G) The export record among [candidates] whose file is called [name] (exactly, as Android named it), or null. */
+fun matchExport(name: String, candidates: List<ExportedClip>): ExportedClip? =
+    if (name.isEmpty()) null else candidates.firstOrNull { it.fileName == name }
 
 /** An exported clip in the trash, with the title of the session it came from. */
 class TrashedExport(val clip: ExportedClip, val footageTitle: String)
