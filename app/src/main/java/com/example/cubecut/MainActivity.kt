@@ -572,7 +572,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         setupExpanded = false
                         openedNote = "Saved session: ${opened.cuts.size} cuts" +
                                 (if (opened.footage.lastScanMs > 0) ", found ${formatDate(opened.footage.lastScanMs)}" else "") +
-                                ". Set up the timer only to scan again."
+                                (if (opened.footage.lastScanMs > 0) ". Set up the timer only to scan again." else ". Set up the timer to find the other solves.")
                         analysisStatus = openedNote
                     }
                 }
@@ -800,6 +800,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     selectedCut = -1
                     cuts.addAll(merged.cuts)
                     scanReport = report
+                    val firstScan = !scanned            // (3.1) hand-added solves alone don't make this a re-scan
                     scanned = true
                     footageId?.let { id ->
                         withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
@@ -813,7 +814,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     analysisStatus = if (saved.isEmpty()) {
                         "Done in ${seconds}s: $solveCount solves, $toCheck to check"
                     } else {
-                        "Re-scan done in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "")
+                        (if (firstScan) "Done" else "Re-scan done") + " in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "")
                     }
                     finishedText = analysisStatus
                     setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job
@@ -1564,7 +1565,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 ) {
                     Text(
                         if (analyzing) "Working... ${if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0}%"
-                        else if (cuts.isEmpty()) "Find solves" else "Find solves again"
+                        // (3.1) "again" only after a real scan: solves added by hand don't count
+                        else if (scanned) "Find solves again" else "Find solves"
                     )
                 }
 

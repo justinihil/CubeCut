@@ -15,6 +15,9 @@ Notes on history:
 ### Added
 - **Add a missed solve at the playhead** shows as soon as a video is loaded, so solves can be added by hand before Find solves or without a timer setup. The two switches still wait until there are solves.
 - A solve added by hand is selected, the list scrolls to its card, and the card blinks a few times. If *Only solves to check* would hide it, the filter turns off.
+
+### Fixed
+- *Find solves* no longer says *again* (and the result no longer says *Re-scan*) when only solves added by hand exist and it has never run on the video.
 - The **Edit window** zooms its picture onto the timer when a timer setup is saved. **Whole frame** shows the full picture.
 - Importing a video CubeCut has seen before asks first: **Imported before** shows its saved solves and last scan, with *Open saved* / *Cancel*.
 - Documentation baseline: `CLAUDE.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `app/README.md`, and `docs/` (algorithms, data model, Android/release, glossary, user guide, known issues, roadmap, ADRs 0001–0014).

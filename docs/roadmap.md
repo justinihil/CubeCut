@@ -76,6 +76,7 @@ Items:
 - The Edit window has a *Whole frame* toggle. It starts zoomed each time the window opens.
 - The crop is fixed at the saved corners (still camera assumed), with a bigger margin: half the timer's width on every side.
 - Added by the owner during the phase: a solve added by hand is selected, scrolled to, and its card blinks (3 blinks, under 2 s). If the check filter would hide it, the filter turns off, as *Go to solve* already does.
+- Found in the phone test: *Find solves again* / *Re-scan done* now depend on whether a scan ran (`scanned`), not on whether solves exist.
 
 Built (awaiting the phone test): `Reimport.kt`, `SessionStore.findKnown`, `ThumbCache.timerFrame`. The warning covers both *Import video* buttons.
 
