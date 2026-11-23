@@ -30,6 +30,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
@@ -98,7 +99,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -138,6 +143,12 @@ import org.opencv.android.OpenCVLoader
 
 // should a new cut include the part before the solve (the scramble)? true = clip runs from the previous clip's end
 const val DEFAULT_INCLUDE_SCRAMBLE = true
+
+// (3.1) a solve added by hand: its card blinks this many times (each blink on + off, in ms) so the eye finds it.
+// More or slower blinks are easier to notice but keep the list busy longer (3 x 600 ms = under 2 s)
+private const val ADDED_FLASH_BLINKS = 3
+private const val ADDED_FLASH_ON_MS = 250
+private const val ADDED_FLASH_OFF_MS = 350
 
 // The author credit: a small line at the bottom of the main screen, and the About window it opens. The licence (NOTICE.md)
 // requires the credit to stay in the app, so anyone who shares a version of CubeCut has to keep it (changed versions
@@ -1067,6 +1078,33 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
     }
 
+    // (3.1) a solve just added by hand: once its card has been laid out, scroll it into view (only if it isn't fully visible),
+    // then blink its border a few times. [flashItem] is that solve, [flashRun] starts a new blink (adding twice in a row blinks again).
+    var flashItem by remember { mutableStateOf<CutItem?>(null) }
+    var flashRun by remember { mutableStateOf(0) }
+    val flashLevel = remember { Animatable(0f) }
+    LaunchedEffect(flashRun) {
+        if (flashRun == 0) return@LaunchedEffect
+        flashLevel.snapTo(0f)          // (a blink cut short by a newer add starts again from off)
+        var tries = 0
+        while (tries < 30) {
+            val i = selectedCut
+            val rowBox = rowBoxes[i]
+            val areaBox = listBox[0]
+            if (i >= 0 && rowBox != null && areaBox != null && rowBox.isAttached && areaBox.isAttached) {
+                scrollListTo(i)
+                break
+            }
+            delay(50)
+            tries++
+        }
+        repeat(ADDED_FLASH_BLINKS) {
+            flashLevel.animateTo(1f, tween(ADDED_FLASH_ON_MS))
+            flashLevel.animateTo(0f, tween(ADDED_FLASH_OFF_MS))
+        }
+        flashItem = null               // (not in a finally: a newer add cancels this run after it has set its own flashItem)
+    }
+
     // opened from a Gallery clip: once the list has been laid out, scroll so the selected row is in view
     LaunchedEffect(scrollToSelected) {
         if (!scrollToSelected) return@LaunchedEffect
@@ -1677,6 +1715,29 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                             shape
                                         )
                                         .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface)
+                                        .then(
+                                            // (3.1) a solve just added by hand blinks: a thick border and a light tint, read while
+                                            // drawing so only this card redraws during the blink
+                                            if (item === flashItem) {
+                                                val blink = MaterialTheme.colorScheme.primary
+                                                Modifier.drawWithContent {
+                                                    drawContent()
+                                                    val level = flashLevel.value
+                                                    if (level > 0f) {
+                                                        val w = 4.dp.toPx()
+                                                        val r = CornerRadius(10.dp.toPx() - w / 2)
+                                                        drawRoundRect(blink.copy(alpha = 0.18f * level), cornerRadius = r)
+                                                        drawRoundRect(
+                                                            blink.copy(alpha = level),
+                                                            topLeft = Offset(w / 2, w / 2),
+                                                            size = Size(size.width - w, size.height - w),
+                                                            cornerRadius = r,
+                                                            style = Stroke(w)
+                                                        )
+                                                    }
+                                                }
+                                            } else Modifier
+                                        )
                                         .clickable {
                                             selectedCut = index
                                             seekToSec(item.stopSec - 0.5)
@@ -1970,10 +2031,16 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 } else {
                                     var position = cuts.indexOfFirst { it.stopSec > newCutAt }
                                     if (position < 0) position = cuts.size
-                                    cuts.add(position, CutItem(newCutAt, typed, true, ADDED_BY_YOU_NOTE, scrambleAll, edited = true))
+                                    val added = CutItem(newCutAt, typed, true, ADDED_BY_YOU_NOTE, scrambleAll, edited = true)
+                                    cuts.add(position, added)
                                     rowBoxes.clear()
                                     addCutAt = null
                                     selectedCut = position
+                                    // (3.1) show the new card: the check filter would hide it, so it goes off (like "Go to solve");
+                                    // then the list scrolls to the card and it blinks (flashRun effect)
+                                    if (onlyCheck && !needsCheck(position)) onlyCheck = false
+                                    flashItem = added
+                                    flashRun++
                                     analysisStatus = "Solve added at ${at(newCutAt)}: $typed s."
                                 }
                             }

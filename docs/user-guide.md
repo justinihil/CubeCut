@@ -11,7 +11,7 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
    3. The setup is remembered for this video.
 3. **Find solves.** The app reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. You can switch apps (a notification shows progress) or press Cancel. While it runs, importing and timer setup are blocked.
 4. **Review** the list. The arrows step through solves. Tapping the timeline selects the solve there; playing the video doesn't change the selection.
-   - **Missed solve:** put the playhead on the first frame that shows its final time, tap **Add a missed solve at the playhead**, and type the time.
+   - **Missed solve:** put the playhead on the first frame that shows its final time, tap **Add a missed solve at the playhead**, and type the time. The list jumps to the new solve, which blinks briefly.
    - **Wrong time or cut point:** use **Edit**. It shows the frame the cut is on, zoomed onto the timer, and ◂ 0.1s / 0.1s ▸ buttons move the cut. Tap **Whole frame** to see all of it.
    - **Not a solve:** delete it. Undo is available for 8 s. An exported solve asks whether to keep its file.
    - **Flagged *check*:** *Only show solves to check* narrows the list. **It's fine** clears a flag.
