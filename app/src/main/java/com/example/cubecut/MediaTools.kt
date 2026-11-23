@@ -18,6 +18,8 @@ package com.example.cubecut
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.compose.ui.graphics.ImageBitmap
@@ -71,6 +73,42 @@ fun buildThumbnails(context: Context, uri: Uri, durationMs: Long, count: Int, on
         retriever.release()
     }
     return result
+}
+
+/**
+ * (3.3-A) How long one frame of the video lasts, in seconds, for the Edit window's 1-frame buttons. From the video track's frame rate,
+ * else its frame count over its length, else 1/60 s. Phone videos often have a slightly varying frame rate, so this is an average:
+ * a step lands on the nearest real frame (the picture is grabbed with OPTION_CLOSEST).
+ */
+fun videoFrameSec(context: Context, uri: Uri): Double {
+    var fps = 0.0
+    val extractor = MediaExtractor()
+    try {
+        extractor.setDataSource(context, uri, null)
+        for (i in 0 until extractor.trackCount) {
+            val f = extractor.getTrackFormat(i)
+            if (f.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true && f.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                fps = try { f.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() } catch (e: Exception) { f.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }
+                break
+            }
+        }
+    } catch (e: Exception) {
+    } finally {
+        extractor.release()
+    }
+    if (fps !in 10.0..240.0) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            val frames = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toDoubleOrNull() ?: 0.0
+            val ms = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toDoubleOrNull() ?: 0.0
+            if (frames > 0 && ms > 0) fps = frames / (ms / 1000.0)
+        } catch (e: Exception) {
+        } finally {
+            retriever.release()
+        }
+    }
+    return if (fps in 10.0..240.0) 1.0 / fps else 1.0 / 60.0
 }
 
 /** Grabs one exact picture from the video at [ms]. */

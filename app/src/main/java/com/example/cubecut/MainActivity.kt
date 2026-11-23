@@ -437,6 +437,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var setupExpanded by remember { mutableStateOf(true) }       // the Setup box: open at first, closes after Find solves
     var showScanTools by remember { mutableStateOf(false) }       // (3.3-A, debug builds) the Scan report window
     var scanToolResult by remember { mutableStateOf<ScanReportResult?>(null) }   // ...and its finished report
+    // (3.3-A) one frame of this video in seconds, for the Edit window's 1-frame buttons (1/60 s until the file says otherwise)
+    var frameSec by remember { mutableStateOf(1.0 / 60.0) }
+    LaunchedEffect(videoUri) {
+        val u = videoUri ?: return@LaunchedEffect
+        frameSec = withContext(Dispatchers.IO) { try { videoFrameSec(context, u) } catch (e: Exception) { 1.0 / 60.0 } }
+    }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     // keep the screen awake while a long job is running (so the phone doesn't go to sleep halfway)
@@ -2454,7 +2460,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         // ---- 2. where the cut is in the video (the buttons move this, not the time above) ----
                         Text("Where the cut is", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Text(
-                            "On the first frame where the timer shows the final time. If it's off, move it:",
+                            "On the first frame where the timer shows the final time. If it's off, move it. Finish with 1 frame.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2505,6 +2511,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     OutlinedButton(onClick = { nudge(-0.5) }, contentPadding = tight) { Text("\u25C2 0.5s") }
                                     OutlinedButton(onClick = { nudge(-0.1) }, contentPadding = tight) { Text("\u25C2 0.1s") }
                                 }
+                                // (3.3-A) one frame at a time, so a cut can sit exactly on the first frame of the final time
+                                OutlinedButton(onClick = { nudge(-frameSec) }, contentPadding = tight) { Text("\u25C2 1 frame") }
                                 Text("earlier", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2512,6 +2520,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     OutlinedButton(onClick = { nudge(0.1) }, contentPadding = tight) { Text("0.1s \u25B8") }
                                     OutlinedButton(onClick = { nudge(0.5) }, contentPadding = tight) { Text("0.5s \u25B8") }
                                 }
+                                OutlinedButton(onClick = { nudge(frameSec) }, contentPadding = tight) { Text("1 frame \u25B8") }
                                 Text("later", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }

@@ -13,6 +13,7 @@ Notes on history:
 ## [Unreleased]
 
 ### Added
+- **1-frame buttons** in the editor's *Edit* window (◂ 1 frame / 1 frame ▸), so a cut can sit exactly on the first frame of the final time. One step is one frame of that video (30 or 60 fps).
 - **Puzzle logos:** a small flat drawing for each puzzle (a grid for 2x2 to 7x7, a pentagon for Megaminx, and so on; a plain cube for *Other*). They show in the viewer's details, on the puzzle buttons of the *Which puzzle is this?* window, in a corner of tagged clip and video pictures in the Gallery, and on the *Puzzle:* line while ticking clips.
 
 ### Changed
