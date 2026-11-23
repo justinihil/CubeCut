@@ -169,7 +169,7 @@ Settled, so don't change:
 - Playing doesn't change the selection.
 - Delete comes with Undo.
 
-### 3.1-E Gallery selection: batch delete and scramble for all ⬜
+### 3.1-E Gallery selection: batch delete and scramble for all ✅
 Items:
 - **#2 Batch delete of exported clips**, with warnings.
 - **#9 Scramble for all clips.** Batch scramble on a selection **already exists**: it is the switch in the selection header (`setScrambleForSelected`, `Gallery.kt`). *Select all (shown)* also already exists: the header's *All / None*.
@@ -180,7 +180,7 @@ Items:
 - The scramble switch: a video with every exportable clip ticked gets the video setting, like the editor's all-clips switch (no `edited`). A video only partly ticked is changed clip by clip, with `edited`.
 - No Settings default for the scramble of new videos.
 
-Built (2026-11-23), waiting for the phone test: `exportable` / `selectable`, the header's bin, the `askDelete` dialog, `startBatchTrash` / `PendingTrash.batch` and `setScrambleForSelected` (`Gallery.kt`); `SessionStore.setVideoScramble`.
+Built and phone-tested (2026-11-23): `exportable` / `selectable`, the header's bin, the `askDelete` dialog, `startBatchTrash` / `PendingTrash.batch` and `setScrambleForSelected` (`Gallery.kt`); `SessionStore.setVideoScramble`.
 
 Where to start:
 - The selection header in `GalleryScreen` (`runBatchExport` is next to it).
