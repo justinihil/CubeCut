@@ -11,7 +11,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Cut / stop / first frame** | The first frame on which the stopped timer shows the final time. Everything is measured from it | `CutItem.stopSec`, `cuts.stop_sec`, `FoundSolve.stopSec` |
 | **Time** | The solve time as displayed, e.g. `11.263` or `1:02.34` | `timeText`; seconds via `parseTimeSeconds` |
 | **Clip** | The piece of video exported for one solve. Always computed, never stored | `Clip`, `computeClips` |
-| **Solve only / with scramble** | The two clip modes. *Solve only* starts at the time on the timer plus the before buffer, counted back from the cut. *With scramble* starts where the previous cut's clip ended | `includeScramble` (per cut), `scrambleAll` (per video, the all-clips switch), `Clip.withScramble` |
+| **Solve only / with scramble** | The two clip modes. *Solve only* starts at the time on the timer plus the before buffer, counted back from the cut. *With scramble* starts where the previous cut's clip ended | `includeScramble` (per cut), `scrambleAll` (per video: the editor's all-clips switch, or the Gallery's selection switch with a whole video ticked), `Clip.withScramble` |
 | **Before / after buffer** | Extra seconds before the solve (solve-only clips) and after the cut (all clips). Default 2.5 s | `beforePad`, `afterPad`, columns `before_pad` / `after_pad` |
 | **Boundary (previous cut)** | Where a with-scramble clip starts: the end of the previous cut's clip, whether or not that cut is exported | Inside `computeClips` |
 | **Left over** | A time already on the display when the video began, from an earlier solve. Switched off and ignored like a deleted cut | `isLeftover()`, `SolveAnalyzer.LEFTOVER_NOTE_START`, `included = false` |

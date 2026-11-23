@@ -583,6 +583,25 @@ object SessionStore {
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
+    /**
+     * Switches the scramble on or off for a whole video, the same as the editor's *Scramble in all clips* switch: the video setting
+     * (`scramble_all`, which new solves from a re-scan follow) and every cut. It is a video setting, so it leaves `user_edited` alone
+     * and a re-scan still updates the solves you haven't touched (ADR-0013).
+     * The Gallery uses it when every clip of a video is ticked (3.1-E).
+     */
+    fun setVideoScramble(context: Context, footageId: Long, includeScramble: Boolean) {
+        val d = db(context)
+        val flag = if (includeScramble) 1 else 0
+        d.beginTransaction()
+        try {
+            d.update("footage", ContentValues().apply { put("scramble_all", flag) }, "id = ?", arrayOf(footageId.toString()))
+            d.update("cuts", ContentValues().apply { put("include_scramble", flag) }, "footage_id = ?", arrayOf(footageId.toString()))
+            d.setTransactionSuccessful()
+        } finally {
+            d.endTransaction()
+        }
+    }
+
     // ---------------------------------------------------------------- the phone's trash
 
     /**

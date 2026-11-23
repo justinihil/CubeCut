@@ -27,6 +27,8 @@ If the timer can't be read, nothing is blocked. You can always add solves by han
 - **Your original video is never changed.** CubeCut only reads it.
 - **Re-running Find solves keeps your edits.** Solves you changed or exported stay as they are, untouched ones update, and new ones are added. A solve you deleted can come back if the scan finds it again.
 - **Delete** moves a video or clip to the phone's trash after a warning. You can restore it for about 30 days from *Recently deleted*. CubeCut never deletes anything permanently. Only videos picked from the picker's Videos or Images lists can be trashed from CubeCut.
+- **Delete many exported files at once:** hold a clip to start ticking, tick the clips, then tap the red bin next to *Export*. Only their files go to the trash; the solves and notes stay. Clips that only had their file left (*Export only*, *Solve deleted*) leave the Gallery. Export skips those clips.
+- **Scramble for many clips:** while ticking, the switch under the header turns the scramble on or off for every ticked clip. *All* ticks every clip shown. With every clip of a video ticked, it works like the editor's *Scramble in all clips*.
 - If you delete a raw video, its exported clips stay in the Gallery (*Export only*). Clips that were never exported disappear, but their solves stay saved, and importing the video again brings them back.
 - **Watching clips:** tap the picture for the controls. Double-tap the left or right half to skip back or forward; keep tapping to skip further. **Replay** (next to *Skip*) loops every clip until you switch it off.
 - **An exported clip is a copy.** Moving its cut or fixing its time later doesn't change the file; export it again.

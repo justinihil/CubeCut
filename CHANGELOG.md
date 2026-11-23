@@ -17,11 +17,14 @@ Notes on history:
 - A solve added by hand is selected, the list scrolls to its card, and the card blinks a few times. If *Only solves to check* would hide it, the filter turns off.
 - **Replay** in the clip viewer (next to *Skip*): clips loop while it is on. The choice is remembered.
 - **Double-tap to skip** in the clip viewer: the left half skips back, the right half forward, by the *Skip* length. Further quick taps keep skipping, and a hint shows the total (−5 s, −10 s…). A single tap now shows or hides the controls about 0.3 s later.
+- **Delete exported files from the Gallery selection:** a red bin next to *Export* moves the files of the ticked clips to the phone's trash, after a warning and one Android confirmation. Solves and notes stay; restore from *Recently deleted*.
 
 ### Changed
 - **Only solves to check** keeps its list while it is on. A solve that no longer needs a check stays, marked **✓ Fixed** or **✓ Checked**, instead of vanishing. Switch the filter off and on to tidy the list.
 - **It's fine** keeps the card in place and jumps to the next solve that still needs a check.
 - After a delete, the Undo bar says which solve is now selected: *Deleted the 12.34 s solve · now on Solve 7 (9.87 s)*.
+- *Export only* and *Solve deleted* clips can now be ticked in the Gallery (for the bin). *Export* skips them and says so.
+- The Gallery's scramble switch, with every clip of a video ticked, now works like the editor's *Scramble in all clips*: a later *Find solves* still updates those solves and new ones follow the setting.
 
 ### Fixed
 - Opening a clip from the Gallery no longer sometimes flashes the top and bottom of the screen for a moment.

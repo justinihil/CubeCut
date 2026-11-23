@@ -86,6 +86,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -131,6 +132,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -206,10 +209,13 @@ private val GREY = Color(0xFF757575)
 private val GREEN = Color(0xFF2E7D32)
 private val RED = Color(0xFFC62828)
 
-/** A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). */
-class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean) {
+/**
+ * A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). [batch] holds the exported
+ * clips ticked in the Gallery's selection (3.1-E): they all go in one trash request, so Android asks only once.
+ */
+class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean, val batch: List<ExportedClip> = emptyList()) {
     val uriString: String get() = footage?.uri ?: export?.uri ?: ""
-    val name: String get() = footage?.title ?: export?.fileName ?: ""
+    val name: String get() = footage?.title ?: export?.fileName ?: if (batch.size == 1) batch[0].fileName else "${batch.size} files"
 }
 
 /** What the Gallery should point out after loading: a video on the Footage tab, or a clip on the Clips tab. */
@@ -555,15 +561,21 @@ private fun Badge(text: String, background: Color, textColor: Color = Color.Whit
     )
 }
 
-/** Can this clip be ticked for an export? Only solves whose original video is here and that have a clip of their own. */
-private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
+/** Can this clip be exported? Only solves whose original video is here and that have a clip of their own. */
+private fun exportable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
     !c.exportOnly && c.index >= 0 && !c.noClip && openable[c.footage.id] == true
 
+/**
+ * Can this clip be ticked? Every clip that can be exported, and (3.1-E) every clip with an exported file, so the bin can delete it.
+ * That includes *Export only* and *Solve deleted* clips: Export skips them.
+ */
+private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
+    exportable(c, openable) || c.exported != null
+
 private fun notSelectableReason(c: GalleryClip, openable: Map<Long, Boolean>): String = when {
-    c.solveDeleted -> "This solve was deleted in the editor, so it can't be exported again."
-    c.exportOnly || openable[c.footage.id] != true -> "This clip's original video is missing, so it can't be exported again."
     c.noClip -> "This solve is too close to the one before. Fix it in the editor first."
-    else -> "This clip can't be exported."
+    openable[c.footage.id] != true -> "This clip's original video is missing, so it can't be exported again."
+    else -> "This clip can't be ticked."
 }
 
 /** The round selection mark: an empty ring, or a filled circle with a tick. */
@@ -1067,6 +1079,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var forgetting by remember { mutableStateOf<Footage?>(null) }
     var relinkFor by remember { mutableStateOf<Footage?>(null) }        // the session whose video is being picked again
     var askExport by remember { mutableStateOf(false) }                 // the "Export N clips?" window
+    var askDelete by remember { mutableStateOf(false) }                 // (3.1-E) the "Delete N exported files?" window
     var batchDone by remember { mutableStateOf(-1) }                    // clips exported so far in a batch export (-1 = not exporting)
     var batchTotal by remember { mutableStateOf(0) }
     // ---- "you were just here": the video or clip you came back from lights up for a moment ----
@@ -1103,7 +1116,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ui.hidden = loaded.footage.map { it.id }.filter { it != id }.toSet()
         ui.exportFilter = ExportFilter.ALL
         ui.save()
-        ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && selectable(it, loaded.openable) }.map { it.listKey }.toSet()
+        ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && exportable(it, loaded.openable) }.map { it.listKey }.toSet()
         ui.selecting = true
         message = if (ui.selected.isEmpty()) "All clips of this video are already exported. Tap clips to pick them again."
         else "${ui.selected.size} new clips selected. Tap a clip to add or remove it. The corner arrows play it. Then Export."
@@ -1141,12 +1154,23 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             ui.refresh++
         }
     }
-    /** Switches the scramble on or off for all the chosen clips at once (saved at once; the editor sees it too). */
-    fun setScrambleForSelected(on: Boolean, chosen: List<GalleryClip>) {
+    /**
+     * Switches the scramble on or off for all the chosen clips at once (saved at once; the editor sees it too). (3.1-E) A video whose
+     * exportable clips are all ticked gets the video setting, like the editor's all-clips switch, so its solves are not marked
+     * `edited` and a re-scan still updates them. A video only partly ticked is changed clip by clip, and those clips are `edited`.
+     */
+    fun setScrambleForSelected(on: Boolean, chosen: List<GalleryClip>, loaded: GalleryData) {
+        val wholeVideos = chosen.groupBy { it.footage.id }.filter { (id, group) ->
+            val keys = group.map { it.listKey }.toSet()
+            loaded.clips.filter { it.footage.id == id && exportable(it, loaded.openable) }.all { it.listKey in keys }
+        }.keys
         scope.launch {
             withContext(Dispatchers.IO) {
+                for (id in wholeVideos) {
+                    try { SessionStore.setVideoScramble(context, id, on) } catch (e: Exception) { }
+                }
                 for (c in chosen) {
-                    if (c.cut.includeScramble == on || c.index < 0) continue
+                    if (c.footage.id in wholeVideos || c.cut.includeScramble == on || c.index < 0) continue
                     try { SessionStore.updateCutScramble(context, c.footage.id, c.cut.stopSec, on) } catch (e: Exception) { }
                 }
             }
@@ -1289,11 +1313,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         try {
                             if (p.footage != null) SessionStore.setFootageTrashed(context, p.footage.id, stamp)
                             else if (p.export != null) SessionStore.setExportTrashed(context, p.export.id, stamp)
+                            for (e in p.batch) SessionStore.setExportTrashed(context, e.id, stamp)
                         } catch (e: Exception) {
                         }
                     }
-                    message = if (p.trashing) "Deleted \"${p.name}\". You can bring it back from Recently deleted."
-                    else "Restored \"${p.name}\"."
+                    message = when {
+                        p.batch.size > 1 -> "Deleted ${p.batch.size} files. You can bring them back from Recently deleted."
+                        p.trashing -> "Deleted \"${p.name}\". You can bring it back from Recently deleted."
+                        else -> "Restored \"${p.name}\"."
+                    }
+                    if (p.batch.isNotEmpty()) exitSelection()
                     ui.refresh++
                 }
             } else {
@@ -1311,6 +1340,22 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         try {
             val request = MediaStore.createTrashRequest(context.contentResolver, listOf(media), p.trashing)
             pendingTrash = p
+            trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        } catch (e: Exception) {
+            pendingTrash = null
+            message = "Couldn't ask Android: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+    /** (3.1-E) Moves the exported files of the ticked clips to the trash, in one request (Android asks once for all of them). */
+    fun startBatchTrash(files: List<ExportedClip>) {
+        val found = files.mapNotNull { e -> SessionStore.mediaStoreUriOf(e.uri)?.let { e to it } }
+        if (found.isEmpty()) {
+            message = "Can't delete these files from here. Delete them in your Files app instead."
+            return
+        }
+        try {
+            val request = MediaStore.createTrashRequest(context.contentResolver, found.map { it.second }, true)
+            pendingTrash = PendingTrash(null, null, true, found.map { it.first })
             trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
         } catch (e: Exception) {
             pendingTrash = null
@@ -1397,19 +1442,24 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 .systemBarsPadding()
                 .padding(horizontal = 8.dp)
         ) {
-            // ===== header (while choosing clips: how many are chosen, All / None, Export) =====
+            // ===== header (while choosing clips: how many are chosen, All / None, the bin, Export) =====
             if (ui.selecting && d != null) {
                 val pickable = shownClips.filter { selectable(it, d.openable) }.map { it.listKey }.toSet()
                 val allOn = pickable.isNotEmpty() && ui.selected.containsAll(pickable)
+                val ticked = d.clips.filter { it.listKey in ui.selected }
+                val canExport = ticked.any { exportable(it, d.openable) }
+                val hasFiles = ticked.any { it.exported != null }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { exitSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
                     Column(Modifier.weight(1f)) {
                         Text("${ui.selected.size} selected", style = MaterialTheme.typography.titleLarge)
-                        // how many of the ticked clips were exported before (they would be exported again), else how to tick
-                        val tickedBefore = d.clips.count { it.listKey in ui.selected && it.exported != null }
+                        // how many of the ticked clips were exported before (they would be exported again, or the bin deletes their
+                        // files), and how many only have a file left (Export skips them); else how to tick
+                        val tickedBefore = ticked.count { it.exported != null }
+                        val fileOnly = ticked.count { !exportable(it, d.openable) }
                         if (tickedBefore > 0) {
                             Text(
-                                "$tickedBefore already exported",
+                                "$tickedBefore already exported" + (if (fileOnly > 0) " \u00b7 $fileOnly file only" else ""),
                                 style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = AppColors.check,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
@@ -1420,10 +1470,17 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     TextButton(onClick = { ui.selected = if (allOn) ui.selected - pickable else ui.selected + pickable }) {
                         Text(if (allOn) "None" else "All")
                     }
-                    Button(onClick = { askExport = true }, enabled = ui.selected.isNotEmpty() && batchDone < 0) { Text("Export") }
+                    // (3.1-E) the red bin: deletes the exported files of the ticked clips (it warns first)
+                    IconButton(
+                        onClick = { askDelete = true }, enabled = hasFiles && batchDone < 0,
+                        modifier = Modifier.semantics { contentDescription = "Delete exported files" }
+                    ) {
+                        TrashIcon(if (hasFiles && batchDone < 0) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
+                    }
+                    Button(onClick = { askExport = true }, enabled = canExport && batchDone < 0) { Text("Export") }
                 }
                 // one switch for the scramble of every chosen clip (each one can still differ: change it in the player)
-                val chosenNow = d.clips.filter { it.listKey in ui.selected && selectable(it, d.openable) }
+                val chosenNow = ticked.filter { exportable(it, d.openable) }
                 if (chosenNow.isNotEmpty()) {
                     val onCount = chosenNow.count { it.cut.includeScramble }
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1433,7 +1490,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
-                        Switch(checked = onCount == chosenNow.size, onCheckedChange = { on -> setScrambleForSelected(on, chosenNow) })
+                        Switch(checked = onCount == chosenNow.size, onCheckedChange = { on -> setScrambleForSelected(on, chosenNow, d) })
                     }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1783,8 +1840,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
 
         // ===== "Export N clips?" =====
         if (askExport && d != null) {
-            val chosen = shownClips.filter { it.listKey in ui.selected && selectable(it, d.openable) } +
-                    d.clips.filter { it.listKey in ui.selected && selectable(it, d.openable) && it !in shownClips }
+            val chosen = shownClips.filter { it.listKey in ui.selected && exportable(it, d.openable) } +
+                    d.clips.filter { it.listKey in ui.selected && exportable(it, d.openable) && it !in shownClips }
+            val skippedN = d.clips.count { it.listKey in ui.selected && !exportable(it, d.openable) }   // (3.1-E) ticked, but only a file is left
             val again = chosen.count { it.exported != null }
             val fresh = chosen.filter { it.exported == null }
             // Nothing exported before: a plain "Export N clips?". Some exported before: the title says so, a note says what exporting
@@ -1808,6 +1866,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 text = "Exporting again makes a second copy. The first files stay."
                             )
                         }
+                        if (skippedN > 0) {
+                            InfoNote(
+                                "${clipsText(skippedN, "ticked clip")} ${if (skippedN == 1) "has" else "have"} only a file left. " +
+                                        "Export skips ${if (skippedN == 1) "it" else "them"}."
+                            )
+                        }
                         Text("Saved in Movies/CubeCut.", style = MaterialTheme.typography.bodyMedium)
                     }
                 },
@@ -1828,6 +1892,46 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         TextButton(onClick = { askExport = false }) { Text("Cancel") }
                     }
                 }
+            )
+        }
+
+        // ===== (3.1-E) "Delete N exported files?": the bin in the selection header. Trash only (ADR-0008), one request for all =====
+        if (askDelete && d != null) {
+            val ticked = d.clips.filter { it.listKey in ui.selected }
+            val withFile = ticked.filter { it.exported != null }
+            val files = withFile.mapNotNull { it.exported }
+            val leavingN = withFile.count { it.exportOnly || it.solveDeleted }   // nothing but the file is left: the clip disappears
+            val noFileN = ticked.size - withFile.size
+            AlertDialog(
+                onDismissRequest = { askDelete = false },
+                title = { Text(if (files.size == 1) "Delete 1 exported file?" else "Delete ${files.size} exported files?") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        EffectLine(Effect.GOES, "${clipsText(files.size, "file")} in Movies/CubeCut ${if (files.size == 1) "goes" else "go"} to the phone's trash")
+                        if (leavingN > 0) EffectLine(Effect.GOES, "${clipsText(leavingN, "clip")} ${if (leavingN == 1) "leaves" else "leave"} the Gallery (only the file was left)")
+                        EffectLine(Effect.STAYS, "Solves, cuts and notes stay in CubeCut")
+                        EffectLine(Effect.UNDO, "Restore from Recently deleted within about 30 days")
+                        Spacer(Modifier.height(8.dp))
+                        if (noFileN > 0) {
+                            Text(
+                                "${clipsText(noFileN, "ticked clip")} ${if (noFileN == 1) "has" else "have"} no file. Nothing happens to ${if (noFileN == 1) "it" else "them"}.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            "Android asks you to confirm next.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton(if (files.size == 1) "Delete 1 file" else "Delete ${files.size} files") {
+                            askDelete = false
+                            startBatchTrash(files)
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { askDelete = false }) { Text("Cancel") } }
             )
         }
 
