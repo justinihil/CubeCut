@@ -1672,7 +1672,14 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 val taggable = ticked.filter { it.index >= 0 }
                 if (taggable.isNotEmpty()) {
                     val labels = taggable.map { it.tagText }.distinct()
+                    // the puzzles' logos: one when they agree, each one (up to four) when they're mixed
+                    val logos = orderTags(taggable.map { it.puzzle }, PUZZLES).take(4)
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        for (p in logos) {
+                            PuzzleIcon(p, MaterialTheme.colorScheme.primary, if (logos.size == 1) 22.dp else 18.dp)
+                            Spacer(Modifier.width(if (logos.size == 1) 8.dp else 4.dp))
+                        }
+                        if (logos.size > 1) Spacer(Modifier.width(4.dp))
                         Text(
                             "Puzzle: " + (if (labels.size == 1) labels[0].ifEmpty { "not tagged" } else "mixed"),
                             style = MaterialTheme.typography.bodyMedium,

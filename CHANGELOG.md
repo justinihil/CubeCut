@@ -13,7 +13,7 @@ Notes on history:
 ## [Unreleased]
 
 ### Added
-- **Puzzle logos:** a small flat drawing for each puzzle (a grid for 2x2 to 7x7, a pentagon for Megaminx, and so on; a plain cube for *Other*). They show in the viewer's details, on the puzzle buttons of the *Which puzzle is this?* window, and in a corner of tagged clip and video pictures in the Gallery.
+- **Puzzle logos:** a small flat drawing for each puzzle (a grid for 2x2 to 7x7, a pentagon for Megaminx, and so on; a plain cube for *Other*). They show in the viewer's details, on the puzzle buttons of the *Which puzzle is this?* window, in a corner of tagged clip and video pictures in the Gallery, and on the *Puzzle:* line while ticking clips.
 
 ### Changed
 - The viewer's details (swipe up) are sorted into groups: the time and anything that needs a look first, then *Export* / *Editor* / *Delete file* with the export status under them, then **Solve** (puzzle, penalty), **Clip** (scramble, extra time), **Note and sharing**, and the video it comes from. *Reconnect video* moved from the bottom to the top. The clip's start and end times in the video are no longer listed.
