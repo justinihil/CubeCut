@@ -19,7 +19,7 @@ Saved sessions must reopen their video after a restart. The photo picker's uri d
 - A video whose size or length changes is treated as new.
 - There is no content hash, so two different files with identical size and duration would collide. This is considered unlikely for phone recordings.
 - Android caps persisted grants at 512. *Forget* releases one.
-- Re-importing a known video silently reopens its session ([roadmap](../roadmap.md) phase 3.1-A adds a warning).
+- Re-importing a known video reopens its session. Since 3.1.0, an *Imported before* warning (`Reimport.kt`) shows first.
 
 ## Alternatives considered
 - The photo picker, and a "Videos view" hint. Both were tried and reverted at the owner's request, because re-picking was worse than the file-manager look. **Do not change the picker again unless asked.**

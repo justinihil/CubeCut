@@ -15,4 +15,4 @@ CubeCut can remove raw session videos and exported clips. These are the user's o
 ## Consequences
 - Android empties its trash after about 30 days, so *Recently deleted* in the Gallery lists what CubeCut trashed.
 - Only items with a MediaStore uri can be trashed (`mediaStoreUriOf`). A video picked through a folder view can't be.
-- New bulk-delete features ([roadmap](../roadmap.md) phase 3.1-E) must use one trash request plus this warning pattern.
+- Bulk deletes (such as the Gallery selection bin, 3.1.0) must use one trash request plus this warning pattern.

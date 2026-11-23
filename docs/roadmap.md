@@ -26,7 +26,7 @@ Start v3.2: create dev-v3.2.0 from dev, then Phase 3.2-A.
 ```
 **To start a phase** (change the phase id and the branch):
 ```
-Phase 3.1-A from docs/roadmap.md, branch dev-v3.1.0.
+Phase 3.2-A from docs/roadmap.md, branch dev-v3.2.0.
 Read CLAUDE.md, then that phase section, then only the files it names.
 Ask me the phase's open questions first. Then build it, update the owning docs + CHANGELOG in the same commit,
 run assembleDebug + testDebugUnitTest, commit, and give me numbered phone test steps.
@@ -37,7 +37,7 @@ run assembleDebug + testDebugUnitTest, commit, and give me numbered phone test s
 
 **To end a version** (its `-Z` phase):
 ```
-Release prep for v3.1 (phase 3.1-Z).
+Release prep for v3.2 (phase 3.2-Z).
 ```
 This phase:
 - bumps `versionCode` / `versionName`;
@@ -52,169 +52,11 @@ The owner then merges `dev → main` and tags the release by hand ([release step
 
 | Version | Branch | Theme | DB |
 |---|---|---|---|
-| **3.1** | `dev-v3.1.0` | Polish and quick wins | stays v6 |
 | **3.2** | `dev-v3.2.0` | Organise your clips: tags, penalty, per-clip buffers, *Shared on*, single solves, backup | v7 |
 | **3.3** | `dev-v3.3.0` | Better Find solves: no timer setup, more fonts, more accurate | — |
 | **4.0** | `dev-v4.0.0` | Find solves runs in the background after import | v8 |
 
 The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in two so that the quick wins, which need no database change, ship first. The owner's "v3.2" (Find solves) became 3.3.
-
----
-
-## v3.1: polish and quick wins
-
-The phases go editor first, then viewer, then Gallery, so each thread opens only one of the big files. There is no schema change in this version.
-
-### 3.1-A Editor quick wins ✅
-Items:
-- **#14 Manual cut before Find solves.** The *Add a missed solve* button shows as soon as a video is loaded.
-- **#1 Zoomed timer in the Edit window.** The frame is cropped around the saved timer corners plus a margin.
-- **#8 Warn on re-import.** Importing a video that was already imported shows a warning.
-
-**Decided** (2026-11-23):
-- The two switches stay hidden until Find solves has run or a solve exists.
-- The Edit window has a *Whole frame* toggle. It starts zoomed each time the window opens.
-- The crop is fixed at the saved corners (still camera assumed), with a bigger margin: half the timer's width on every side.
-- Added by the owner during the phase: a solve added by hand is selected, scrolled to, and its card blinks (3 blinks, under 2 s). If the check filter would hide it, the filter turns off, as *Go to solve* already does.
-- Found in the phone test: *Find solves again* / *Re-scan done* now depend on whether a scan ran (`scanned`), not on whether solves exist.
-
-Built and phone-tested (2026-11-23): `Reimport.kt`, `SessionStore.findKnown`, `ThumbCache.timerFrame`. The warning covers both *Import video* buttons.
-
-Where to start:
-- **#14:** `showTools` in `EditorScreen` (`MainActivity.kt`) hides the button and both switches until Find solves has run or solves exist. `startManualCut` itself needs no scan.
-- **#1:** the Edit window uses `ThumbCache.frame` (`Thumbnails.kt`). The corners come from `SessionStore.timerCornersOf(footage)`. Use the whole frame when no setup is saved.
-- **#8:** `SessionStore.openOrCreate` already returns `isNew`. The editor's "when a video is chosen" effect reopens the saved session silently. Show a dialog first: "Imported before: N solves, last scanned …", with *Open saved* / *Cancel*. Identity rules: [ADR-0005](adr/0005-video-identity-heuristics.md).
-
-Ask first:
-- Do the two switches (scramble, check filter) stay hidden until solves exist?
-- Should the Edit window have a *Whole frame* toggle?
-- The crop assumes a still camera. With tracking, the display may have moved. Is that acceptable?
-
-Rules:
-- Invariant 1: disable the new actions while `analyzing`.
-- The pinned layout (`app/README.md`) is an owner decision. Say so if the change moves anything.
-
-### 3.1-B Viewer: auto-replay and double-tap skip ✅
-Items:
-- **#12 Auto-replay toggle.** Clips loop when it is on. The choice applies to every clip viewed from then on.
-- **#13 Double-tap to skip.** Double-tap the left or right side to skip back or forward.
-
-**Decided** (2026-11-23):
-- The toggle is only on the overlay: a *Replay: on/off* chip next to *Skip 5s ▾*. Not in Settings.
-- A single tap may wait about 0.3 s (`DOUBLE_TAP_MS`). A double-tap doesn't show or hide the controls.
-- Left and right halves of the picture.
-- Further quick taps on the same half keep skipping (`SKIP_STREAK_MS`), and the hint counts up.
-
-Built and phone-tested (2026-11-23): `PictureTaps` / `onPictureTap` and `PlayerUse` in `Gallery.kt`; `ui.autoReplay` (pref `auto_replay`).
-
-Where to start:
-- `ClipViewer` and `PlayerOverlay` (`Gallery.kt`).
-- The player is built in `ClipViewer` and never sets `repeatMode`. Auto-replay uses `REPEAT_MODE_ONE`.
-- Persist the toggle as an app setting ([recipe](../ARCHITECTURE.md#new-persisted-app-setting-not-per-video)).
-- A single tap toggles the controls (`detectTapGestures(onTap = …)`). Add `onDoubleTap` and skip by `skipSeconds`, with a short "−5 s" hint.
-
-Ask first:
-- Where does the toggle go: on the overlay, in Settings, or both?
-- Adding double-tap delays a single tap by about 0.3 s. Is that acceptable?
-
-Rules:
-- The viewer flicker rules in [algorithms §6](algorithms.md#6-viewer-still-to-video-handover).
-- Players take audio focus (settled).
-
-### 3.1-C Flicker at the top and bottom of the player (low priority) ✅
-**Found** (2026-11-23, 120 fps recording, every frame): the flicker shows only when a clip is opened from the Gallery, not after a swipe, and not every time (6 of 8 opens). For 2 frames, the first video picture is stretched over the whole page, because a new player doesn't know the video's size yet. The still covered the middle, but its transparent background let the stretched top and bottom show. Details: [algorithms §6](algorithms.md#6-viewer-still-to-video-handover).
-
-**Fix:** the still's background is black on the playing page too, and it fades with the still. Nothing else in the handover changed. The one still per page is still never removed.
-
-Built and phone-tested (2026-11-23): `ClipViewer` (`Gallery.kt`).
-
-Where to start:
-- `ClipViewer` and `PlayerOverlay` (`Gallery.kt`).
-- `res/layout/video_player_view.xml`.
-
-Before any change:
-1. Read [algorithms §6](algorithms.md#6-viewer-still-to-video-handover). A previous flicker took five rounds.
-2. The owner sends a 120 fps screen recording.
-3. Inspect every frame with `ffmpeg -fps_mode passthrough`.
-
-Keep one still per page that is never removed. This phase gets its own thread.
-
-### 3.1-D Rethink check navigation ✅
-**#6:** items vanish from the filtered list without warning, and the selection after a delete is still confusing.
-
-**Decided** (2026-11-23):
-- **Frozen list.** Switching the filter on picks its solves once (`frozen`). A solve that no longer needs a check stays, marked "✓ Fixed" (or "✓ Checked" after *It's fine*), until the filter is switched off and on again. The arrows and timeline taps step through the same list.
-- **It's fine** keeps the card (no slide-out). It selects and scrolls to the next solve that still needs a check: after this one, else before it.
-- **After a delete:** the next solve in the list, or the one before when it was the last. The Undo bar says "Deleted the 12.34 s solve · now on Solve 7 (9.87 s)", with the number the solve has after the delete.
-- Follow-on: a solve added by hand is never in the frozen list, so the filter always turns off when one is added (the 3.1-A rule).
-
-Built and phone-tested (2026-11-23): `frozen` / `inList` / `freezeList` / `frozenRemoved` / `frozenInserted`, `checkCut`, `deleteNow` and the Undo bar in `EditorScreen` (`MainActivity.kt`).
-
-Where to start: in `EditorScreen`:
-- `stepCut`;
-- the *Only show solves to check* filter;
-- `needsCheck` and `checkCuts`, which are recomputed whenever cuts change;
-- the slide-out on *It's fine*;
-- `deleteCut` / `requestDelete` and the Undo bar.
-
-Likely cause (not yet verified): the filtered list is derived live. Any edit that clears a solve's check removes that solve at once, even off-screen. For example, changing a neighbour can fix an overlap.
-
-Recommended direction (offer it as an option; the owner decides):
-- **Frozen list.** While the filter is on, the list doesn't change. A solve that no longer needs a check stays in it, marked "✓ Fixed", until the filter is switched off and on again.
-- **Clear position after a delete.** The next solve is selected, and the Undo bar says "Deleted Solve 7 · now on Solve 8".
-
-Settled, so don't change:
-- The filter switch and *Mark all as checked* stay on separate lines.
-- Both solves of a bad pair are flagged.
-- Playing doesn't change the selection.
-- Delete comes with Undo.
-
-### 3.1-E Gallery selection: batch delete and scramble for all ✅
-Items:
-- **#2 Batch delete of exported clips**, with warnings.
-- **#9 Scramble for all clips.** Batch scramble on a selection **already exists**: it is the switch in the selection header (`setScrambleForSelected`, `Gallery.kt`). *Select all (shown)* also already exists: the header's *All / None*.
-
-**Decided** (2026-11-23):
-- Delete is part of the same selection mode: a red bin next to *Export*.
-- *All / None* stays as it is.
-- The scramble switch: a video with every exportable clip ticked gets the video setting, like the editor's all-clips switch (no `edited`). A video only partly ticked is changed clip by clip, with `edited`.
-- No Settings default for the scramble of new videos.
-
-Built and phone-tested (2026-11-23): `exportable` / `selectable`, the header's bin, the `askDelete` dialog, `startBatchTrash` / `PendingTrash.batch` and `setScrambleForSelected` (`Gallery.kt`); `SessionStore.setVideoScramble`.
-
-Where to start:
-- The selection header in `GalleryScreen` (`runBatchExport` is next to it).
-- Trash goes through `createTrashRequest` and `SessionStore.setExportTrashed`.
-
-**Decided (earlier note):**
-- A red bin next to Export.
-- *Export only* and *Solve deleted* clips become tickable, and Export skips them.
-- Warning lines:
-  - ✕ files to trash;
-  - ✕ clips that leave the Gallery;
-  - ✓ solves and notes stay;
-  - ↺ Recently deleted.
-
-Ask first:
-- Is delete part of the same selection mode, or a separate one?
-- Should Settings also have a default "include scramble" for newly imported videos?
-- Is a Gallery-wide scramble a video setting (no `edited`) or a change to each clip (`edited`)? See [ADR-0013](adr/0013-rescan-merge-keeps-user-edits.md).
-
-Rules:
-- [ADR-0008](adr/0008-never-delete-permanently.md): trash only, an `EffectLine` warning, a red `DangerButton`, one trash request for all the files.
-- Re-export is allowed but pointed out (settled).
-
-### 3.1-Z Release prep 3.1 🔶
-- Bump to `versionCode 5` / `versionName "3.1.0"`. This also fixes the "version not bumped for 3.0.1" known issue.
-- See [How to run a phase](#how-to-run-a-phase) for the rest.
-
-**Decided** (2026-11-23):
-- The code in the shared 3.0.1 APK is unknown; 5 is above either possibility.
-- After the phone pass, Claude pushes `dev-v3.1.0` and gives the compare link and PR text (no `gh` here). The owner opens the PR.
-- Closing 3.1-Z deletes this whole v3.1 section, so the PR carries the clean roadmap.
-- The CHANGELOG entries were re-sorted (Added / Changed / Fixed) when `[Unreleased]` became `[3.1.0]`.
-
-Built (2026-11-23): version bump, `[3.1.0] - 2026-11-23` in the CHANGELOG, README version, known-issues tidied (version row removed, lint line numbers updated), android.md TODO cleared.
 
 ---
 
