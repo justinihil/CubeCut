@@ -42,6 +42,28 @@ class CutFieldsTest {
         assertEquals(platformsIn(note), sharedOnFromNoteV7(note))
     }
 
+    @Test
+    fun sharedOn_toggleKeepsThePlatformOrder() {
+        assertEquals(listOf("TikTok", "YouTube"), toggleShared(listOf("YouTube"), "TikTok"))
+        assertEquals(listOf("YouTube"), toggleShared(listOf("TikTok", "YouTube"), "TikTok"))
+        assertEquals(listOf("TikTok", "Mastodon"), toggleShared(listOf("Mastodon"), "TikTok"))   // a name no button has stays
+    }
+
+    @Test
+    fun sharedOn_filter() {
+        assertTrue(sharedMatches(listOf("TikTok"), null))
+        assertTrue(sharedMatches(emptyList(), ""))
+        assertTrue(!sharedMatches(listOf("TikTok"), ""))
+        assertTrue(sharedMatches(listOf("TikTok", "X"), "X"))
+        assertTrue(!sharedMatches(listOf("TikTok"), "YouTube"))
+    }
+
+    @Test
+    fun clipSharedOn_comesFromTheField_notTheNote() {
+        val c = GalleryClip(footage(), 0, 1, CutItem(10.0, "9.000", true, "", true, userNote = "posted on TikTok", sharedOn = listOf("YouTube")), null, false)
+        assertEquals(listOf("YouTube"), c.sharedList)
+    }
+
     private fun footage(puzzle: String = "", category: String = "") = Footage(
         id = 1, uri = "content://x", displayName = "a.mp4", sizeBytes = 1, durationMs = 1000, title = "a", dateTakenMs = 0,
         addedMs = 0, lastScanMs = 0, beforePad = 2.5f, afterPad = 2.5f, scrambleAll = true, cutCount = 1, timerFrameMs = -1,

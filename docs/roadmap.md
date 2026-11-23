@@ -190,7 +190,7 @@ Built (2026-11-23), flag for the owner:
 - After the re-export, the old file's warning offers *Move old file to trash* or *Keep both*. Moving it closes the viewer, like *Delete file*.
 - The before buffer only counts for solve-only clips; the window says so.
 
-### 3.2-E Shared on ⬜
+### 3.2-E Shared on 🔶
 **#10:** filter by where a clip was shared.
 
 **Decided:**
@@ -205,6 +205,8 @@ Where to start:
 - the Filter dialog and `GalleryUiState`.
 
 Ask first: should a free-text search on notes be added too?
+
+**Decided** at the start of the phase (2026-11-23): no note search for now. The 3.2-A interim line in `updateCutNote` is gone and `GalleryClip.sharedList` reads `cut.sharedOn`. The Filter dialog lists every platform, not only the ones in use.
 
 ### 3.2-F Import clips of single solves ⬜
 **#5:** add clips of single solves to the Gallery, with the steps that need, such as typing the solve time.

@@ -33,6 +33,7 @@ If the timer can't be read, nothing is blocked. You can always add solves by han
   - Mixed footage: in the editor, untick the card of each solve that isn't that puzzle. It is then *not tagged*.
   - Tag single clips in the Gallery: *Set puzzle…* while ticking, or *Change* next to *Puzzle* in the viewer's details. With every clip of a video ticked, it tags the video instead.
   - *Filter* shows only one puzzle or type, or only clips that are not tagged.
+- **Shared on:** in the viewer's details, tap the platforms you posted a clip to (TikTok, Instagram, YouTube…). It's separate from the note. *Filter* → *Shared on* shows only clips shared on one platform, or those *Not shared yet*.
 - **Scramble for many clips:** while ticking, the switch under the header turns the scramble on or off for every ticked clip. *All* ticks every clip shown. With every clip of a video ticked, it works like the editor's *Scramble in all clips*.
 - If you delete a raw video, its exported clips stay in the Gallery (*Export only*). Clips that were never exported disappear, but their solves stay saved, and importing the video again brings them back.
 - **Watching clips:** tap the picture for the controls. Double-tap the left or right half to skip back or forward; keep tapping to skip further. **Replay** (next to *Skip*) loops every clip until you switch it off.

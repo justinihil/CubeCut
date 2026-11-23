@@ -348,6 +348,8 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     // (3.2-B) show only clips with this puzzle / type tag: null = any, "" = only clips that are not tagged
     var puzzleFilter by mutableStateOf(prefs.getString("puzzle_filter", null))
     var categoryFilter by mutableStateOf(prefs.getString("category_filter", null))
+    // (3.2-E) show only clips shared on this platform: null = any, "" = only clips not shared yet
+    var sharedFilter by mutableStateOf(prefs.getString("shared_filter", null))
     var themeMode by mutableStateOf(ThemeMode.from(prefs.getString("theme", null)))  // light, dark or as the phone (the whole app)
     // sessions switched off in the Clips tab (everything else is shown, so a new session shows up by itself)
     var hidden by mutableStateOf(
@@ -361,7 +363,8 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     }
 
     val filterActive: Boolean get() =
-        hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly || puzzleFilter != null || categoryFilter != null
+        hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly || puzzleFilter != null || categoryFilter != null ||
+                sharedFilter != null
 
     /** Remember the view, sort and filter choices for the next time the app opens. */
     fun save() {
@@ -376,6 +379,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putBoolean("check_only", checkOnly)
             .putString("puzzle_filter", puzzleFilter)          // (null removes the key: any tag)
             .putString("category_filter", categoryFilter)
+            .putString("shared_filter", sharedFilter)
             .putString("theme", themeMode.name)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
@@ -1160,6 +1164,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ui.exportFilter = ExportFilter.ALL
         ui.puzzleFilter = null              // (3.2-B) every clip of the video shows, so nothing ticked is hidden
         ui.categoryFilter = null
+        ui.sharedFilter = null
         ui.save()
         ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && exportable(it, loaded.openable) }.map { it.listKey }.toSet()
         ui.selecting = true
@@ -1288,7 +1293,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val clipsListState = rememberLazyListState()
     val footageGridState = rememberLazyGridState()
     val footageListState = rememberLazyListState()
-    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.puzzleFilter, ui.categoryFilter) {
+    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
         clipsGridState.scrollToItem(0)
         clipsListState.scrollToItem(0)
     }
@@ -1450,12 +1455,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
     }
     // the Clips tab's clips, filtered and sorted
-    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter) {
+    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
         if (d == null) emptyList()
         else sortClips(
             d.clips.filter { c ->
                 c.footage.id !in ui.hidden && (!ui.checkOnly || c.needsCheck) &&
-                        tagMatches(c.puzzle, ui.puzzleFilter) && tagMatches(c.category, ui.categoryFilter) && when (ui.exportFilter) {
+                        tagMatches(c.puzzle, ui.puzzleFilter) && tagMatches(c.category, ui.categoryFilter) &&
+                        sharedMatches(c.sharedList, ui.sharedFilter) && when (ui.exportFilter) {
                     ExportFilter.ALL -> true
                     ExportFilter.EXPORTED -> c.exported != null
                     ExportFilter.NOT_EXPORTED -> c.exported == null
@@ -1658,7 +1664,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }
                     val puzzleLabel = ui.puzzleFilter?.let { "Puzzle: " + it.ifEmpty { "not tagged" } }
                     val typeLabel = ui.categoryFilter?.let { "Type: " + it.ifEmpty { "not tagged" } }
-                    val active = listOfNotNull(videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null, puzzleLabel, typeLabel).size
+                    val sharedLabel = ui.sharedFilter?.let { if (it.isEmpty()) "Not shared yet" else "Shared on: $it" }
+                    val active = listOfNotNull(videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null, puzzleLabel, typeLabel, sharedLabel).size
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -1672,6 +1679,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         if (ui.checkOnly) ActiveFilterChip("Needs a check") { ui.checkOnly = false; ui.save() }
                         if (puzzleLabel != null) ActiveFilterChip(puzzleLabel) { ui.puzzleFilter = null; ui.save() }
                         if (typeLabel != null) ActiveFilterChip(typeLabel) { ui.categoryFilter = null; ui.save() }
+                        if (sharedLabel != null) ActiveFilterChip(sharedLabel) { ui.sharedFilter = null; ui.save() }
                         if (active >= 2) {
                             Text(
                                 "Clear all",
@@ -1686,6 +1694,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                         ui.checkOnly = false
                                         ui.puzzleFilter = null
                                         ui.categoryFilter = null
+                                        ui.sharedFilter = null
                                         ui.save()
                                     }
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -2147,6 +2156,25 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         TagFilterSection("Puzzle", d.clips.map { it.puzzle }, PUZZLES, ui.puzzleFilter) { ui.puzzleFilter = it; ui.save() }
                         Spacer(Modifier.height(10.dp))
                         TagFilterSection("Type", d.clips.map { it.category }, CATEGORIES, ui.categoryFilter) { ui.categoryFilter = it; ui.save() }
+                        // (3.2-E) where the clips were shared: every platform, then Not shared yet
+                        Spacer(Modifier.height(10.dp))
+                        Text("Shared on", style = MaterialTheme.typography.labelLarge)
+                        for (opt in listOf<String?>(null) + SOCIAL_PLATFORMS + listOf("")) {
+                            Row(
+                                Modifier.fillMaxWidth().clickable { ui.sharedFilter = opt; ui.save() },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = ui.sharedFilter == opt, onClick = { ui.sharedFilter = opt; ui.save() })
+                                Text(
+                                    when (opt) {
+                                        null -> "Any"
+                                        "" -> "Not shared yet"
+                                        else -> opt
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(10.dp))
                         Text("Show clips from these videos", style = MaterialTheme.typography.labelLarge)
                         Row {
@@ -2484,7 +2512,7 @@ private fun clipWindow(clip: GalleryClip, cuts: List<CutItem>): Pair<Double, Dou
     return Pair(max(0.0, clip.cut.stopSec - 20.0), min(durSec, clip.cut.stopSec + f.afterPad))
 }
 
-/** A round button for one social media platform; lit when the note already mentions it. */
+/** (3.2-E) A round button for one social media platform; lit when the clip is marked as shared there. */
 @Composable
 private fun SocialChip(label: String, on: Boolean, onClick: () -> Unit) {
     Text(
@@ -3021,6 +3049,7 @@ fun ClipViewer(
     val tagOv = remember { mutableStateMapOf<String, Pair<String, String>>() }   // (3.2-B) clips tagged here: their own (puzzle, type)
     val penaltyOv = remember { mutableStateMapOf<String, Pair<Int, Boolean>>() } // (3.2-C) clips given a penalty here: (+2 count, DNF)
     val padOv = remember { mutableStateMapOf<String, Pair<Double?, Double?>>() }  // (3.2-D) clips given their own buffers here (null = follow)
+    val sharedOv = remember { mutableStateMapOf<String, List<String>>() }        // (3.2-E) clips whose Shared on was changed here
     var reexportAsk by remember { mutableStateOf("") }           // (3.2-D) the clip whose buffers changed after its export: "Re-export now?"
     var replaceOld by remember { mutableStateOf<ExportedClip?>(null) }   // (3.2-D) after that re-export: move the old file to the trash?
     var tagWindow by remember { mutableStateOf(false) }          // (3.2-B) the "Puzzle for this clip" window
@@ -3044,6 +3073,8 @@ fun ClipViewer(
         return tagLabel(resolveTag(p, c.footage.puzzle), resolveTag(k, c.footage.category))
     }
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
+    /** (3.2-E) Where the clip was shared, with a change made here. */
+    fun sharedOf(c: GalleryClip): List<String> = sharedOv[c.listKey] ?: c.cut.sharedOn
     /** (3.2-D) The clip's own buffers (before, after; null = follows the video), with a change made here. */
     fun padsOf(c: GalleryClip): Pair<Double?, Double?> = padOv[c.listKey] ?: (c.cut.beforePad to c.cut.afterPad)
     /** (3.2-C) The clip's penalty (+2 count, DNF), with a change made here. */
@@ -3296,6 +3327,17 @@ fun ClipViewer(
         val newName = penaltyRename(e, c.cut.timeText, plus2Count, dnf) ?: return
         renamer.rename(e, newName) { name ->
             exportedNow[c.listKey] = ExportedClip(e.id, e.footageId, e.stopSec, e.timeText, e.uri, name, e.offsetSec, e.exportedMs, e.trashedMs)
+        }
+    }
+
+    /** (3.2-E) Marks one clip as shared on [platform], or not any more (saved at once, marked `edited`). The note is not touched. */
+    fun toggleSharedOn(c: GalleryClip, platform: String) {
+        val now = toggleShared(sharedOf(c), platform)
+        sharedOv[c.listKey] = now
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutSharedOn(context, c.footage.id, c.cut.stopSec, now) } catch (e: Exception) { }
+            }
         }
     }
 
@@ -3695,7 +3737,7 @@ fun ClipViewer(
                         }
                     }
 
-                    // ===== note and social media buttons =====
+                    // ===== note, and (3.2-E) where it was shared =====
                     Spacer(Modifier.height(10.dp))
                     val canNote = current.index >= 0
                     val note = noteDrafts[current.listKey] ?: current.cut.userNote
@@ -3709,9 +3751,12 @@ fun ClipViewer(
                         OutlinedTextField(
                             value = note,
                             onValueChange = { noteDrafts[current.listKey] = it; noteVersion++ },
-                            placeholder = { Text("Write a note, or press a button below") },
+                            placeholder = { Text("Write a note") },
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Spacer(Modifier.height(10.dp))
+                        Text("Shared on", style = MaterialTheme.typography.labelLarge)
+                        val shared = sharedOf(current)
                         Row(
                             Modifier
                                 .horizontalScroll(rememberScrollState())
@@ -3719,10 +3764,7 @@ fun ClipViewer(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             for (p in SOCIAL_PLATFORMS) {
-                                SocialChip(p, noteMentions(note, p)) {
-                                    noteDrafts[current.listKey] = togglePlatform(note, p)
-                                    noteVersion++
-                                }
+                                SocialChip(p, p in shared) { toggleSharedOn(current, p) }
                             }
                         }
                     } else {

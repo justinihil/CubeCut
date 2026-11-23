@@ -25,7 +25,10 @@ Notes on history:
 - Changing an exported clip's buffers in the viewer asks **Re-export now?** After the new file is saved, the old one can go to the phone's trash (after a warning) or stay.
 - A penalty on an exported clip **renames its file** (`…_Solve_03_13.263s_plus2.mp4`, `…_Solve_03_DNF_11.263s.mp4`). The clip stays linked to it. After a reinstall Android asks first.
 
+- **Shared on:** the viewer's platform buttons now mark where a clip was shared, separately from the note. *Filter* → *Shared on: TikTok* (or any platform) or *Not shared yet*.
+
 ### Changed
+- The platform buttons no longer add words to your note. Notes you wrote before keep their text; where they named a platform, the clip already counts as shared there.
 - The saved data is upgraded to database v7, ready for 3.2's tags, penalties, per-clip buffers and *Shared on*. Nothing looks different yet: solves, notes, exports and clips stay exactly as they were. *Shared on* starts from the platform names already in each note.
 
 ## [3.1.0] - 2026-11-23

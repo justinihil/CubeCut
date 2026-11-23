@@ -40,7 +40,7 @@ Rough sizes are given to warn you what you are opening.
 ### Storage and platform
 | File | Responsibility | Main entry points | Gotchas |
 |---|---|---|---|
-| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, v7 `updateCutTags` / `updateCutPenalty` / `updateCutPads` / `updateCutSharedOn` (all through private `updateCut`, which sets `user_edited`), `updateFootageTags`, trash helpers, `delete`; `Footage` (`KIND_SESSION` / `KIND_SINGLE`), `GalleryClip`, `ExportedClip`, `cutKey`, social-note and `encodeSharedOn` / `decodeSharedOn` helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The DB is v7. `updateCutNote` also refreshes `shared_on` until 3.2-E |
+| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, v7 `updateCutTags` / `updateCutPenalty` / `updateCutPads` / `updateCutSharedOn` (all through private `updateCut`, which sets `user_edited`), `updateFootageTags`, trash helpers, `delete`; `Footage` (`KIND_SESSION` / `KIND_SINGLE`), `GalleryClip`, `ExportedClip`, `cutKey`, social-note and `encodeSharedOn` / `decodeSharedOn` helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The DB is v7. *Shared on* has its own field and chips (3.2-E): `toggleShared`, `sharedMatches`; `updateCutNote` writes only the note |
 | `Thumbnails.kt` | On-demand picture cache | `ThumbCache.get` / `peek` / `frame` / `timerFrame` / `forgetFootage`, `Thumb` composable | At most 2 pictures made at once. Disk capped at 100 MB. `timerFrame` crops around the saved timer corners (full-size frame pixels) with `ZOOM_MARGIN`; it doesn't follow a camera that moved |
 | `MediaTools.kt` | Small media helpers | `readDurationMs`, `buildThumbnails` (film strip), `grabFrame`, `formatTime` | — |
 | `AnalysisService.kt` | Foreground notification during Find solves | `AnalysisService.start` / `update` / `stop` / `notifyDone` | Does no work itself ([ADR-0011](../docs/adr/0011-foreground-service-for-notification-only.md)) |
@@ -57,7 +57,7 @@ Rough sizes are given to warn you what you are opening.
 `src/test` holds plain JUnit tests of the pure functions (no Android needed):
 - `ComputeClipsTest`: `parseTimeSeconds` and `computeClips`, including per-clip buffers;
 - `RescanMergeTest`: `mergeRescan` and `checkCuts`;
-- `CutFieldsTest`: *Shared on* storage, the v7 fill from notes, and tag fallback;
+- `CutFieldsTest`: *Shared on* storage, toggling and filter, the v7 fill from notes, and tag fallback;
 - `TagsTest`: tag resolving, labels, filter, selection rules and tagged file names;
 - `PenaltyTest`: penalty display, file-name part, renaming an exported name, and that a penalty never moves a clip.
 

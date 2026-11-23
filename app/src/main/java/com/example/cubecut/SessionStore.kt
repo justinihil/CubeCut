@@ -598,15 +598,10 @@ object SessionStore {
             .filter { Math.abs(it.stopSec - stopSec) < SAME_SOLVE_SEC && it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }
             .maxByOrNull { it.exportedMs }
 
-    /**
-     * Saves your note for one cut (found by its stop time).
-     * Until 3.2-E gives *Shared on* its own chips, the platform buttons still write into the note, so *Shared on* is refreshed from
-     * the note here to stay correct. 3.2-E removes that line.
-     */
+    /** Saves your note for one cut (found by its stop time). Since 3.2-E *Shared on* has its own chips, so the note is just text. */
     fun updateCutNote(context: Context, footageId: Long, stopSec: Double, userNote: String) {
         val v = ContentValues()
         v.put("user_note", userNote)
-        v.put("shared_on", encodeSharedOn(platformsIn(userNote)))   // until 3.2-E
         updateCut(context, footageId, stopSec, v)
     }
 
@@ -884,7 +879,7 @@ class GalleryClip(
     /** Everything to check about this clip, in one line ("" = nothing). */
     val checkText: String get() = listOf(if (noteNeedsCheck) cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
     val title: String get() = clipTitle(footage.title, index + 1, cut.timeText, cut.plus2Count, cut.dnf)
-    val sharedList: List<String> get() = platformsIn(cut.userNote)   // 3.2-E switches this to cut.sharedOn
+    val sharedList: List<String> get() = cut.sharedOn     // (3.2-E) where it was shared, set with the viewer's chips
     /** The puzzle this clip counts as: its own tag, else its video's ("" = not tagged; NO_TAG on the clip also gives ""). */
     val puzzle: String get() = resolveTag(cut.puzzle, footage.puzzle)
     /** The category this clip counts as: its own tag, else its video's ("" = not tagged; NO_TAG on the clip also gives ""). */
@@ -913,7 +908,8 @@ class GalleryData(val footage: List<Footage>, val clips: List<GalleryClip>, val 
 }
 
 // ---------------------------------------------------------------------------------------
-// Social media buttons for notes: pressing one adds (or removes) the platform's name in the note, so the note itself says "TikTok".
+// Shared on (3.2-E): the platforms a clip was posted to, stored in cuts.shared_on and set with the viewer's chips. Until 3.2-E the
+// buttons wrote the platform's name into the note; the version 7 upgrade copied those names once (the note text was left as it is).
 // ---------------------------------------------------------------------------------------
 
 val SOCIAL_PLATFORMS = listOf("TikTok", "Instagram", "YouTube", "Facebook", "X", "Reddit")
@@ -923,7 +919,7 @@ private fun platformRegex(p: String): Regex =
 
 fun noteMentions(note: String, platform: String): Boolean = platformRegex(platform).containsMatchIn(note)
 
-/** The platforms a note mentions, in the order of [SOCIAL_PLATFORMS]. */
+/** The platforms a note mentions, in the order of [SOCIAL_PLATFORMS] (how notes said it before 3.2-E). */
 fun platformsIn(note: String): List<String> = SOCIAL_PLATFORMS.filter { noteMentions(note, it) }
 
 /** How `cuts.shared_on` stores a list of platforms: "TikTok,YouTube" ("" = not shared). */
@@ -939,19 +935,17 @@ fun decodeSharedOn(stored: String): List<String> = stored.split(',').map { it.tr
 internal fun sharedOnFromNoteV7(note: String): List<String> =
     listOf("TikTok", "Instagram", "YouTube", "Facebook", "X", "Reddit").filter { noteMentions(note, it) }
 
-/** Adds the platform's name to the end of the note, or takes it out again if it is already there. */
-fun togglePlatform(note: String, platform: String): String {
-    val rx = platformRegex(platform)
-    if (rx.containsMatchIn(note)) {
-        return note.replaceFirst(rx, "")
-            .replace(Regex("\\s*,\\s*,"), ",")
-            .replace(Regex("^\\s*,\\s*"), "")
-            .replace(Regex("\\s*,\\s*$"), "")
-            .replace(Regex("[ \\t]{2,}"), " ")
-            .trim()
-    }
-    val base = note.trimEnd().trimEnd(',').trimEnd()
-    return if (base.isEmpty()) platform else "$base, $platform"
+/** [shared] with [platform] added, or taken out if it is there, in the order of [SOCIAL_PLATFORMS] (unknown names kept at the end). */
+fun toggleShared(shared: List<String>, platform: String): List<String> {
+    val set = if (platform in shared) shared - platform else shared + platform
+    return SOCIAL_PLATFORMS.filter { it in set } + set.filter { it !in SOCIAL_PLATFORMS }.distinct()
+}
+
+/** True if a clip shared on [shared] passes the *Shared on* filter [filter] (null = any, "" = not shared yet, else that platform). */
+fun sharedMatches(shared: List<String>, filter: String?): Boolean = when (filter) {
+    null -> true
+    "" -> shared.isEmpty()
+    else -> filter in shared
 }
 
 /** An exported clip in the trash, with the title of the session it came from. */
