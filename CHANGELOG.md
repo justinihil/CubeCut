@@ -12,6 +12,9 @@ Notes on history:
 
 ## [Unreleased]
 
+### Changed
+- The viewer's details (swipe up) are sorted into groups: the time and anything that needs a look first, then *Export* / *Editor* / *Delete file* with the export status under them, then **Solve** (penalty, puzzle), **Clip** (start and end, scramble, buffers), **Note and sharing**, and the video it comes from. *Reconnect video* moved from the bottom to the top.
+
 ## [3.2.0] - 2026-11-23
 
 Organise your clips. How solves are found, how digits are read and the default clip times did **not** change. The saved data is upgraded to database v7 on first start; solves, notes and exports from 3.1 carry over, and *Shared on* starts from the platform names already in each note.
