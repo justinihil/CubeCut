@@ -67,7 +67,7 @@ import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------------------------------
 // (3.2-F) Clips of single solves. The Gallery's Import video asks "A session or one solve?". A single solve skips Find solves:
-// the user types its time (penalty and puzzle are optional) and may trim it. Untrimmed, the file itself is the clip (nothing to
+// it is saved at once and opens in the viewer, which asks for its time over the video (penalty, puzzle and trim are in the details). Untrimmed, the file itself is the clip (nothing to
 // export); trimmed, it is exported as a copy like any clip. The solve stops where the clip ends. Single solves live in the Clips
 // tab only (not on the Footage tab) and never open in the editor.
 // ---------------------------------------------------------------------------------------
@@ -90,7 +90,7 @@ fun ImportKindDialog(onSession: () -> Unit, onSingle: () -> Unit, onCancel: () -
                 Button(onClick = onSession, modifier = Modifier.fillMaxWidth()) { Text("A session (many solves)") }
                 Text("Find solves cuts it into one clip per solve.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = onSingle, modifier = Modifier.fillMaxWidth()) { Text("One solve") }
-                Text("Type its time. It goes straight to Clips.", style = MaterialTheme.typography.bodySmall)
+                Text("It opens in the player. Type its time there.", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = { },
@@ -173,7 +173,7 @@ fun SingleSolveDialog(
     var range by remember {
         mutableStateOf(((startTrim.first ?: 0.0).toFloat().coerceIn(0f, durSec))..((startTrim.second ?: durSec.toDouble()).toFloat().coerceIn(0f, durSec)))
     }
-    val timeOk = parseTimeSeconds(text) != null
+    val timeOk = text.isBlank() || parseTimeSeconds(text) != null      // a time can also be typed later, over the video
     val longEnough = !trim || range.endInclusive - range.start >= MIN_SINGLE_SEC
     AlertDialog(
         onDismissRequest = onCancel,

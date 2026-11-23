@@ -26,12 +26,13 @@ Notes on history:
 - A penalty on an exported clip **renames its file** (`…_Solve_03_13.263s_plus2.mp4`, `…_Solve_03_DNF_11.263s.mp4`). The clip stays linked to it. After a reinstall Android asks first.
 
 - **Shared on:** the viewer's platform buttons now mark where a clip was shared, separately from the note. *Filter* → *Shared on: TikTok* (or any platform) or *Not shared yet*.
-- **Single solves:** *Import video* asks **A session** or **One solve**. A single solve skips Find solves: type its time (penalty and puzzle optional), and trim it if you like. Untrimmed, the file itself is the clip; trimmed, it exports as a copy.
+- **Single solves:** *Import video* asks **A session** or **One solve**. A single solve skips Find solves and opens in the player at once: type the time from the stopped timer in the bar over the video. Penalty, puzzle and trim (**Edit**) are in the details. Untrimmed, the file itself is the clip; trimmed, it exports as a copy.
 - Single solves are in the Clips tab (marked *One solve*), not under Footage. Their viewer details have **Edit** (time and trim), **Delete video** and **Forget this solve**. *Filter* switches all single solves on or off together.
 - **Backup and restore** (*⋮ → Backup and restore*): save one small file with your solves, tags, penalties, buffers, notes, *Shared on* and exports (no videos) wherever you choose. Restore adds what this phone doesn't have yet and never replaces anything.
 - **Reconnect videos** and **Reconnect exported clips** after a restore or a reinstall: pick many files at once; each is matched by name, size and length (exported clips by file name).
 
 ### Changed
+- The **Filter** window shows each filter as one row of buttons, so they all fit on the screen. The list of videos opens from its *Videos* line.
 - The platform buttons no longer add words to your note. Notes you wrote before keep their text; where they named a platform, the clip already counts as shared there.
 - The saved data is upgraded to database v7, ready for 3.2's tags, penalties, per-clip buffers and *Shared on*. Nothing looks different yet: solves, notes, exports and clips stay exactly as they were. *Shared on* starts from the platform names already in each note.
 

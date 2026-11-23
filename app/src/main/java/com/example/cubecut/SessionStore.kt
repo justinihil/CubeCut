@@ -727,6 +727,13 @@ object SessionStore {
         updateCut(context, footageId, stopSec, v)
     }
 
+    /** (3.2-F) Sets the time the timer showed for one cut (a single solve's time typed in the viewer). */
+    fun updateCutTime(context: Context, footageId: Long, stopSec: Double, timeText: String) {
+        val v = ContentValues()
+        v.put("time_text", timeText)
+        updateCut(context, footageId, stopSec, v)
+    }
+
     /** Sets one clip's penalty: how many +2s, and DNF. The time the timer showed is not changed. */
     fun updateCutPenalty(context: Context, footageId: Long, stopSec: Double, plus2Count: Int, dnf: Boolean) {
         val v = ContentValues()

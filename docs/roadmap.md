@@ -186,8 +186,9 @@ Rules:
 - A buffer change is a user change: set `edited` (invariant 4).
 
 Built (2026-11-23), flag for the owner:
+- After *Move old file to trash* the viewer stays on the clip (changed after the first phone test).
 - The editor has no export controls (settled), so its Edit window only says *Other changes need a new export: tap View*. *Re-export now?* is in the viewer.
-- After the re-export, the old file's warning offers *Move old file to trash* or *Keep both*. Moving it closes the viewer, like *Delete file*.
+- After the re-export, the old file's warning offers *Move old file to trash* or *Keep both*. Plain *Delete file* still closes the viewer.
 - The before buffer only counts for solve-only clips; the window says so.
 
 ### 3.2-E Shared on 🔶
@@ -237,6 +238,7 @@ Rules:
 - The stop is the end of the clip (the trim end, or the end of the file). No marking step.
 - Single solves are hidden from the Footage tab. *Delete video* and *Forget this solve* are in the viewer sheet.
 - A single solve can't be turned into a session: forget it and import again as *A session*.
+- Changed after the first phone test (2026-11-23): *One solve* saves at once with no time and opens in the viewer, which asks for the time in a bar over the video (people don't note the time before importing). Penalty, puzzle and trim are in the details as for any clip.
 - Built without asking (flag for the owner): only the Gallery's *Import video* asks session / one solve; the editor's import is sessions only and refuses a known single solve. A single solve is titled without a number (`Title · 11.263s`, card *One solve*) but its file is still `…_Solve_01_…`. Untrimmed singles can't be ticked for export. A single solve with no video and no file still shows (*Video missing*) so it can be reconnected or forgotten. The Filter dialog has one *Single solves* switch instead of one line per file. A time is required to save.
 
 ### 3.2-G Backup and restore 🔶

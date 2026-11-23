@@ -49,6 +49,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -992,6 +1002,23 @@ private fun LevelPicker(title: String, current: ClipKey?, allowNone: Boolean, en
     }
 }
 
+/** How tall a filter chip's touch area is: smaller than Material's 48 dp so every filter fits on one screen (the chip is 32 dp). */
+private val FILTER_CHIP_TOUCH = 40.dp
+
+/** One part of the Filter window: its name, then its choices as one wrapping row of chips (the chosen one is blue). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun <T> FilterChips(label: String, options: List<Pair<T, String>>, current: T, onPick: (T) -> Unit) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides FILTER_CHIP_TOUCH) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((value, text) in options) ChoiceChip(text, current == value) { onPick(value) }
+            }
+        }
+    }
+}
+
 /**
  * (3.2-B) One tag part of the Filter window (Puzzle or Type): Any, each tag some clip has ([values], the clips' resolved tags, ordered
  * by [known]), and Not tagged when some clip has none. [current]: null = any, "" = not tagged. A chosen tag no clip has any more
@@ -1004,20 +1031,7 @@ private fun TagFilterSection(label: String, values: List<String>, known: List<St
         addAll(orderTags(values + listOfNotNull(current), known))
         if (values.any { it.isEmpty() } || current == "") add("")
     }
-    Text(label, style = MaterialTheme.typography.labelLarge)
-    for (opt in options) {
-        Row(Modifier.fillMaxWidth().clickable { onPick(opt) }, verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = current == opt, onClick = { onPick(opt) })
-            Text(
-                when (opt) {
-                    null -> "Any"
-                    "" -> "Not tagged"
-                    else -> opt
-                },
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-    }
+    FilterChips(label, options.map { it to (when (it) { null -> "Any"; "" -> "Not tagged"; else -> it }) }, current, onPick)
 }
 
 /** One active filter on the Clips tab, shown as a small rounded chip with a cross. Tapping it removes that filter. */
@@ -1132,6 +1146,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var pendingTrash by remember { mutableStateOf<PendingTrash?>(null) } // waiting for the system's confirmation
     var confirmTrashFootage by remember { mutableStateOf<Footage?>(null) }   // our own warning before moving a video to the trash
     var showFilter by remember { mutableStateOf(false) }
+    var showVideoFilter by remember { mutableStateOf(false) }           // the Filter window's video list, in a window of its own
     var footageMenu by remember { mutableStateOf<Footage?>(null) }      // the session whose options window is open
     var renaming by remember { mutableStateOf<Footage?>(null) }
     var forgetting by remember { mutableStateOf<Footage?>(null) }
@@ -1360,7 +1375,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     // Reconnect video: the same picker, but the chosen video is attached to the session that lost its video, and you stay in the Gallery.
     var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
     var importKindFor by remember { mutableStateOf<Uri?>(null) }                 // (3.2-F) a new video: "A session or one solve?"
-    var singleNew by remember { mutableStateOf<Pair<Uri, Long>?>(null) }         // (3.2-F) the One solve window: (video, length in ms)
     var knownSingle by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }    // (3.2-F) a single solve picked again
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = relinkFor
@@ -1409,40 +1423,21 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ImportKindDialog(
             onSession = { importKindFor = null; onOpenEditor(EditorRequest(kindUri, null)) },
             onSingle = {
+                // saved at once with no time; the viewer opens on it and asks for the time over the video
                 importKindFor = null
-                scope.launch {
-                    val dur = withContext(Dispatchers.IO) { try { readDurationMs(context, kindUri) } catch (e: Exception) { 0L } }
-                    if (dur > 0) singleNew = kindUri to dur else message = "Couldn't read that video. Try another file."
-                }
-            },
-            onCancel = { importKindFor = null }
-        )
-    }
-    val newSingle = singleNew
-    if (newSingle != null) {
-        SingleSolveDialog(
-            title = "One solve",
-            uri = newSingle.first,
-            durationMs = newSingle.second,
-            askPenalty = true,
-            askPuzzle = true,
-            onCancel = { singleNew = null },
-            onSave = { input ->
-                singleNew = null
                 scope.launch {
                     val made = withContext(Dispatchers.IO) {
                         try {
-                            SessionStore.createSingle(
-                                context, newSingle.first, newSingle.second, input.timeText, input.plus2Count, input.dnf,
-                                input.puzzle ?: "", input.category ?: "", input.trimStart, input.trimEnd
-                            )
+                            val dur = readDurationMs(context, kindUri)
+                            if (dur <= 0) null else SessionStore.createSingle(context, kindUri, dur, "", 0, false, "", "", null, null)
                         } catch (e: Exception) {
                             null
                         }
                     }
-                    if (made == null) message = "Couldn't save the solve. Try again." else showSolve(made.first.id, made.second)
+                    if (made == null) message = "Couldn't read that video. Try another file." else showSolve(made.first.id, made.second)
                 }
-            }
+            },
+            onCancel = { importKindFor = null }
         )
     }
     val againSingle = knownSingle
@@ -2035,6 +2030,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ui.detail = null
                     startTrash(PendingTrash(null, e, true))
                 },
+                onTrashOldExport = { e -> startTrash(PendingTrash(null, e, true)) },
                 selection = if (ui.selecting) ui.selected else null,
                 onToggleSelect = { c -> toggleSelect(c, d.openable) },
                 onSingleSaved = { f, stop -> ui.detail = null; showSolve(f.id, stop) },
@@ -2221,7 +2217,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             )
         }
 
-        // ===== filter window: which sessions, exported or not =====
+        // ===== filter window: every filter as a row of chips, so all of them are on screen at once; the videos have their own window =====
         if (showFilter && d != null) {
             AlertDialog(
                 onDismissRequest = { showFilter = false },
@@ -2229,56 +2225,69 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 text = {
                     Column(
                         Modifier
-                            .heightIn(max = 460.dp)
-                            .verticalScroll(rememberScrollState())
+                            .heightIn(max = 560.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Show clips that are", style = MaterialTheme.typography.labelLarge)
-                        for (opt in ExportFilter.entries) {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { ui.exportFilter = opt; ui.save() },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(selected = ui.exportFilter == opt, onClick = { ui.exportFilter = opt; ui.save() })
-                                Text(opt.label, style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
+                        FilterChips(
+                            "Show",
+                            listOf(ExportFilter.ALL to "All", ExportFilter.EXPORTED to "Exported", ExportFilter.NOT_EXPORTED to "Not exported"),
+                            ui.exportFilter
+                        ) { ui.exportFilter = it; ui.save() }
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .clickable { ui.checkOnly = !ui.checkOnly; ui.save() },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Checkbox(checked = ui.checkOnly, onCheckedChange = { ui.checkOnly = it; ui.save() })
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides FILTER_CHIP_TOUCH) {
+                                Checkbox(checked = ui.checkOnly, onCheckedChange = { ui.checkOnly = it; ui.save() })
+                            }
                             Text("Only clips that need a check", style = MaterialTheme.typography.bodyMedium)
                         }
                         // (3.2-B) puzzle and type: only the tags some clip has, plus Not tagged
-                        Spacer(Modifier.height(10.dp))
                         TagFilterSection("Puzzle", d.clips.map { it.puzzle }, PUZZLES, ui.puzzleFilter) { ui.puzzleFilter = it; ui.save() }
-                        Spacer(Modifier.height(10.dp))
                         TagFilterSection("Type", d.clips.map { it.category }, CATEGORIES, ui.categoryFilter) { ui.categoryFilter = it; ui.save() }
                         // (3.2-E) where the clips were shared: every platform, then Not shared yet
-                        Spacer(Modifier.height(10.dp))
-                        Text("Shared on", style = MaterialTheme.typography.labelLarge)
-                        for (opt in listOf<String?>(null) + SOCIAL_PLATFORMS + listOf("")) {
-                            Row(
-                                Modifier.fillMaxWidth().clickable { ui.sharedFilter = opt; ui.save() },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(selected = ui.sharedFilter == opt, onClick = { ui.sharedFilter = opt; ui.save() })
-                                Text(
-                                    when (opt) {
-                                        null -> "Any"
-                                        "" -> "Not shared yet"
-                                        else -> opt
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
+                        FilterChips(
+                            "Shared on",
+                            (listOf<String?>(null) + SOCIAL_PLATFORMS + listOf("")).map { it to (when (it) { null -> "Any"; "" -> "Not shared yet"; else -> it }) },
+                            ui.sharedFilter
+                        ) { ui.sharedFilter = it; ui.save() }
+                        // the videos: one line here, the list in its own window
+                        val shownN = d.footage.count { it.id !in ui.hidden }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showVideoFilter = true }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Videos", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                            Text(
+                                if (ui.hidden.isEmpty()) "All (${d.footage.size})" else "$shownN of ${d.footage.size}",
+                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary
+                            )
+                            Text("  ›", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         }
-                        Spacer(Modifier.height(10.dp))
-                        Text("Show clips from these videos", style = MaterialTheme.typography.labelLarge)
+                    }
+                },
+                confirmButton = { Button(onClick = { showFilter = false }) { Text("Done") } }
+            )
+        }
+
+        // ===== which videos the Clips tab shows (opened from the Filter window's Videos line) =====
+        if (showVideoFilter && d != null) {
+            AlertDialog(
+                onDismissRequest = { showVideoFilter = false },
+                title = { Text("Show clips from these videos") },
+                text = {
+                    Column(
+                        Modifier
+                            .heightIn(max = 460.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         Row {
                             TextButton(onClick = { ui.hidden = emptySet(); ui.save() }) { Text("All") }
                             TextButton(onClick = { ui.hidden = d.footage.map { it.id }.toSet(); ui.save() }) { Text("None") }
@@ -2322,7 +2331,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                     }
                 },
-                confirmButton = { Button(onClick = { showFilter = false }) { Text("Done") } }
+                confirmButton = { Button(onClick = { showVideoFilter = false }) { Text("Done") } }
             )
         }
 
@@ -3115,6 +3124,7 @@ fun ClipViewer(
     onReconnect: (Footage) -> Unit,
     onShowSession: (Footage) -> Unit,
     onTrashExport: (ExportedClip) -> Unit,
+    onTrashOldExport: (ExportedClip) -> Unit = onTrashExport,   // (3.2-D) the old file after a re-export: the viewer stays on the clip
     selection: Set<String>? = null,                 // not null while clips are being chosen for an export: the chosen ones
     onToggleSelect: (GalleryClip) -> Unit = { },
     onSingleSaved: (Footage, Double) -> Unit = { _, _ -> },   // (3.2-F) a single solve's time or trim was changed: (video, new stop)
@@ -3173,6 +3183,8 @@ fun ClipViewer(
     val penaltyOv = remember { mutableStateMapOf<String, Pair<Int, Boolean>>() } // (3.2-C) clips given a penalty here: (+2 count, DNF)
     val padOv = remember { mutableStateMapOf<String, Pair<Double?, Double?>>() }  // (3.2-D) clips given their own buffers here (null = follow)
     val sharedOv = remember { mutableStateMapOf<String, List<String>>() }        // (3.2-E) clips whose Shared on was changed here
+    val timeOv = remember { mutableStateMapOf<String, String>() }                // (3.2-F) single solves whose time was typed here
+    val keyboard = LocalSoftwareKeyboardController.current
     var reexportAsk by remember { mutableStateOf("") }           // (3.2-D) the clip whose buffers changed after its export: "Re-export now?"
     var replaceOld by remember { mutableStateOf<ExportedClip?>(null) }   // (3.2-D) after that re-export: move the old file to the trash?
     var singleEdit by remember { mutableStateOf(false) }         // (3.2-F) the Edit window of a single solve (time and trim)
@@ -3197,6 +3209,8 @@ fun ClipViewer(
         return tagLabel(resolveTag(p, c.footage.puzzle), resolveTag(k, c.footage.category))
     }
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
+    /** (3.2-F) The time the timer showed, with one typed here. */
+    fun timeOf(c: GalleryClip): String = timeOv[c.listKey] ?: c.cut.timeText
     /** (3.2-E) Where the clip was shared, with a change made here. */
     fun sharedOf(c: GalleryClip): List<String> = sharedOv[c.listKey] ?: c.cut.sharedOn
     /** (3.2-D) The clip's own buffers (before, after; null = follows the video), with a change made here. */
@@ -3212,7 +3226,10 @@ fun ClipViewer(
             .sortedBy { it.index }
             .map { c ->
                 val (before, after) = padsOf(c)
-                c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c), beforePad = before, afterPad = after)
+                c.cut.copy(
+                    included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c), beforePad = before, afterPad = after,
+                    timeText = timeOf(c)
+                )
             }
 
     /** The moment of the video a clip starts at (what the player shows first), so the still and the first frame are the same picture. */
@@ -3448,9 +3465,21 @@ fun ClipViewer(
         }
         val e = exportedFor(c) ?: return
         if (e.trashedMs != 0L) return
-        val newName = penaltyRename(e, c.cut.timeText, plus2Count, dnf) ?: return
+        val newName = penaltyRename(e, timeOf(c), plus2Count, dnf) ?: return
         renamer.rename(e, newName) { name ->
             exportedNow[c.listKey] = ExportedClip(e.id, e.footageId, e.stopSec, e.timeText, e.uri, name, e.offsetSec, e.exportedMs, e.trashedMs)
+        }
+    }
+
+    /** (3.2-F) Saves the time typed for a single solve (marked `edited`). */
+    fun setTime(c: GalleryClip, timeText: String) {
+        timeOv[c.listKey] = timeText
+        overrideVersion++
+        keyboard?.hide()
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutTime(context, c.footage.id, c.cut.stopSec, timeText) } catch (e: Exception) { }
+            }
         }
     }
 
@@ -3680,6 +3709,46 @@ fun ClipViewer(
             }
         }
 
+        // ===== (3.2-F) a single solve with no time yet: asked here, over the video, so it can be read off the stopped timer =====
+        if (footage.isSingle && current.index >= 0 && timeOf(current).isBlank() && sheetP < 0.5f) {
+            var draft by remember(current.listKey) { mutableStateOf("") }
+            val ok = parseTimeSeconds(draft) != null
+            val faint = Color(0x99FFFFFF)
+            Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .systemBarsPadding()
+                    .padding(top = if (controlsVisible) 56.dp else 8.dp, start = 10.dp, end = 10.dp)
+                    .background(Color(0xDD000000), RoundedCornerShape(12.dp))
+                    .padding(10.dp)
+            ) {
+                Text("Type the time the timer showed", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ':' } },
+                        singleLine = true,
+                        placeholder = { Text("e.g. 12.412 or 1:02.34") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (ok) setTime(current, draft.trim()) }),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                            focusedBorderColor = Color.White, unfocusedBorderColor = faint,
+                            focusedPlaceholderColor = faint, unfocusedPlaceholderColor = faint
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { setTime(current, draft.trim()) }, enabled = ok) { Text("Save") }
+                }
+                Text(
+                    "Pause on the stopped timer. Penalty, puzzle and trim are in the details (swipe up).",
+                    color = Color(0xFFCCCCCC), style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
         if (showHint && sheetP < 0.05f && !controlsVisible) {
             SwipeUpHint(Modifier.align(Alignment.Center).padding(top = 120.dp))
         }
@@ -3722,7 +3791,7 @@ fun ClipViewer(
                     val (plus2Now, dnfNow) = penaltyOf(current)
                     Row(verticalAlignment = Alignment.Bottom) {
                         // (3.2-C) with its penalty: "13.263 (+2)", "DNF(11.263)"
-                        val shown = shownTime(current.cut.timeText, plus2Now, dnfNow)
+                        val shown = shownTime(timeOf(current), plus2Now, dnfNow)
                         Text(
                             when {
                                 shown.isEmpty() -> "time unknown"
@@ -4008,7 +4077,7 @@ fun ClipViewer(
                 title = "Edit this solve",
                 uri = Uri.parse(f.uri),
                 durationMs = f.durationMs,
-                startTime = current.cut.timeText,
+                startTime = timeOf(current),
                 startTrim = f.trimStartSec to f.trimEndSec,
                 askPenalty = false,
                 askPuzzle = false,
@@ -4066,7 +4135,7 @@ fun ClipViewer(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(12.dp))
-                        DangerButton("Move old file to trash") { replaceOld = null; onTrashExport(oldFile) }
+                        DangerButton("Move old file to trash") { replaceOld = null; onTrashOldExport(oldFile) }
                     }
                 },
                 confirmButton = { TextButton(onClick = { replaceOld = null }) { Text("Keep both") } }
