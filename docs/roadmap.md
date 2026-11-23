@@ -278,8 +278,18 @@ Rules:
 - Restore merges and the phone wins: a video already here is left as it is.
 - Built without asking (flag for the owner): the backup leaves out uris (an old MediaStore uri can point at another video on a new phone) and trashed exports; video lengths may differ by up to 1 s when matching; the backup window lives in the Gallery's ⋮ menu.
 
-### 3.2-Z Release prep 3.2 ⬜
+### 3.2-Z Release prep 3.2 🔶
 Set `versionName "3.2.0"`. Test the upgrade from 3.1 on a phone with real data.
+
+**Decided** (2026-11-23):
+- Backup and restore is not phone-tested in this release. The owner moved that test to the 3.3 test pass (see 3.3-Z).
+- As for 3.1: after the phone pass, Claude pushes `dev-v3.2.0` and gives the compare link and PR text. The owner opens the PR. Closing 3.2-Z deletes this whole v3.2 section.
+
+Built (2026-11-23):
+- `versionCode 6` / `versionName "3.2.0"`.
+- `[3.2.0] - 2026-11-23` in the CHANGELOG, with a summary line; the backup line says it is untested.
+- README version, and its Gallery line now names tags, penalties, single solves and the backup file.
+- known-issues: lint line numbers updated.
 
 ---
 

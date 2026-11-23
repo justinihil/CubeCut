@@ -6,7 +6,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 
 | Issue | Where | Notes |
 |---|---|---|
-| **`lintDebug` fails** with 2 errors | `Gallery.kt:3165-3166`: `PlayerView.setShutterBackgroundColor` / `setKeepContentOnPlayerReset` are Media3 `@UnstableApi` without `@OptIn` | 57 warnings and 43 hints besides (checked 2026-11-23). Add `@OptIn(UnstableApi::class)` or a lint baseline |
+| **`lintDebug` fails** with 2 errors | `Gallery.kt:3586-3587`: `PlayerView.setShutterBackgroundColor` / `setKeepContentOnPlayerReset` are Media3 `@UnstableApi` without `@OptIn` | 65 warnings and 46 hints besides (checked 2026-11-23, 3.2.0). Add `@OptIn(UnstableApi::class)` or a lint baseline |
 | **Back on the timer setup screen leaves the editor** | `TimerSetupScreen.kt` has no `BackHandler`, so Back reaches the editor's (`leaveToGallery`) | Only the on-screen Cancel cancels setup |
 | **Dead template theme** | `app/src/main/java/com/example/cubecut/ui/theme/{Color,Theme,Type}.kt` | Unused, but declares a second `CubeCutTheme`, so a wrong auto-import is possible. An earlier changelog said it had been deleted. Delete it |
 | **Thin tests** | `app/src/test`, `ExampleInstrumentedTest` | Unit tests cover only the pure functions (`computeClips`, `parseTimeSeconds`, `mergeRescan`, `checkCuts`, the v7 field helpers). The SQL, including the v7 upgrade, the scan and the UI are checked only on the phone. See [app/README § Tests](../app/README.md#tests) |
