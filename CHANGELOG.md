@@ -26,6 +26,8 @@ Notes on history:
 - A penalty on an exported clip **renames its file** (`…_Solve_03_13.263s_plus2.mp4`, `…_Solve_03_DNF_11.263s.mp4`). The clip stays linked to it. After a reinstall Android asks first.
 
 - **Shared on:** the viewer's platform buttons now mark where a clip was shared, separately from the note. *Filter* → *Shared on: TikTok* (or any platform) or *Not shared yet*.
+- **Single solves:** *Import video* asks **A session** or **One solve**. A single solve skips Find solves: type its time (penalty and puzzle optional), and trim it if you like. Untrimmed, the file itself is the clip; trimmed, it exports as a copy.
+- Single solves are in the Clips tab (marked *One solve*), not under Footage. Their viewer details have **Edit** (time and trim), **Delete video** and **Forget this solve**. *Filter* switches all single solves on or off together.
 
 ### Changed
 - The platform buttons no longer add words to your note. Notes you wrote before keep their text; where they named a platform, the clip already counts as shared there.

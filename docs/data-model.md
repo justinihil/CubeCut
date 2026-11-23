@@ -97,8 +97,8 @@ Added in 3.2-A with no UI; the later 3.2 phases build the screens. Every default
 | `cuts.plus2_count`, `cuts.dnf` | The penalty (3.2-C). `time_text` keeps what the timer showed, so the solve-only start and the export link don't move. Only what is shown (`shownTime`, `clipTitle`), the sort and *best* (`GalleryClip.seconds` = `penalisedSeconds`: +2 s each, DNF = none) and the file name (`fileTimePart`) use the penalty. DNF and +2 exclude each other in the UI | `updateCutPenalty` (viewer sheet); the Edit window through `saveSession` with `edited` set |
 | `cuts.before_pad`, `cuts.after_pad` | The clip's own buffers in seconds (3.2-D: *Follow video* / *Custom*). NULL = follows the video's slider. `computeClips` uses them for that clip only; its `after_pad` also moves where the next scramble starts | `updateCutPads` (viewer sheet); the Edit window through `saveSession` with `edited` set |
 | `cuts.shared_on` | Where the clip was shared: names from `SOCIAL_PLATFORMS`, comma separated (`encodeSharedOn` / `decodeSharedOn`) | `updateCutSharedOn` (the viewer's *Shared on* chips, 3.2-E). The note is separate text; the one-off v7 fill was the only time it was read from the note |
-| `footage.kind` | `session` (`KIND_SESSION`) or `single` (`KIND_SINGLE`, a clip of one solve, 3.2-F) | 3.2-F |
-| `footage.trim_start_sec`, `trim_end_sec` | A single solve's trim in seconds of the file. NULL = untrimmed: the whole file plays | 3.2-F |
+| `footage.kind` | `session` (`KIND_SESSION`) or `single` (`KIND_SINGLE`, a clip of one solve, 3.2-F). A single solve has exactly one cut, never opens in the editor and isn't on the Footage tab | `createSingle` |
+| `footage.trim_start_sec`, `trim_end_sec` | A single solve's trim in seconds of the file. NULL = untrimmed: the whole file is the clip and needs no export. `singleRange` / `clipsFor` turn it into the clip; the cut's `stop_sec` is the range's end | `createSingle`, `updateSingle` (moves the cut and its export record to the new end in one transaction) |
 
 All the cut fields go through `saveSession`'s insert and `loadCuts`. `mergeRescan` keeps an edited cut as it is, and when it replaces an untouched cut with the new scan it still carries over every field only the user sets (`withUserFieldsOf`).
 
@@ -129,9 +129,11 @@ Single-field writes from the Gallery or viewer (`updateCutScramble`, `markCutRev
 
 ## What the Gallery shows (`loadGallery`)
 
+Clips are worked out with `clipsFor(footage, cuts)`: `computeClips` for a session, `singleRange` for a single solve (3.2-F).
+
 - A video is **present** if `trashed_ms == 0` **and** `canOpen` succeeds. The trash flag wins, because Android still opens trashed files.
 - **Video present:** all its cuts show as clips, tagged *Exported* or not, plus *Solve deleted* exports.
-- **Video gone or trashed:** only clips with a live exported file show (*Export only*). The cuts stay in the database, so re-importing the video brings everything back.
+- **Video gone or trashed:** only clips with a live exported file show (*Export only*). The cuts stay in the database, so re-importing the video brings everything back. Exception (3.2-F): a single solve with no live file still shows, with no picture and a *Video missing* / *In trash* badge, because it has no Footage card to reconnect or forget it from.
 - Checks (`needsCheck`, `warning`, `noClip`) are computed with `computeClips` and `checkCuts` at load time. They are not stored, except `reviewed`.
 
 ## Trash

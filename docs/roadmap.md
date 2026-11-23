@@ -208,7 +208,7 @@ Ask first: should a free-text search on notes be added too?
 
 **Decided** at the start of the phase (2026-11-23): no note search for now. The 3.2-A interim line in `updateCutNote` is gone and `GalleryClip.sharedList` reads `cut.sharedOn`. The Filter dialog lists every platform, not only the ones in use.
 
-### 3.2-F Import clips of single solves ⬜
+### 3.2-F Import clips of single solves 🔶
 **#5:** add clips of single solves to the Gallery, with the steps that need, such as typing the solve time.
 
 **Decided:**
@@ -232,6 +232,12 @@ Where to start:
 Rules:
 - The `OpenDocument` picker is settled.
 - "Solve N" numbering is settled.
+
+**Decided** at the start of the phase (2026-11-23):
+- The stop is the end of the clip (the trim end, or the end of the file). No marking step.
+- Single solves are hidden from the Footage tab. *Delete video* and *Forget this solve* are in the viewer sheet.
+- A single solve can't be turned into a session: forget it and import again as *A session*.
+- Built without asking (flag for the owner): only the Gallery's *Import video* asks session / one solve; the editor's import is sessions only and refuses a known single solve. A single solve is titled without a number (`Title · 11.263s`, card *One solve*) but its file is still `…_Solve_01_…`. Untrimmed singles can't be ticked for export. A single solve with no video and no file still shows (*Video missing*) so it can be reconnected or forgotten. The Filter dialog has one *Single solves* switch instead of one line per file. A time is required to save.
 
 ### 3.2-G Backup and restore ⬜
 **#4:** a backup that survives an uninstall and reinstall, and moves the Gallery from an old phone to a new one.

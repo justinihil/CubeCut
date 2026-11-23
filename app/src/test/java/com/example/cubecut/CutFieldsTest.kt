@@ -80,6 +80,46 @@ class CutFieldsTest {
         assertEquals("", GalleryClip(footage(), 0, 1, CutItem(10.0, "9.000", true, "", true), null, false).puzzle)
     }
 
+    private fun single(trimStart: Double? = null, trimEnd: Double? = null, durationMs: Long = 20_000) = Footage(
+        id = 2, uri = "content://y", displayName = "b.mp4", sizeBytes = 1, durationMs = durationMs, title = "b", dateTakenMs = 0,
+        addedMs = 0, lastScanMs = 0, beforePad = 2.5f, afterPad = 2.5f, scrambleAll = true, cutCount = 1, timerFrameMs = -1,
+        timerCorners = "", timerTyped = "", trashedMs = 0, kind = KIND_SINGLE, trimStartSec = trimStart, trimEndSec = trimEnd
+    )
+
+    @Test
+    fun singleSolve_untrimmed_isTheWholeFile() {
+        val f = single()
+        assertTrue(f.isSingle)
+        assertTrue(!f.isTrimmed)
+        assertEquals(Pair(0.0, 20.0), singleRange(f))
+        // the buffers and the scramble don't matter: the clip is the file
+        val clips = clipsFor(f, listOf(CutItem(20.0, "12.000", true, "", false, plus2Count = 1)))
+        assertEquals(1, clips.size)
+        assertEquals(0.0, clips[0].startSec, 1e-9)
+        assertEquals(20.0, clips[0].endSec, 1e-9)
+        assertEquals(1, clips[0].plus2Count)
+        assertEquals("b_Solve_01_14.000s_plus2.mp4", ClipExporter.fileName(clips[0], "b"))
+    }
+
+    @Test
+    fun singleSolve_trimmed_isThatPart_andStaysInTheFile() {
+        val f = single(3.0, 15.5)
+        assertTrue(f.isTrimmed)
+        assertEquals(Pair(3.0, 15.5), singleRange(f))
+        assertEquals(Pair(0.0, 20.0), singleRange(single(-1.0, 99.0)))      // never outside the file
+        assertEquals(Pair(5.0, 20.0), singleRange(single(5.0, null)))
+        assertTrue(clipsFor(f, emptyList()).isEmpty())
+    }
+
+    @Test
+    fun singleSolve_titleHasNoNumber() {
+        val c = GalleryClip(single(), 0, 1, CutItem(20.0, "9.000", true, "", true), null, false)
+        assertEquals("b · 9.000s", c.title)
+        assertEquals("One solve", c.placeText)
+        val s = GalleryClip(footage(), 2, 5, CutItem(20.0, "9.000", true, "", true), null, false)
+        assertEquals("Solve 3 of 5", s.placeText)
+    }
+
     @Test
     fun newVideo_isASession_untrimmed() {
         val f = footage()

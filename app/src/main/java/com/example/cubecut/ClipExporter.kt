@@ -148,6 +148,31 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
     return clips
 }
 
+/** (3.2-F) The shortest trimmed single solve, in seconds: shorter is almost surely a slip of the trim handles. */
+const val MIN_SINGLE_SEC = 1.0
+
+/**
+ * (3.2-F) The part of a single-solve video that is its clip, in seconds of the file: the trim, or the whole file when untrimmed
+ * (a missing end = the end of the file). The clip ends where the solve stops, so its stop is the end of this range.
+ */
+fun singleRange(f: Footage): Pair<Double, Double> {
+    val dur = f.durationMs / 1000.0
+    val start = (f.trimStartSec ?: 0.0).coerceIn(0.0, max(0.0, dur))
+    val end = (f.trimEndSec ?: dur).coerceIn(start, max(start, dur))
+    return Pair(start, end)
+}
+
+/**
+ * The clips of a saved video. A session: computeClips with the video's buffers. (3.2-F) A single solve: its one clip is
+ * [singleRange], whatever its buffers or scramble say; it has no number in a session, but is "Solve 1" in a file name.
+ */
+fun clipsFor(f: Footage, cuts: List<CutItem>): List<Clip> {
+    if (!f.isSingle) return computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0)
+    val cut = cuts.firstOrNull() ?: return emptyList()
+    val (start, end) = singleRange(f)
+    return listOf(Clip(1, start, end, cut.timeText, 0, true, start, false, cut.plus2Count, cut.dnf))
+}
+
 /** One exported file: the clip it came from, where the file is, and where in that file the final time first shows. */
 class ExportedFile(val clip: Clip, val uri: String, val fileName: String, val startSec: Double)
 

@@ -20,6 +20,15 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 
 If the timer can't be read, nothing is blocked. You can always add solves by hand, even before Find solves or without a timer setup.
 
+## Adding a single solve
+
+1. Tap *Import video* in the Gallery and pick a video of **one** solve. Choose **One solve** (*A session* opens the editor as above).
+2. Type the solve time. A penalty and the puzzle are optional.
+3. **Trim** is optional. Off: the whole file is the clip and nothing needs exporting. On: drag the two handles; the clip is exported as a copy. End it just after the timer stops: the end is the solve's stop.
+4. *Save* opens the clip in the viewer. Single solves are in the **Clips** tab only, not under Footage. In the viewer's details, **Edit** changes the time and trim, and **Delete video** / **Forget this solve** are at the bottom.
+
+Picking the same video again says *Already in your Gallery*. The editor's own *Import video* is for sessions only.
+
 ## Things to know
 
 - **Long videos warm the phone** and use battery during Find solves. Plug it in for a long session.

@@ -78,6 +78,12 @@ const val KIND_SESSION = "session"
 /** [Footage.kind] of a video that holds one solve, imported without Find solves (3.2-F). */
 const val KIND_SINGLE = "single"
 
+/** (3.2-F) True for a video of one solve, imported without Find solves. It never opens in the editor and isn't on the Footage tab. */
+val Footage.isSingle: Boolean get() = kind == KIND_SINGLE
+
+/** (3.2-F) True for a single solve with a trim: its clip is a part of the file, so it is exported as a copy. Untrimmed, the file is the clip. */
+val Footage.isTrimmed: Boolean get() = trimStartSec != null || trimEndSec != null
+
 /** What opening a video gave: its record, and the cuts saved earlier (empty for a video seen for the first time). */
 class OpenedSession(val footage: Footage, val cuts: List<CutItem>, val isNew: Boolean)
 
@@ -342,6 +348,95 @@ object SessionStore {
     }
 
     /**
+     * (3.2-F) Saves a video of one solve: a `single` record and its one cut, in one go. Call it only for a video seen for the first
+     * time ([findKnown] gave null). The cut stops where the clip ends ([trimEnd], or the end of the file), and counts as added by you
+     * (`user_edited`). [puzzle] / [category] tag the video, so the clip follows them. Returns the record and the cut's stop.
+     */
+    fun createSingle(
+        context: Context, uri: Uri, durationMs: Long, timeText: String, plus2Count: Int, dnf: Boolean,
+        puzzle: String, category: String, trimStart: Double?, trimEnd: Double?
+    ): Pair<Footage, Double> {
+        val (name, size) = nameAndSize(context, uri)
+        val shownName = if (name.isNotEmpty()) name else "Solve video"
+        val date = dateTaken(context, uri)
+        val d = db(context)
+        d.beginTransaction()
+        try {
+            val v = ContentValues()
+            v.put("uri", uri.toString())
+            v.put("display_name", shownName)
+            v.put("size_bytes", size)
+            v.put("duration_ms", durationMs)
+            v.put("title", shownName.substringBeforeLast('.', shownName))
+            v.put("date_taken_ms", date)
+            v.put("added_ms", System.currentTimeMillis())
+            v.put("kind", KIND_SINGLE)
+            v.put("puzzle", puzzle)
+            v.put("category", category)
+            putPad(v, "trim_start_sec", trimStart)
+            putPad(v, "trim_end_sec", trimEnd)
+            val id = d.insertOrThrow("footage", null, v)
+            val f = getFootage(context, id)!!
+            val stop = singleRange(f).second
+            d.insertOrThrow("cuts", null, singleCutValues(id, stop, timeText, plus2Count, dnf))
+            d.setTransactionSuccessful()
+            return Pair(getFootage(context, id)!!, stop)
+        } finally {
+            d.endTransaction()
+        }
+    }
+
+    private fun singleCutValues(footageId: Long, stop: Double, timeText: String, plus2Count: Int, dnf: Boolean): ContentValues {
+        val c = ContentValues()
+        c.put("footage_id", footageId)
+        c.put("stop_sec", stop)
+        c.put("time_text", timeText)
+        c.put("included", 1)
+        c.put("note", "")
+        c.put("include_scramble", 1)
+        c.put("user_edited", 1)
+        c.put("plus2_count", plus2Count.coerceAtLeast(0))
+        c.put("dnf", if (dnf) 1 else 0)
+        return c
+    }
+
+    /**
+     * (3.2-F) Changes a single solve's time and trim. Its stop follows the new end, and so does its export record (the link is the
+     * stop, invariant 6), in the same transaction. The penalty, tags, note and *Shared on* stay. Returns the new stop.
+     */
+    fun updateSingle(context: Context, f: Footage, timeText: String, trimStart: Double?, trimEnd: Double?): Double {
+        val d = db(context)
+        val id = f.id.toString()
+        d.beginTransaction()
+        try {
+            val v = ContentValues()
+            putPad(v, "trim_start_sec", trimStart)
+            putPad(v, "trim_end_sec", trimEnd)
+            d.update("footage", v, "id = ?", arrayOf(id))
+            val newStop = singleRange(getFootage(context, f.id)!!).second
+            val oldStop = loadCuts(context, f.id).firstOrNull()?.stopSec
+            if (oldStop == null) {
+                d.insertOrThrow("cuts", null, singleCutValues(f.id, newStop, timeText, 0, false))
+            } else {
+                val c = ContentValues()
+                c.put("stop_sec", newStop)
+                c.put("time_text", timeText)
+                c.put("user_edited", 1)
+                d.update("cuts", c, "footage_id = ?", arrayOf(id))
+                if (Math.abs(oldStop - newStop) >= 0.0005) {
+                    val e = ContentValues()
+                    e.put("stop_sec", newStop)
+                    d.update("exports", e, "footage_id = ? AND ABS(stop_sec - ?) < $SAME_SOLVE_SEC", arrayOf(id, oldStop.toString()))
+                }
+            }
+            d.setTransactionSuccessful()
+            return newStop
+        } finally {
+            d.endTransaction()
+        }
+    }
+
+    /**
      * The saved record [openOrCreate] would reopen for this video, or null for a video seen for the first time. Changes nothing,
      * so the import can ask "Imported before" first and a Cancel leaves no trace.
      */
@@ -511,7 +606,7 @@ object SessionStore {
             val cuts = loadCuts(context, f.id)
             val exports = loadExports(context, f.id).filter { it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }
             if (sourceOk) {
-                val checks = checkCuts(cuts, computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0))
+                val checks = checkCuts(cuts, clipsFor(f, cuts))
                 for ((i, c) in cuts.withIndex()) {
                     val e = exports.filter { Math.abs(it.stopSec - c.stopSec) < SAME_SOLVE_SEC }.maxByOrNull { it.exportedMs }
                     clips.add(GalleryClip(f, i, cuts.size, c, e, false, checks.warnings[i] ?: "", i in checks.noClip))
@@ -533,6 +628,11 @@ object SessionStore {
                     }
                     val base = if (idx >= 0) cuts[idx] else CutItem(e.stopSec, e.timeText, true, "", true)
                     clips.add(GalleryClip(f, idx, cuts.size, base, e, true))
+                }
+                // (3.2-F) a single solve has no Footage card, so with no file left it still shows (with no picture): its viewer
+                // offers Reconnect video and Forget
+                if (f.isSingle && latestPerStop.isEmpty() && cuts.isNotEmpty()) {
+                    clips.add(GalleryClip(f, 0, cuts.size, cuts[0], null, false))
                 }
             }
         }
@@ -878,7 +978,14 @@ class GalleryClip(
     val needsCheck: Boolean get() = noteNeedsCheck || warning.isNotEmpty()
     /** Everything to check about this clip, in one line ("" = nothing). */
     val checkText: String get() = listOf(if (noteNeedsCheck) cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
-    val title: String get() = clipTitle(footage.title, index + 1, cut.timeText, cut.plus2Count, cut.dnf)
+    /** (3.2-F) A single solve has no number: "Sunday · 11.263s". */
+    val title: String get() = clipTitle(footage.title, if (footage.isSingle) 0 else index + 1, cut.timeText, cut.plus2Count, cut.dnf)
+    /** "Solve 3 of 20", "One solve" (3.2-F), or "Solve" when its place is unknown. */
+    val placeText: String get() = when {
+        footage.isSingle -> "One solve"
+        index >= 0 -> "Solve ${index + 1} of $total"
+        else -> "Solve"
+    }
     val sharedList: List<String> get() = cut.sharedOn     // (3.2-E) where it was shared, set with the viewer's chips
     /** The puzzle this clip counts as: its own tag, else its video's ("" = not tagged; NO_TAG on the clip also gives ""). */
     val puzzle: String get() = resolveTag(cut.puzzle, footage.puzzle)

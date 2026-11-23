@@ -527,7 +527,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             scope.launch {
                 val known = findImportedBefore(context, uri)
                 if (analyzing) return@launch            // Find solves started meanwhile: never swap the video under it (invariant 1)
-                if (known != null && known.id != footageId) reimportAsk = uri to known else videoUri = uri
+                // (3.2-F) a single solve never opens here: it lives in the Gallery's Clips tab
+                if (known != null && known.isSingle) status = "That video is a single solve. Find it in the Gallery's Clips tab."
+                else if (known != null && known.id != footageId) reimportAsk = uri to known else videoUri = uri
             }
         }
     }
