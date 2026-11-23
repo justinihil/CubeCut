@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -39,6 +40,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 // ---------------------------------------------------------------------------------------
@@ -81,6 +83,30 @@ private class TagSection(start: String?, val known: List<String>, val forClip: B
 }
 
 /**
+ * One button of the tag window. The chosen one is solid blue (the theme's primary, in light and dark mode) with a tick, so it stands
+ * out clearly: Material's default chosen colour is a grey that is hard to tell from the window behind it.
+ */
+@Composable
+private fun TagChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val blue = MaterialTheme.colorScheme.primary
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
+        leadingIcon = if (selected) ({ Text("✓", fontWeight = FontWeight.Bold) }) else null,
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = blue,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled = true, selected = selected,
+            borderColor = MaterialTheme.colorScheme.outline, selectedBorderColor = blue
+        )
+    )
+}
+
+/**
  * The tag window. [puzzle] / [category]: the stored values to start from (null = the clips differ, nothing is chosen).
  * [forClip]: the window sets clips, so it also offers "As the video" (follow) and its "Not tagged" overrides the video's tag.
  * [followPuzzle] / [followCategory]: the video's tags, shown on the "As the video" buttons (null = clips from several videos).
@@ -112,13 +138,13 @@ fun TagDialog(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (forClip) {
                 val shown = if (follow == null) "As each video" else "As the video (${follow.ifEmpty { "not tagged" }})"
-                FilterChip(selected = s.pick == PICK_FOLLOW, onClick = { s.pick = PICK_FOLLOW }, label = { Text(shown) })
+                TagChip(shown, s.pick == PICK_FOLLOW) { s.pick = PICK_FOLLOW }
             }
             for (name in s.known) {
-                FilterChip(selected = s.pick == name, onClick = { s.pick = name }, label = { Text(name) })
+                TagChip(name, s.pick == name) { s.pick = name }
             }
-            FilterChip(selected = s.pick == PICK_OTHER, onClick = { s.pick = PICK_OTHER }, label = { Text("Other") })
-            FilterChip(selected = s.pick == PICK_NONE, onClick = { s.pick = PICK_NONE }, label = { Text("Not tagged") })
+            TagChip("Other", s.pick == PICK_OTHER) { s.pick = PICK_OTHER }
+            TagChip("Not tagged", s.pick == PICK_NONE) { s.pick = PICK_NONE }
         }
         if (s.pick == PICK_OTHER) {
             OutlinedTextField(
