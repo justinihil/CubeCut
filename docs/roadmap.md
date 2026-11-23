@@ -52,10 +52,10 @@ The owner then merges `dev → main` and tags the release by hand ([release step
 
 | Version | Branch | Theme | DB |
 |---|---|---|---|
-| **3.1** | `dev-v3.1.0` | Polish and quick wins | stays v6 |
-| **3.2** | `dev-v3.2.0` | Organise your clips: tags, penalty, per-clip buffers, *Shared on*, single solves, backup | v7 |
+| **3.1** | `dev-v3.1.0` | Polish and quick wins | v7 (`forgotten_ms`, added in 3.1-A) |
+| **3.2** | `dev-v3.2.0` | Organise your clips: tags, penalty, per-clip buffers, *Shared on*, single solves, backup | v8 |
 | **3.3** | `dev-v3.3.0` | Better Find solves: no timer setup, more fonts, more accurate | — |
-| **4.0** | `dev-v4.0.0` | Find solves runs in the background after import | v8 |
+| **4.0** | `dev-v4.0.0` | Find solves runs in the background after import | v9 |
 
 The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in two so that the quick wins, which need no database change, ship first. The owner's "v3.2" (Find solves) became 3.3.
 
@@ -63,7 +63,7 @@ The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in t
 
 ## v3.1: polish and quick wins
 
-The phases go editor first, then viewer, then Gallery, so each thread opens only one of the big files. There is no schema change in this version.
+The phases go editor first, then viewer, then Gallery, so each thread opens only one of the big files. The only schema change is `footage.forgotten_ms` (v7), added in 3.1-A at the owner's request.
 
 ### 3.1-A Editor quick wins 🔶
 Items:
@@ -77,6 +77,7 @@ Items:
 - The crop is fixed at the saved corners (still camera assumed), with a bigger margin: half the timer's width on every side.
 - Added by the owner during the phase: a solve added by hand is selected, scrolled to, and its card blinks (3 blinks, under 2 s). If the check filter would hide it, the filter turns off, as *Go to solve* already does.
 - Found in the phone test: *Find solves again* / *Re-scan done* now depend on whether a scan ran (`scanned`), not on whether solves exist.
+- Added by the owner: *Forget this session* keeps its exported clips in Clips (*Export only*); re-importing the video starts from zero. DB v7 ([ADR-0015](adr/0015-forget-keeps-exported-clips.md)). The later versions' DB numbers moved up by one.
 
 Built (awaiting the phone test): `Reimport.kt`, `SessionStore.findKnown`, `ThumbCache.timerFrame`. The warning covers both *Import video* buttons.
 
@@ -180,7 +181,7 @@ Rules:
 
 ---
 
-## v3.2: organise your clips (DB v7)
+## v3.2: organise your clips (DB v8)
 
 Order:
 1. All schema plumbing first, with no UI (3.2-A), so the later threads only build screens and never touch `saveSession` or `mergeRescan`.
@@ -197,7 +198,7 @@ Where to start: the [new per-video or per-clip field recipe](../ARCHITECTURE.md#
 
 Steps:
 1. **Lock the current behaviour first.** Write unit tests for `computeClips`, `parseTimeSeconds`, `mergeRescan` and `checkCuts` on today's code, and commit them.
-2. **Add one `if (oldVersion < 7)` step:**
+2. **Add one `if (oldVersion < 8)` step:**
    - `footage`: `puzzle TEXT ''`, `category TEXT ''`, `kind TEXT 'session'` (`'single'` for 3.2-F), plus the trim fields that 3.2-F needs.
    - `cuts`: `puzzle` and `category` (`''` = follows the video), `plus2_count INTEGER 0`, `dnf INTEGER 0`, `before_pad` and `after_pad` (`REAL`, NULL = follows the video), `shared_on TEXT ''`.
    - One-off: fill `cuts.shared_on` from `platformsIn(user_note)`. Leave the note text unchanged.
@@ -437,7 +438,7 @@ The app already opens on the Gallery (Clips). What changes is that **importing n
 - A notification says when the scan is done.
 
 ### 4.0-C "New" badge ⬜
-DB v8 (`cuts.seen_ms`). Recommended, to confirm:
+DB v9 (`cuts.seen_ms`). Recommended, to confirm:
 - The badge goes away when the clip is opened in the viewer or exported, or with *Mark all as seen*.
 - Add a *New* filter chip.
 

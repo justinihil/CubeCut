@@ -14,7 +14,7 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 | Persisted URI read grants for imported videos | Android (`takePersistableUriPermission` in `SessionStore.keepAccess`) | Restarts, not reinstall. Capped at 512 grants; *Forget* releases one |
 | Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` | — |
 
-## Schema (DB version 6)
+## Schema (DB version 7)
 
 ```mermaid
 erDiagram
@@ -37,6 +37,7 @@ erDiagram
     text timer_corners "v3; 8 doubles, comma separated"
     text timer_typed "v3"
     int trashed_ms "v4; 0 = not in trash"
+    int forgotten_ms "v7; 0 = not forgotten"
   }
   cuts {
     int id PK "NOT stable: regenerated on every save"
@@ -72,6 +73,7 @@ Migrations (`onUpgrade`) only add, one `if (oldVersion < N)` block per version:
 | v4 | `trashed_ms` ×2 |
 | v5 | `user_edited`, plus a one-off guess at which old cuts were edited |
 | v6 | `reviewed` |
+| v7 | `footage.forgotten_ms` (app 3.1) |
 
 There is no `onDowngrade`, so installing an older APK over a newer database crashes on open.
 
@@ -82,7 +84,7 @@ There is no `onDowngrade`, so installing an older APK over a newer database cras
 2. same `display_name` + `size_bytes` + `duration_ms`;
 3. same `size_bytes` + `duration_ms` (skipped if the size is unknown), so a renamed file is still recognised.
 
-On a match it refreshes the stored uri, name and size, and returns `isNew = false`. `findKnown` applies the same rules without changing anything. Both *Import video* buttons call it first, and a known video shows *Imported before* (*Open saved* / *Cancel*) before `openOrCreate` runs, so Cancel leaves no trace. Opening a session from the Gallery doesn't ask. `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
+A forgotten session never matches. On a match it refreshes the stored uri, name and size, and returns `isNew = false`. `findKnown` applies the same rules without changing anything. Both *Import video* buttons call it first, and a known video shows *Imported before* (*Open saved* / *Cancel*) before `openOrCreate` runs, so Cancel leaves no trace. Opening a session from the Gallery doesn't ask. `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
 
 ## How exports link to cuts
 
@@ -101,6 +103,7 @@ Single-field writes from the Gallery or viewer (`updateCutScramble`, `markCutRev
 - A video is **present** if `trashed_ms == 0` **and** `canOpen` succeeds. The trash flag wins, because Android still opens trashed files.
 - **Video present:** all its cuts show as clips, tagged *Exported* or not, plus *Solve deleted* exports.
 - **Video gone or trashed:** only clips with a live exported file show (*Export only*). The cuts stay in the database, so re-importing the video brings everything back.
+- **Session forgotten** (`forgotten_ms > 0`): treated like a gone video, so only *Export only* clips show, with their numbers and notes. It isn't in `GalleryData.sessions` (the Footage tab), Recently deleted (videos) or the import matching. `loadGallery` deletes it once no exported file opens and none is in the trash. `SessionStore.forget` marks it, or deletes the session at once if it has no export records ([ADR-0015](adr/0015-forget-keeps-exported-clips.md)).
 - Checks (`needsCheck`, `warning`, `noClip`) are computed with `computeClips` and `checkCuts` at load time. They are not stored, except `reviewed`.
 
 ## Trash

@@ -16,6 +16,9 @@ Notes on history:
 - **Add a missed solve at the playhead** shows as soon as a video is loaded, so solves can be added by hand before Find solves or without a timer setup. The two switches still wait until there are solves.
 - A solve added by hand is selected, the list scrolls to its card, and the card blinks a few times. If *Only solves to check* would hide it, the filter turns off.
 
+### Changed
+- **Forget this session** keeps the session's exported clips in Clips (*Export only*, with their solve numbers and notes) instead of hiding them. Importing the video again still starts from zero. The database moves to version 7.
+
 ### Fixed
 - *Find solves* no longer says *again* (and the result no longer says *Re-scan*) when only solves added by hand exist and it has never run on the video.
 - The **Edit window** zooms its picture onto the timer when a timer setup is saved. **Whole frame** shows the full picture.

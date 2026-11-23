@@ -29,7 +29,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Export only** | A clip whose raw video is gone, shown from its exported file | `GalleryClip.exportOnly` |
 | **Solve deleted** | An exported file whose cut was deleted in the editor | `GalleryClip.solveDeleted`, `index = -1` |
 | **Recently deleted / trash** | Items CubeCut moved to Android's trash | `trashed_ms`, `loadTrash`, `createTrashRequest` |
-| **Forget (session)** | Delete CubeCut's records of a video. The file is untouched | `SessionStore.delete`, `releaseAccess` |
+| **Forget (session)** | Remove a session from CubeCut. Its exported clips stay in Clips as *Export only*; re-importing the video starts from zero. Files are untouched | `SessionStore.forget`, `forgotten_ms`, `releaseAccess` |
 | **Reconnect video** | Attach a new file link to a saved session | `SessionStore.relink` |
 | **Gallery: Clips / Footage tabs** | The two tabs of the start screen | `GalleryScreen`, `GalleryUiState.tab` (0 = Clips, 1 = Footage) |
 | **Viewer** | The full-screen clip player with the swipe-up sheet | `ClipViewer`, `ui.detail` |
