@@ -44,7 +44,7 @@ Only the Samsung Galaxy S25 Ultra has been used. These have not been checked:
 - HDR or 10-bit footage, 4K, frame rates other than 30 and 60 fps, the frame-source fallback actually triggering;
 - a timer showing 2 decimals (supported in code, never tried);
 - renaming an exported file CubeCut no longer owns (after a reinstall: `createWriteRequest`), 3.2-C;
-- a restore on a second phone, and on a phone after a reinstall (3.2-G), including large backups;
+- **backup and restore (3.2-G) has not been tried on a phone at all**: the backup file, a restore after a reinstall or on a second phone, both *Reconnect* buttons, and large backups. The owner moved this test to the 3.3 test pass;
 - large galleries;
 - whether the export buffer grows as intended on a keyframe over 4 MB (it relies on `readSampleData` throwing `IllegalArgumentException`);
 - a signed release build on a second phone;

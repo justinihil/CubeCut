@@ -134,7 +134,7 @@ Phone test: install over 3.1 and check that existing solves, notes and exports s
 
 Where to start, Gallery filter and sort: `ClipKey`, `ExportFilter`, the Filter dialog and `GalleryUiState` (`Gallery.kt`).
 
-### 3.2-C Penalty (+2 / DNF) 🔶
+### 3.2-C Penalty (+2 / DNF) ✅
 **#7:**
 - A DNF shows as the time in brackets, for example `DNF(12.34)`.
 - +2 can be added several times, and the time shown includes them.
@@ -169,7 +169,7 @@ Rules:
 - The solve-only clip start uses the raw time on the timer.
 - Built without asking (flag for the owner): DNF and +2 exclude each other in the picker; sorting by time and *best* use the penalised time (DNF sorts last); the rename replaces only the time part of the existing name, so a file renamed by hand is left alone; changing only the time does not rename.
 
-### 3.2-D Per-clip buffers 🔶
+### 3.2-D Per-clip buffers ✅
 **#11:** adjust the before and after buffers of one clip, in the editor and in the Gallery, instead of only one slider for the whole video.
 
 **Decided:**
@@ -191,7 +191,7 @@ Built (2026-11-23), flag for the owner:
 - After the re-export, the old file's warning offers *Move old file to trash* or *Keep both*. Plain *Delete file* still closes the viewer.
 - The before buffer only counts for solve-only clips; the window says so.
 
-### 3.2-E Shared on 🔶
+### 3.2-E Shared on ✅
 **#10:** filter by where a clip was shared.
 
 **Decided:**
@@ -209,7 +209,7 @@ Ask first: should a free-text search on notes be added too?
 
 **Decided** at the start of the phase (2026-11-23): no note search for now. The 3.2-A interim line in `updateCutNote` is gone and `GalleryClip.sharedList` reads `cut.sharedOn`. The Filter dialog lists every platform, not only the ones in use.
 
-### 3.2-F Import clips of single solves 🔶
+### 3.2-F Import clips of single solves ✅
 **#5:** add clips of single solves to the Gallery, with the steps that need, such as typing the solve time.
 
 **Decided:**
@@ -239,9 +239,9 @@ Rules:
 - Single solves are hidden from the Footage tab. *Delete video* and *Forget this solve* are in the viewer sheet.
 - A single solve can't be turned into a session: forget it and import again as *A session*.
 - Changed after the first phone test (2026-11-23): *One solve* saves at once with no time and opens in the viewer, which asks for the time in a bar over the video (people don't note the time before importing). Penalty, puzzle and trim are in the details as for any clip.
-- Built without asking (flag for the owner): only the Gallery's *Import video* asks session / one solve; the editor's import is sessions only and refuses a known single solve. A single solve is titled without a number (`Title · 11.263s`, card *One solve*) but its file is still `…_Solve_01_…`. Untrimmed singles can't be ticked for export. A single solve with no video and no file still shows (*Video missing*) so it can be reconnected or forgotten. The Filter dialog has one *Single solves* switch instead of one line per file. A time is required to save.
+- Built without asking (flag for the owner): only the Gallery's *Import video* asks session / one solve; the editor's import is sessions only and refuses a known single solve. A single solve is titled without a number (`Title · 11.263s`, card *One solve*) but its file is still `…_Solve_01_…`. Untrimmed singles can't be ticked for export. A single solve with no video and no file still shows (*Video missing*) so it can be reconnected or forgotten. The Filter dialog has one *Single solves* switch instead of one line per file.
 
-### 3.2-G Backup and restore 🔶
+### 3.2-G Backup and restore ✅ (not phone-tested yet)
 **#4:** a backup that survives an uninstall and reinstall, and moves the Gallery from an old phone to a new one.
 
 **Decided:**
@@ -329,6 +329,8 @@ Ask first:
 
 ### 3.3-Z Release prep 3.3 ⬜
 Write the before and after numbers into [algorithms §8](algorithms.md#8-reference-measurements).
+
+Also phone-test **backup and restore** from 3.2 in the full pass. The owner moved that test here (2026-11-23). Test *Back up now*, *Restore* after a reinstall, *Reconnect videos*, *Reconnect exported clips*, and a restore on a second phone if one is available ([known issue](known-issues.md#not-verified)).
 
 ---
 
