@@ -23,7 +23,7 @@ Rough sizes are given to warn you what you are opening.
 | File | Responsibility | Main entry points | Gotchas |
 |---|---|---|---|
 | `SolveAnalyzer.kt` | Find solves: coarse scan, vote, first-frame search | `SolveAnalyzer.analyze(context, uri, dur, engine, onProgress, isCancelled)`, `scan`, `FoundSolve`, `ScanResult`, `ScanCancelled`, `LEFTOVER_NOTE_START` | Tuning constants at the top. The comment at the top predates the binary search ([algorithms §1](../docs/algorithms.md#1-finding-solves) is current) |
-| `RescanMerge.kt` | Pure functions over `CutItem` lists | `mergeRescan`, `RescanResult`, `checkCuts`, `CutChecks`, `isLeftover`, `normalizeIncluded`, `solveAtPlayhead`, `solveOverlappedBy`, `NOT_FOUND_AGAIN_NOTE` | The easiest place to add unit tests |
+| `RescanMerge.kt` | Pure functions over `CutItem` lists | `mergeRescan` (carries user-only fields with `withUserFieldsOf`), `RescanResult`, `checkCuts`, `CutChecks`, `isLeftover`, `normalizeIncluded`, `solveAtPlayhead`, `solveOverlappedBy`, `NOT_FOUND_AGAIN_NOTE` | The easiest place to add unit tests |
 | `ClipExporter.kt` | The cut model, clip maths and lossless export | `CutItem`, `Clip`, `computeClips`, `parseTimeSeconds`, `SAME_SOLVE_SEC`, `ADDED_BY_YOU_NOTE`, `CutItem.noteNeedsCheck()`, `ClipExporter.export` / `fileName` / `safeTitle` | Data model and exporter share a file. Records the `DISPLAY_NAME` that Android actually used |
 
 ### Vision (OpenCV)
@@ -36,7 +36,7 @@ Rough sizes are given to warn you what you are opening.
 ### Storage and platform
 | File | Responsibility | Main entry points | Gotchas |
 |---|---|---|---|
-| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, trash helpers, `delete`; `Footage`, `GalleryClip`, `ExportedClip`, `cutKey`, social-note helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The header comment's "Version 3" is the app version; the DB is v6 |
+| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, v7 `updateCutTags` / `updateCutPenalty` / `updateCutPads` / `updateCutSharedOn` (all through private `updateCut`, which sets `user_edited`), `updateFootageTags`, trash helpers, `delete`; `Footage` (`KIND_SESSION` / `KIND_SINGLE`), `GalleryClip`, `ExportedClip`, `cutKey`, social-note and `encodeSharedOn` / `decodeSharedOn` helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The DB is v7. `updateCutNote` also refreshes `shared_on` until 3.2-E |
 | `Thumbnails.kt` | On-demand picture cache | `ThumbCache.get` / `peek` / `frame` / `timerFrame` / `forgetFootage`, `Thumb` composable | At most 2 pictures made at once. Disk capped at 100 MB. `timerFrame` crops around the saved timer corners (full-size frame pixels) with `ZOOM_MARGIN`; it doesn't follow a camera that moved |
 | `MediaTools.kt` | Small media helpers | `readDurationMs`, `buildThumbnails` (film strip), `grabFrame`, `formatTime` | — |
 | `AnalysisService.kt` | Foreground notification during Find solves | `AnalysisService.start` / `update` / `stop` / `notifyDone` | Does no work itself ([ADR-0011](../docs/adr/0011-foreground-service-for-notification-only.md)) |
@@ -50,4 +50,9 @@ Rough sizes are given to warn you what you are opening.
 
 ## Tests
 
-`src/test` (`ExampleUnitTest`) and `src/androidTest` (`ExampleInstrumentedTest`) are the untouched Android Studio templates. There is no real coverage yet. Good first targets are the pure functions: `computeClips`, `parseTimeSeconds`, `mergeRescan`, `checkCuts`, and `SolveAnalyzer.scan` with a fake `read(t)`.
+`src/test` holds plain JUnit tests of the pure functions (no Android needed):
+- `ComputeClipsTest`: `parseTimeSeconds` and `computeClips`, including per-clip buffers;
+- `RescanMergeTest`: `mergeRescan` and `checkCuts`;
+- `CutFieldsTest`: *Shared on* storage, the v7 fill from notes, and tag fallback.
+
+The tests written before 3.2-A lock the 3.1 behaviour: if one fails, a clip or a merge moved. `src/androidTest` is still the template (`ExampleInstrumentedTest`). Next target: `SolveAnalyzer.scan` with a fake `read(t)`.

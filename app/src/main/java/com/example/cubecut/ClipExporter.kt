@@ -42,8 +42,15 @@ data class CutItem(
     val note: String,                     // why it needs a look, or ADDED_BY_YOU_NOTE
     val includeScramble: Boolean = true,  // true = clip runs from the end of the previous clip (scramble included); false = the solve only
     val userNote: String = "",            // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
-    val edited: Boolean = false,          // true once you changed this cut yourself (its scramble, time, position, note or check) or added it: Find solves then leaves it alone
-    val reviewed: Boolean = false         // you marked its "check" as looked at: its scan note and timing warnings stop flagging it (a solve with no clip stays flagged)
+    val edited: Boolean = false,          // true once you changed this cut yourself (its scramble, time, position, note, check, tags, penalty, buffers or Shared on) or added it: Find solves then leaves it alone
+    val reviewed: Boolean = false,        // you marked its "check" as looked at: its scan note and timing warnings stop flagging it (a solve with no clip stays flagged)
+    val puzzle: String = "",              // the puzzle tag set on this clip itself ("" = follows its video's tag)
+    val category: String = "",            // the category tag set on this clip itself ("" = follows its video's tag)
+    val plus2Count: Int = 0,              // how many +2 penalties (0 = none); the time shown on the timer stays in timeText
+    val dnf: Boolean = false,             // the solve counts as DNF; timeText still holds what the timer showed
+    val beforePad: Double? = null,        // this clip's own "before" buffer in seconds (null = follows the video's slider)
+    val afterPad: Double? = null,         // this clip's own "after" buffer in seconds (null = follows the video's slider)
+    val sharedOn: List<String> = emptyList()   // where you shared it, as names from SOCIAL_PLATFORMS
 )
 
 /** The note on a cut added by hand (Add a missed solve). It is not a reason to check the cut. */
@@ -88,6 +95,9 @@ fun parseTimeSeconds(text: String): Double? {
 /**
  * Turns the cuts into clips.
  *
+ * [beforePad] and [afterPad] are the video's buffers. A cut with its own buffer (CutItem.beforePad / afterPad not null) uses that
+ * instead, for its own clip only; a cut without one gets exactly the clip it got before per-clip buffers existed.
+ *
  * Every clip ends [afterPad] seconds after the first frame that shows the time (the stop).
  *  - With the scramble (includeScramble = true): it starts where the PREVIOUS CUT ended (the first one at 0:00), whether or not
  *    that previous cut is switched on. So a solve you left out is never dragged into the next clip; its scramble is not
@@ -107,14 +117,16 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
     for (i in order) {
         val item = items[i]
         if (!item.included && item.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START)) continue   // same as deleted
-        val end = if (durationSec > 0) min(item.stopSec + afterPad, durationSec) else item.stopSec + afterPad
+        val before = item.beforePad ?: beforePad
+        val after = item.afterPad ?: afterPad
+        val end = if (durationSec > 0) min(item.stopSec + after, durationSec) else item.stopSec + after
         if (end - previousEnd < 1.0) continue          // two cuts too close together: skip the second one
         if (!item.included) {
             previousEnd = end                          // not exported, but the next scramble still starts after it
             continue
         }
         val solveSec = parseTimeSeconds(item.timeText)
-        val soloStart: Double? = if (solveSec != null) max(0.0, item.stopSec - solveSec - beforePad) else null
+        val soloStart: Double? = if (solveSec != null) max(0.0, item.stopSec - solveSec - before) else null
         val start: Double
         val noTime: Boolean
         if (item.includeScramble) {

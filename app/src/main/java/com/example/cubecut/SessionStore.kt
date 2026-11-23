@@ -34,7 +34,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 // ---------------------------------------------------------------------------------------
-// Version 3: the phone remembers your sessions.
+// Since CubeCut 3.0 the phone remembers your sessions (the database itself has its own DB_VERSION below).
 //
 // What is stored is NOT video. For every raw session video ("footage") the app keeps one small record
 // (where the file is, what it is called, how long it is, the buffer settings) and one small record per cut
@@ -49,7 +49,7 @@ import java.util.TimeZone
 /** One raw session video the app knows about. */
 class Footage(
     val id: Long,
-    val uri: String,              // the permanent link to the video (see takePersistableUriPermission in MainActivity)
+    val uri: String,              // the permanent link to the video (see keepAccess below)
     val displayName: String,      // the file name, e.g. "20261102_101530.mp4"
     val sizeBytes: Long,
     val durationMs: Long,
@@ -64,8 +64,19 @@ class Footage(
     val timerFrameMs: Long,       // where in the video the timer was set up (-1 = never)
     val timerCorners: String,     // the four corners marked on that picture (8 numbers, comma separated)
     val timerTyped: String,       // the number that was typed in for it
-    val trashedMs: Long           // when CubeCut moved the video to the phone's trash (0 = it is not in the trash)
+    val trashedMs: Long,          // when CubeCut moved the video to the phone's trash (0 = it is not in the trash)
+    val puzzle: String = "",      // the puzzle tag of the whole video ("" = not tagged); a clip follows it unless the clip has its own
+    val category: String = "",    // the category tag of the whole video ("" = not tagged), followed the same way
+    val kind: String = KIND_SESSION,   // KIND_SESSION, or KIND_SINGLE for a clip of one solve (3.2-F)
+    val trimStartSec: Double? = null,  // a single solve's trim, in seconds of the file (null = not trimmed: the whole file plays)
+    val trimEndSec: Double? = null
 )
+
+/** [Footage.kind] of a whole practice session, found with Find solves. */
+const val KIND_SESSION = "session"
+
+/** [Footage.kind] of a video that holds one solve, imported without Find solves (3.2-F). */
+const val KIND_SINGLE = "single"
 
 /** What opening a video gave: its record, and the cuts saved earlier (empty for a video seen for the first time). */
 class OpenedSession(val footage: Footage, val cuts: List<CutItem>, val isNew: Boolean)
@@ -77,7 +88,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 6
+    private const val DB_VERSION = 7
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -102,7 +113,12 @@ object SessionStore {
                         "timer_frame_ms INTEGER NOT NULL DEFAULT -1, " +
                         "timer_corners TEXT NOT NULL DEFAULT '', " +
                         "timer_typed TEXT NOT NULL DEFAULT '', " +
-                        "trashed_ms INTEGER NOT NULL DEFAULT 0)"
+                        "trashed_ms INTEGER NOT NULL DEFAULT 0, " +
+                        "puzzle TEXT NOT NULL DEFAULT '', " +
+                        "category TEXT NOT NULL DEFAULT '', " +
+                        "kind TEXT NOT NULL DEFAULT 'session', " +
+                        "trim_start_sec REAL, " +
+                        "trim_end_sec REAL)"
             )
             db.execSQL(
                 "CREATE TABLE cuts (" +
@@ -115,7 +131,14 @@ object SessionStore {
                         "include_scramble INTEGER NOT NULL, " +
                         "user_note TEXT NOT NULL DEFAULT '', " +
                         "user_edited INTEGER NOT NULL DEFAULT 0, " +
-                        "reviewed INTEGER NOT NULL DEFAULT 0)"
+                        "reviewed INTEGER NOT NULL DEFAULT 0, " +
+                        "puzzle TEXT NOT NULL DEFAULT '', " +
+                        "category TEXT NOT NULL DEFAULT '', " +
+                        "plus2_count INTEGER NOT NULL DEFAULT 0, " +
+                        "dnf INTEGER NOT NULL DEFAULT 0, " +
+                        "before_pad REAL, " +
+                        "after_pad REAL, " +
+                        "shared_on TEXT NOT NULL DEFAULT '')"
             )
             db.execSQL("CREATE INDEX cuts_by_footage ON cuts(footage_id)")
             createExportsTable(db)
@@ -167,6 +190,33 @@ object SessionStore {
             if (oldVersion < 6) {
                 // version 6: you can mark a cut's "check" as looked at
                 db.execSQL("ALTER TABLE cuts ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
+            }
+            if (oldVersion < 7) {
+                // version 7 (CubeCut 3.2): puzzle and category tags, the kind of video and a single solve's trim, and per clip:
+                // its own tags, penalty, buffers and where it was shared. Empty / NULL = follows the video, so no clip changes.
+                db.execSQL("ALTER TABLE footage ADD COLUMN puzzle TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE footage ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE footage ADD COLUMN kind TEXT NOT NULL DEFAULT 'session'")
+                db.execSQL("ALTER TABLE footage ADD COLUMN trim_start_sec REAL")
+                db.execSQL("ALTER TABLE footage ADD COLUMN trim_end_sec REAL")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN puzzle TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN plus2_count INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN dnf INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN before_pad REAL")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN after_pad REAL")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN shared_on TEXT NOT NULL DEFAULT ''")
+                // one-off: Shared on starts as the platforms the note names (the note text is left as it is). These cuts all have
+                // a note, so they are already marked user_edited (version 5 step, updateCutNote).
+                db.rawQuery("SELECT id, user_note FROM cuts WHERE user_note <> ''", null).use { c ->
+                    while (c.moveToNext()) {
+                        val shared = sharedOnFromNoteV7(c.getString(1))
+                        if (shared.isEmpty()) continue
+                        val v = ContentValues()
+                        v.put("shared_on", encodeSharedOn(shared))
+                        db.update("cuts", v, "id = ?", arrayOf(c.getLong(0).toString()))
+                    }
+                }
             }
         }
     }
@@ -331,15 +381,20 @@ object SessionStore {
         "SELECT f.id, f.uri, f.display_name, f.size_bytes, f.duration_ms, f.title, f.date_taken_ms, f.added_ms, f.last_scan_ms, " +
                 "f.before_pad, f.after_pad, f.scramble_all, " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id), " +
-                "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms " +
+                "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms, " +
+                "f.puzzle, f.category, f.kind, f.trim_start_sec, f.trim_end_sec " +
                 "FROM footage f"
+
+    private fun android.database.Cursor.doubleOrNull(i: Int): Double? = if (isNull(i)) null else getDouble(i)
 
     private fun readFootage(c: android.database.Cursor) = Footage(
         id = c.getLong(0), uri = c.getString(1), displayName = c.getString(2), sizeBytes = c.getLong(3),
         durationMs = c.getLong(4), title = c.getString(5), dateTakenMs = c.getLong(6), addedMs = c.getLong(7),
         lastScanMs = c.getLong(8), beforePad = c.getFloat(9), afterPad = c.getFloat(10), scrambleAll = c.getInt(11) == 1,
         cutCount = c.getInt(12),
-        timerFrameMs = c.getLong(13), timerCorners = c.getString(14), timerTyped = c.getString(15), trashedMs = c.getLong(16)
+        timerFrameMs = c.getLong(13), timerCorners = c.getString(14), timerTyped = c.getString(15), trashedMs = c.getLong(16),
+        puzzle = c.getString(17), category = c.getString(18), kind = c.getString(19),
+        trimStartSec = c.doubleOrNull(20), trimEndSec = c.doubleOrNull(21)
     )
 
     fun getFootage(context: Context, id: Long): Footage? =
@@ -359,13 +414,21 @@ object SessionStore {
 
     fun loadCuts(context: Context, footageId: Long): List<CutItem> =
         db(context).query(
-            "cuts", arrayOf("stop_sec", "time_text", "included", "note", "include_scramble", "user_note", "user_edited", "reviewed"),
+            "cuts", arrayOf(
+                "stop_sec", "time_text", "included", "note", "include_scramble", "user_note", "user_edited", "reviewed",
+                "puzzle", "category", "plus2_count", "dnf", "before_pad", "after_pad", "shared_on"
+            ),
             "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
         ).use { c ->
             val out = ArrayList<CutItem>()
             while (c.moveToNext()) {
+                val cut = CutItem(
+                    c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1, c.getInt(7) == 1,
+                    puzzle = c.getString(8), category = c.getString(9), plus2Count = c.getInt(10), dnf = c.getInt(11) == 1,
+                    beforePad = c.doubleOrNull(12), afterPad = c.doubleOrNull(13), sharedOn = decodeSharedOn(c.getString(14))
+                )
                 // every cut is a solve except the scan's "left over" ones (see normalizeIncluded in RescanMerge.kt)
-                out.add(normalizeIncluded(CutItem(c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1, c.getInt(7) == 1)))
+                out.add(normalizeIncluded(cut))
             }
             out
         }
@@ -403,6 +466,13 @@ object SessionStore {
                 v.put("user_note", cut.userNote)
                 v.put("user_edited", if (cut.edited) 1 else 0)
                 v.put("reviewed", if (cut.reviewed) 1 else 0)
+                v.put("puzzle", cut.puzzle)
+                v.put("category", cut.category)
+                v.put("plus2_count", cut.plus2Count)
+                v.put("dnf", if (cut.dnf) 1 else 0)
+                putPad(v, "before_pad", cut.beforePad)
+                putPad(v, "after_pad", cut.afterPad)
+                v.put("shared_on", encodeSharedOn(cut.sharedOn))
                 d.insert("cuts", null, v)
             }
             val id = footageId.toString()
@@ -512,12 +582,72 @@ object SessionStore {
         }
     }
 
-    /** Saves your note for one cut (found by its stop time). */
+    /**
+     * Saves your note for one cut (found by its stop time).
+     * Until 3.2-E gives *Shared on* its own chips, the platform buttons still write into the note, so *Shared on* is refreshed from
+     * the note here to stay correct. 3.2-E removes that line.
+     */
     fun updateCutNote(context: Context, footageId: Long, stopSec: Double, userNote: String) {
         val v = ContentValues()
         v.put("user_note", userNote)
+        v.put("shared_on", encodeSharedOn(platformsIn(userNote)))   // until 3.2-E
+        updateCut(context, footageId, stopSec, v)
+    }
+
+    /**
+     * Writes [v] into one cut (found by its stop time) and marks it changed by you, so a re-scan leaves it alone (invariant 4).
+     * Every single-field write from the Gallery goes through here.
+     */
+    private fun updateCut(context: Context, footageId: Long, stopSec: Double, v: ContentValues) {
         v.put("user_edited", 1)
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
+    }
+
+    /** A per-clip buffer: a number of seconds, or NULL when the clip follows the video's buffer. */
+    private fun putPad(v: ContentValues, column: String, pad: Double?) {
+        if (pad == null) v.putNull(column) else v.put(column, pad)
+    }
+
+    /** Sets one clip's own puzzle and category tags ("" = follows its video's tag). */
+    fun updateCutTags(context: Context, footageId: Long, stopSec: Double, puzzle: String, category: String) {
+        val v = ContentValues()
+        v.put("puzzle", puzzle)
+        v.put("category", category)
+        updateCut(context, footageId, stopSec, v)
+    }
+
+    /** Sets one clip's penalty: how many +2s, and DNF. The time the timer showed is not changed. */
+    fun updateCutPenalty(context: Context, footageId: Long, stopSec: Double, plus2Count: Int, dnf: Boolean) {
+        val v = ContentValues()
+        v.put("plus2_count", plus2Count.coerceAtLeast(0))
+        v.put("dnf", if (dnf) 1 else 0)
+        updateCut(context, footageId, stopSec, v)
+    }
+
+    /** Sets one clip's own before and after buffers in seconds (null = follows the video's slider). */
+    fun updateCutPads(context: Context, footageId: Long, stopSec: Double, beforePad: Double?, afterPad: Double?) {
+        val v = ContentValues()
+        putPad(v, "before_pad", beforePad)
+        putPad(v, "after_pad", afterPad)
+        updateCut(context, footageId, stopSec, v)
+    }
+
+    /** Sets where one clip was shared (names from SOCIAL_PLATFORMS). The note is not touched. */
+    fun updateCutSharedOn(context: Context, footageId: Long, stopSec: Double, sharedOn: List<String>) {
+        val v = ContentValues()
+        v.put("shared_on", encodeSharedOn(sharedOn))
+        updateCut(context, footageId, stopSec, v)
+    }
+
+    /**
+     * Tags a whole video with a puzzle and category ("" = not tagged). Its clips follow the tag unless they have their own. It is a
+     * video setting, like the scramble switch, so it leaves `user_edited` alone.
+     */
+    fun updateFootageTags(context: Context, footageId: Long, puzzle: String, category: String) {
+        val v = ContentValues()
+        v.put("puzzle", puzzle)
+        v.put("category", category)
+        db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
     }
 
     /**
@@ -715,7 +845,11 @@ class GalleryClip(
     /** Everything to check about this clip, in one line ("" = nothing). */
     val checkText: String get() = listOf(if (noteNeedsCheck) cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
     val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
-    val sharedList: List<String> get() = platformsIn(cut.userNote)
+    val sharedList: List<String> get() = platformsIn(cut.userNote)   // 3.2-E switches this to cut.sharedOn
+    /** The puzzle this clip counts as: its own tag, else its video's ("" = not tagged). */
+    val puzzle: String get() = cut.puzzle.ifEmpty { footage.puzzle }
+    /** The category this clip counts as: its own tag, else its video's ("" = not tagged). */
+    val category: String get() = cut.category.ifEmpty { footage.category }
 }
 
 /**
@@ -747,6 +881,19 @@ fun noteMentions(note: String, platform: String): Boolean = platformRegex(platfo
 
 /** The platforms a note mentions, in the order of [SOCIAL_PLATFORMS]. */
 fun platformsIn(note: String): List<String> = SOCIAL_PLATFORMS.filter { noteMentions(note, it) }
+
+/** How `cuts.shared_on` stores a list of platforms: "TikTok,YouTube" ("" = not shared). */
+fun encodeSharedOn(platforms: List<String>): String = platforms.map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString(",")
+
+/** The reverse of [encodeSharedOn]. */
+fun decodeSharedOn(stored: String): List<String> = stored.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+/**
+ * The platforms the version 7 upgrade copies from a note into *Shared on*. The list is frozen as it was then, so the upgrade step
+ * never changes when [SOCIAL_PLATFORMS] does later (invariant 9).
+ */
+internal fun sharedOnFromNoteV7(note: String): List<String> =
+    listOf("TikTok", "Instagram", "YouTube", "Facebook", "X", "Reddit").filter { noteMentions(note, it) }
 
 /** Adds the platform's name to the end of the note, or takes it out again if it is already there. */
 fun togglePlatform(note: String, platform: String): String {

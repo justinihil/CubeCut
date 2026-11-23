@@ -12,6 +12,9 @@ Notes on history:
 
 ## [Unreleased]
 
+### Changed
+- The saved data is upgraded to database v7, ready for 3.2's tags, penalties, per-clip buffers and *Shared on*. Nothing looks different yet: solves, notes, exports and clips stay exactly as they were. *Shared on* starts from the platform names already in each note.
+
 ## [3.1.0] - 2026-11-23
 
 Polish and quick wins. How solves are found, how digits are read and how clips are calculated did **not** change. The saved data is unchanged (database v6), so everything from 3.0 carries over.

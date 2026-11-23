@@ -114,6 +114,28 @@ class RescanMergeTest {
     }
 
     @Test
+    fun editedCut_keepsEveryV7Field() {
+        val mine = cut(30.0, "10.000", edited = true).copy(
+            puzzle = "3x3", category = "OH", plus2Count = 1, dnf = true, beforePad = 1.0, afterPad = 4.0, sharedOn = listOf("TikTok")
+        )
+        assertSame(mine, mergeRescan(listOf(mine), listOf(cut(30.1, "10.100")), emptyList()).cuts.single())
+    }
+
+    @Test
+    fun untouchedMatch_takesTheScan_butCarriesUserOnlyFields() {
+        // not marked edited (should never happen, but a re-scan must still not drop what only the user sets)
+        val old = cut(30.0, "10.000").copy(
+            userNote = "n", puzzle = "2x2", category = "Relay", plus2Count = 2, dnf = true, beforePad = 0.5, afterPad = 1.5, sharedOn = listOf("X")
+        )
+        val got = mergeRescan(listOf(old), listOf(cut(30.1, "10.100", note = "blurry")), emptyList()).cuts.single()
+        assertEquals(30.1, got.stopSec, eps); assertEquals("10.100", got.timeText); assertEquals("blurry", got.note)
+        assertEquals("n", got.userNote); assertEquals("2x2", got.puzzle); assertEquals("Relay", got.category)
+        assertEquals(2, got.plus2Count); assertTrue(got.dnf)
+        assertEquals(0.5, got.beforePad!!, eps); assertEquals(1.5, got.afterPad!!, eps)
+        assertEquals(listOf("X"), got.sharedOn)
+    }
+
+    @Test
     fun summary_listsEveryPart() {
         val r = RescanResult(emptyList(), 2, 1, 12, 1)
         assertEquals("2 new, 1 updated, 12 kept as you left them, 1 not found again (check them)", r.summary())

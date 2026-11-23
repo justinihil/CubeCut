@@ -68,7 +68,7 @@ Order:
 3. Single-solve import, which uses the tags, penalty and buffers (3.2-F).
 4. Backup last, because its file must include every new field (3.2-G).
 
-### 3.2-A Schema foundation (no UI) ⬜
+### 3.2-A Schema foundation (no UI) 🔶
 Where to start: the [new per-video or per-clip field recipe](../ARCHITECTURE.md#new-per-video-or-per-clip-field-for-example-a-tag-or-a-penalty). Files:
 - `SessionStore.kt` (`Helper.onCreate` / `onUpgrade`, `loadCuts`, `saveSession`, `loadGallery`);
 - `ClipExporter.kt` (`CutItem`, `computeClips`);
@@ -91,6 +91,10 @@ Rules:
 - Invariant 9: bump `DB_VERSION`, never edit old steps.
 - Invariant 4: a user-set value marks the cut `edited`.
 - Changing `computeClips` is the task here, so it is allowed. The tests prove nothing else moved.
+
+**Decided** (2026-11-23):
+- The single-solve trim is two `footage` columns, `trim_start_sec` / `trim_end_sec` (NULL = untrimmed, the whole file plays), so v7 stays the only schema step in 3.2.
+- Until 3.2-E, `updateCutNote` also refreshes `shared_on` from the note, so *Shared on* stays right while the platform buttons still write into the note.
 
 Docs: [data-model.md](data-model.md), the [glossary](glossary.md) and the CHANGELOG.
 
@@ -179,6 +183,7 @@ Rules:
 - *Shared on* is a separate field, with its own platform chips in the viewer sheet. They replace the buttons that add words to the note.
 - The Filter dialog gets *Shared on: X* and *Not shared yet*.
 - 3.2-A fills the field once from existing notes. The note text is left as it is.
+- **To undo from 3.2-A:** remove the `shared_on` line marked "until 3.2-E" in `updateCutNote`, and switch `GalleryClip.sharedList` to `cut.sharedOn`.
 
 Where to start:
 - `SocialChip` and the viewer sheet (`Gallery.kt`);
@@ -206,7 +211,7 @@ Ask first:
 Where to start:
 - Import in `GalleryScreen` / `EditorScreen` (`OpenDocument`, `keepAccess`, `openOrCreate`);
 - `loadGallery`;
-- `computeClips`, where the trim may reuse the per-clip buffers from 3.2-D.
+- `computeClips`; the trim columns `footage.trim_start_sec` / `trim_end_sec` and `footage.kind` already exist from 3.2-A.
 
 Rules:
 - The `OpenDocument` picker is settled.

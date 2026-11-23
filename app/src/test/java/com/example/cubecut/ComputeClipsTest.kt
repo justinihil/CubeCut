@@ -160,4 +160,38 @@ class ComputeClipsTest {
     fun noCuts_noClips() {
         assertTrue(computeClips(emptyList(), 2.0, 3.0, 100.0).isEmpty())
     }
+
+    // ------------------------------------------------------------ per-clip buffers (3.2-A)
+
+    @Test
+    fun perClipAfterPad_movesOnlyItsOwnEnd_andTheNextScrambleStart() {
+        val clips = computeClips(listOf(cut(30.0, "10.000").copy(afterPad = 5.0), cut(60.0, "12.000")), 2.0, 3.0, 100.0)
+        assertEquals(35.0, clips[0].endSec, eps)
+        assertEquals(35.0, clips[1].startSec, eps)   // the next scramble starts where this clip now ends
+        assertEquals(63.0, clips[1].endSec, eps)     // the next clip still uses the video's buffer
+    }
+
+    @Test
+    fun perClipBeforePad_movesTheSolveStart() {
+        val clips = computeClips(listOf(cut(30.0, "10.000"), cut(60.0, "12.000", scramble = false).copy(beforePad = 1.0)), 2.0, 3.0, 100.0)
+        assertEquals(47.0, clips[1].startSec, eps)
+        assertEquals(47.0, clips[1].solveStartSec, eps)
+        assertEquals(18.0, clips[0].solveStartSec, eps)
+    }
+
+    @Test
+    fun perClipPadOfZero_isUsed_notTreatedAsUnset() {
+        val clips = computeClips(listOf(cut(30.0, "10.000", scramble = false).copy(beforePad = 0.0, afterPad = 0.0)), 2.0, 3.0, 100.0)
+        assertEquals(20.0, clips[0].startSec, eps)
+        assertEquals(30.0, clips[0].endSec, eps)
+    }
+
+    @Test
+    fun newFieldsOtherThanPads_neverMoveAClip() {
+        val plain = listOf(cut(30.0, "10.000"), cut(60.0, "12.000", scramble = false))
+        val tagged = plain.map { it.copy(puzzle = "3x3", category = "OH", plus2Count = 2, dnf = true, sharedOn = listOf("TikTok")) }
+        val a = computeClips(plain, 2.0, 3.0, 100.0)
+        val b = computeClips(tagged, 2.0, 3.0, 100.0)
+        assertEquals(a.map { Triple(it.startSec, it.endSec, it.solveStartSec) }, b.map { Triple(it.startSec, it.endSec, it.solveStartSec) })
+    }
 }

@@ -187,9 +187,9 @@ Use a boolean or a nullable "target" (`var confirmX by remember { mutableStateOf
 
 ### New per-video or per-clip field (for example a tag or a penalty)
 1. **Schema:** add a column in `Helper.onCreate`, bump `DB_VERSION` and add an `if (oldVersion < N) ALTER TABLE … ADD COLUMN …` step (invariant 9).
-2. **Model:** add the field to `Footage` (`SessionStore.kt`) or `CutItem` (`ClipExporter.kt`) with a default value. Read it in `readFootage` / `loadCuts`.
+2. **Model:** add the field to `Footage` (`SessionStore.kt`) or `CutItem` (`ClipExporter.kt`) with a default value. Read it in `readFootage` (and `FOOTAGE_SELECT`) / `loadCuts`. Add a unit test next to the ones in `app/src/test`.
 3. **Writes:** `saveSession` deletes and reinserts every cut, so add the column to that insert. A single-field update from the Gallery needs its own `update…` function shaped like `updateCutScramble`, which also sets `user_edited = 1`.
-4. **Re-scan:** decide whether `mergeRescan` keeps or replaces the field. A user-set value must mark the cut `edited` (invariant 4).
+4. **Re-scan:** a field only the user sets goes into `withUserFieldsOf` (`RescanMerge.kt`), so a re-scan carries it over. A user-set value must also mark the cut `edited` (invariant 4); Gallery writes do that through `updateCut`.
 5. **Gallery:** expose it on `GalleryClip`, then wire sort and filter (`ClipKey`, `ExportFilter`, the Filter dialog, `GalleryUiState` persistence).
 6. Update [data-model.md](docs/data-model.md) and the CHANGELOG in the same commit.
 
