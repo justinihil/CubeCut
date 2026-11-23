@@ -20,4 +20,3 @@ To add a new one, copy [0000-template.md](0000-template.md) to the next number. 
 | [0012](0012-min-sdk-30-arm64-only.md) | Android 11+ only, arm64-only, R8 off | Accepted |
 | [0013](0013-rescan-merge-keeps-user-edits.md) | Re-scans merge with saved cuts and keep user edits | Accepted |
 | [0014](0014-display-reader-seam.md) | Digit reading behind a `DisplayReader` seam; seven-segment only for now | Accepted |
-| [0015](0015-forget-keeps-exported-clips.md) | Forgetting a session keeps its exported clips in the Gallery; re-import starts from zero | Accepted |

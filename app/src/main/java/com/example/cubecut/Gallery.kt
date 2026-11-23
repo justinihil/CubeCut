@@ -1426,7 +1426,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("CubeCut", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        if (d == null) "Loading..." else "${d.clips.size} clips in ${d.sessions.size} sessions",
+                        if (d == null) "Loading..." else "${d.clips.size} clips in ${d.footage.size} sessions",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -1557,7 +1557,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         Text(loadError, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
                     } else if (d == null) {
                         Text("Loading...", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
-                    } else if (d.sessions.isEmpty()) {
+                    } else if (d.footage.isEmpty()) {
                         InfoNote(
                             title = "Nothing here yet",
                             text = "Tap Import video, set up the timer and press Find solves. Every session you scan is kept here.",
@@ -1674,7 +1674,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             }
                         }
                     } else {
-                        val shown = remember(d, ui.footageSort) { sortFootage(d.sessions, ui.footageSort, statsById) }      // (3.1) not the forgotten ones
+                        val shown = remember(d, ui.footageSort) { sortFootage(d.footage, ui.footageSort, statsById) }
                         if (ui.footageGrid) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(ui.footageColumns),
@@ -1947,8 +1947,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                     Text(f.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     Text(
                                         formatDate(dateOf(f)) + "  |  ${statsById[f.id]?.solves ?: 0} " +
-                                                (if (d.openable[f.id] == true) "solves" else "exported") +
-                                                (if (f.forgottenMs > 0L) "  |  session forgotten" else ""),
+                                                (if (d.openable[f.id] == true) "solves" else "exported"),
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 }
@@ -2165,12 +2164,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                         FootageHeader(forgetTarget, d?.openable?.get(forgetTarget.id) == true)
                         Spacer(Modifier.height(12.dp))
-                        if (forgetTarget.cutCount > 0 && exportedN == 0) EffectLine(Effect.GOES, "${clipsText(forgetTarget.cutCount, "saved solve")}, with your fixes and notes")
-                        else if (forgetTarget.cutCount > 0) EffectLine(Effect.GOES, "${clipsText(forgetTarget.cutCount, "saved solve")} and the timer setup")
+                        if (forgetTarget.cutCount > 0) EffectLine(Effect.GOES, "${clipsText(forgetTarget.cutCount, "saved solve")}, with your fixes and notes")
                         else EffectLine(Effect.GOES, "The session (it has no solves yet)")
-                        EffectLine(Effect.GOES, "The session leaves the Footage tab")
-                        // (3.1) exported clips stay viewable in the app (Export only), like when the video is deleted
-                        if (exportedN > 0) EffectLine(Effect.STAYS, "${clipsText(exportedN, "exported clip")} ${if (exportedN == 1) "stays" else "stay"} in Clips as Export only, with notes")
+                        if (exportedN > 0) EffectLine(Effect.GOES, "${clipsText(exportedN, "exported clip")} ${if (exportedN == 1) "leaves" else "leave"} the Clips list")
                         EffectLine(Effect.STAYS, "The video stays on your phone")
                         if (exportedN > 0) EffectLine(Effect.STAYS, "The exported files stay in Movies/CubeCut")
                         Spacer(Modifier.height(10.dp))
@@ -2185,9 +2181,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 try {
                                     // (the exported files' ids are read first: deleting the session removes their records)
                                     val exportIds = SessionStore.loadExports(context, forgetTarget.id).map { it.id }
-                                    // kept for its exported clips: their pictures stay too (the rest are trimmed with the cache)
-                                    val kept = SessionStore.forget(context, forgetTarget)
-                                    if (!kept) ThumbCache.forgetFootage(context, forgetTarget.id, exportIds)
+                                    SessionStore.delete(context, forgetTarget)
+                                    ThumbCache.forgetFootage(context, forgetTarget.id, exportIds)
                                     ""
                                 } catch (e: Exception) {
                                     "Couldn't forget \"${forgetTarget.title}\": ${e.message ?: e.javaClass.simpleName}"
@@ -3247,8 +3242,7 @@ fun ClipViewer(
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text(
-                                    "File: ${footage.displayName}" +
-                                            (if (footage.forgottenMs > 0L) " (session forgotten)" else if (!sourceOk) " (deleted or moved)" else ""),
+                                    "File: ${footage.displayName}" + (if (!sourceOk) " (deleted or moved)" else ""),
                                     style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis
                                 )
                                 Text("Tap to see only this video's clips", style = MaterialTheme.typography.labelSmall)
@@ -3256,8 +3250,7 @@ fun ClipViewer(
                         }
                     }
 
-                    // (3.1) a forgotten session can't be reconnected: importing its video again starts a new session
-                    if (!sourceOk && footage.forgottenMs == 0L) {
+                    if (!sourceOk) {
                         Spacer(Modifier.height(10.dp))
                         OutlinedButton(
                             onClick = { scope.launch { flushNotes(); onReconnect(footage) } },

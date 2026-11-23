@@ -64,8 +64,7 @@ class Footage(
     val timerFrameMs: Long,       // where in the video the timer was set up (-1 = never)
     val timerCorners: String,     // the four corners marked on that picture (8 numbers, comma separated)
     val timerTyped: String,       // the number that was typed in for it
-    val trashedMs: Long,          // when CubeCut moved the video to the phone's trash (0 = it is not in the trash)
-    val forgottenMs: Long = 0L    // (3.1) when the session was forgotten while it had exported clips (0 = not forgotten): see SessionStore.forget
+    val trashedMs: Long           // when CubeCut moved the video to the phone's trash (0 = it is not in the trash)
 )
 
 /** What opening a video gave: its record, and the cuts saved earlier (empty for a video seen for the first time). */
@@ -78,7 +77,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 7
+    private const val DB_VERSION = 6
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -103,8 +102,7 @@ object SessionStore {
                         "timer_frame_ms INTEGER NOT NULL DEFAULT -1, " +
                         "timer_corners TEXT NOT NULL DEFAULT '', " +
                         "timer_typed TEXT NOT NULL DEFAULT '', " +
-                        "trashed_ms INTEGER NOT NULL DEFAULT 0, " +
-                        "forgotten_ms INTEGER NOT NULL DEFAULT 0)"
+                        "trashed_ms INTEGER NOT NULL DEFAULT 0)"
             )
             db.execSQL(
                 "CREATE TABLE cuts (" +
@@ -169,10 +167,6 @@ object SessionStore {
             if (oldVersion < 6) {
                 // version 6: you can mark a cut's "check" as looked at
                 db.execSQL("ALTER TABLE cuts ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0")
-            }
-            if (oldVersion < 7) {
-                // version 7 (app 3.1): a forgotten session that still has exported clips is kept, hidden, so its clips stay in the Gallery
-                db.execSQL("ALTER TABLE footage ADD COLUMN forgotten_ms INTEGER NOT NULL DEFAULT 0")
             }
         }
     }
@@ -307,24 +301,24 @@ object SessionStore {
         return if (id >= 0) getFootage(context, id) else null
     }
 
-    /** The identity rules of [openOrCreate] (ADR-0005): the record's id, or -1. A forgotten session never matches: its video starts from zero. */
+    /** The identity rules of [openOrCreate] (ADR-0005): the record's id, or -1. */
     private fun findKnownId(d: SQLiteDatabase, uri: Uri, name: String, size: Long, durationMs: Long): Long {
         var id = -1L
         // 1. the very same link (this also survives renaming the file: the link doesn't change). The length must still fit.
-        d.query("footage", arrayOf("id", "duration_ms"), "uri = ? AND forgotten_ms = 0", arrayOf(uri.toString()), null, null, "added_ms DESC", "1").use { c ->
+        d.query("footage", arrayOf("id", "duration_ms"), "uri = ?", arrayOf(uri.toString()), null, null, "added_ms DESC", "1").use { c ->
             if (c.moveToFirst() && Math.abs(c.getLong(1) - durationMs) <= 1000L) id = c.getLong(0)
         }
         // 2. the same file name, size and length (the video was moved or restored and got a new link)
         if (id < 0 && name.isNotEmpty()) {
             d.query(
-                "footage", arrayOf("id"), "display_name = ? AND size_bytes = ? AND duration_ms = ? AND forgotten_ms = 0",
+                "footage", arrayOf("id"), "display_name = ? AND size_bytes = ? AND duration_ms = ?",
                 arrayOf(name, size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
             ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
         }
         // 3. the same exact size and length under another name (the video was renamed AND got a new link)
         if (id < 0 && size > 0) {
             d.query(
-                "footage", arrayOf("id"), "size_bytes = ? AND duration_ms = ? AND forgotten_ms = 0",
+                "footage", arrayOf("id"), "size_bytes = ? AND duration_ms = ?",
                 arrayOf(size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
             ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
         }
@@ -337,7 +331,7 @@ object SessionStore {
         "SELECT f.id, f.uri, f.display_name, f.size_bytes, f.duration_ms, f.title, f.date_taken_ms, f.added_ms, f.last_scan_ms, " +
                 "f.before_pad, f.after_pad, f.scramble_all, " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id), " +
-                "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms, f.forgotten_ms " +
+                "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms " +
                 "FROM footage f"
 
     private fun readFootage(c: android.database.Cursor) = Footage(
@@ -345,8 +339,7 @@ object SessionStore {
         durationMs = c.getLong(4), title = c.getString(5), dateTakenMs = c.getLong(6), addedMs = c.getLong(7),
         lastScanMs = c.getLong(8), beforePad = c.getFloat(9), afterPad = c.getFloat(10), scrambleAll = c.getInt(11) == 1,
         cutCount = c.getInt(12),
-        timerFrameMs = c.getLong(13), timerCorners = c.getString(14), timerTyped = c.getString(15), trashedMs = c.getLong(16),
-        forgottenMs = c.getLong(17)
+        timerFrameMs = c.getLong(13), timerCorners = c.getString(14), timerTyped = c.getString(15), trashedMs = c.getLong(16)
     )
 
     fun getFootage(context: Context, id: Long): Footage? =
@@ -435,17 +428,15 @@ object SessionStore {
      * Everything the Gallery shows. The rules:
      *  - the video can still be opened: every cut of the session is shown, each tagged exported or not, plus every exported file whose
      *    solve was deleted in the editor (tagged "Solve deleted", so CubeCut never loses sight of a file it made);
-     *  - the video is gone, or the session was forgotten: only the clips that were exported (and whose exported file still exists) are shown.
-     * A forgotten session with no exported file left (none that opens, none in the trash) is removed for good here.
+     *  - the video is gone: only the clips that were exported (and whose exported file still exists) are shown.
      */
     fun loadGallery(context: Context): GalleryData {
-        val footage = listFootage(context).filter { f -> f.forgottenMs == 0L || !dropIfNothingLeft(context, f) }
+        val footage = listFootage(context)
         val clips = ArrayList<GalleryClip>()
         val openable = HashMap<Long, Boolean>()
         for (f in footage) {
-            // a video CubeCut moved to the trash still answers when asked to open, so the trash flag decides, not the answer;
-            // a forgotten session's video is never used again (its read permission was given back)
-            val sourceOk = f.forgottenMs == 0L && f.trashedMs == 0L && canOpen(context, Uri.parse(f.uri))
+            // a video CubeCut moved to the trash still answers when asked to open, so the trash flag decides, not the answer
+            val sourceOk = f.trashedMs == 0L && canOpen(context, Uri.parse(f.uri))
             openable[f.id] = sourceOk
             val cuts = loadCuts(context, f.id)
             val exports = loadExports(context, f.id).filter { it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }
@@ -631,7 +622,7 @@ object SessionStore {
     /** Everything CubeCut moved to the trash: raw videos and exported clips. */
     fun loadTrash(context: Context): TrashData {
         val d = db(context)
-        val videos = listFootage(context).filter { it.trashedMs > 0 && it.forgottenMs == 0L }.sortedByDescending { it.trashedMs }
+        val videos = listFootage(context).filter { it.trashedMs > 0 }.sortedByDescending { it.trashedMs }
         val clips = ArrayList<TrashedExport>()
         d.rawQuery(
             "SELECT e.id, e.footage_id, e.stop_sec, e.time_text, e.uri, e.file_name, e.offset_sec, e.exported_ms, e.trashed_ms, f.title " +
@@ -656,38 +647,8 @@ object SessionStore {
         db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
     }
 
-    /**
-     * *Forget this session*. With exported clips on record (in the trash too, so Recently deleted keeps them), the session is only
-     * marked forgotten: it leaves the Footage tab and is never matched on import again, but its cuts stay so the clips keep their
-     * "Solve N" titles and notes; [loadGallery] removes it once no exported file is left. Without any, it is deleted at once.
-     * The video file itself is never touched. Returns true if it was kept for its clips.
-     */
-    fun forget(context: Context, footage: Footage): Boolean {
-        val d = db(context)
-        val hasExports = d.rawQuery("SELECT COUNT(*) FROM exports WHERE footage_id = ?", arrayOf(footage.id.toString())).use { c ->
-            c.moveToFirst() && c.getInt(0) > 0
-        }
-        if (!hasExports) {
-            delete(context, footage)
-            return false
-        }
-        val v = ContentValues()
-        v.put("forgotten_ms", System.currentTimeMillis())
-        d.update("footage", v, "id = ?", arrayOf(footage.id.toString()))
-        releaseAccess(context, footage.uri)
-        return true
-    }
-
-    /** A forgotten session whose exported files are all gone (none opens, none is in the trash): deleted. True if it was. */
-    private fun dropIfNothingLeft(context: Context, f: Footage): Boolean {
-        val left = loadExports(context, f.id).any { it.trashedMs > 0L || canOpen(context, Uri.parse(it.uri)) }
-        if (left) return false
-        delete(context, f)
-        return true
-    }
-
-    /** Deletes a session, its cuts and its export records. The video file itself is never touched. */
-    private fun delete(context: Context, footage: Footage) {
+    /** Forgets a session and its cuts. The video file itself is never touched. */
+    fun delete(context: Context, footage: Footage) {
         val d = db(context)
         d.beginTransaction()
         try {
@@ -752,8 +713,6 @@ fun clipTitle(footageTitle: String, number: Int, timeText: String): String {
 
 class GalleryData(val footage: List<Footage>, val clips: List<GalleryClip>, val openable: Map<Long, Boolean>) {
     fun clipsOf(footageId: Long): List<GalleryClip> = clips.filter { it.footage.id == footageId }
-    /** The sessions the Footage tab shows: [footage] without the forgotten ones (those are only kept for their exported clips). */
-    val sessions: List<Footage> get() = footage.filter { it.forgottenMs == 0L }
 }
 
 // ---------------------------------------------------------------------------------------

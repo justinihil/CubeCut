@@ -161,7 +161,6 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Notes, info buttons, message colours | `Notes.kt` (`InfoNote`, `InfoButton`, `kindOfMessage`) |
 | Colours, dark mode | `Theme.kt` (`CubeCutTheme`, `AppColors`, `ThemeMode`) |
 | Background notification during Find solves | `AnalysisService.kt` |
-| Forget a session (keeps exported clips) | `SessionStore.forget`, `forgotten_ms`, `GalleryData.sessions`; the `forgetting` dialog in `GalleryScreen`; [ADR-0015](docs/adr/0015-forget-keeps-exported-clips.md) |
 | Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf` |
 | Destructive-action warnings | `DangerButton`, `EffectLine`, `FootageHeader` (`Gallery.kt`) |
 | Permissions, SDK, backup, signing | [docs/android.md](docs/android.md) |
