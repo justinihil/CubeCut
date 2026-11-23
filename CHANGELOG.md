@@ -7,10 +7,14 @@ While you work, add lines under **Unreleased**. On release, rename it to the ver
 Notes on history:
 - 1.0.0, 1.1.0 and 2.0.0 were reconstructed after the fact and their dates were not recorded.
 - Tag `v1.0` actually holds the 1.1.0 code (it already contains `DisplayReaders.kt`). There is no `v2.0.0` tag.
-- `versionCode` was 2 for 2.0–2.0.2 and is 3 at both `v3.0.0` and `v3.0.1` ([known issue](docs/known-issues.md)).
+- `versionCode` was 2 for 2.0–2.0.2 and is 3 at both `v3.0.0` and `v3.0.1` (`versionName "3.0.0"` at both). It isn't known whether the shared 3.0.1 APK had code 3 or 4 (from a bump that was never committed). 3.1.0 uses 5, which is higher than either.
 - 3.0.0 was built in phases (saved sessions, Gallery, re-scan merge, editor/Gallery split, new look, review fixes, test-pass fixes). Its entry describes the end result, not each phase. The phase-by-phase notes are in the git history of this file.
 
 ## [Unreleased]
+
+## [3.1.0] - 2026-11-23
+
+Polish and quick wins. How solves are found, how digits are read and how clips are calculated did **not** change. The saved data is unchanged (database v6), so everything from 3.0 carries over.
 
 ### Added
 - **Add a missed solve at the playhead** shows as soon as a video is loaded, so solves can be added by hand before Find solves or without a timer setup. The two switches still wait until there are solves.
@@ -18,6 +22,8 @@ Notes on history:
 - **Replay** in the clip viewer (next to *Skip*): clips loop while it is on. The choice is remembered.
 - **Double-tap to skip** in the clip viewer: the left half skips back, the right half forward, by the *Skip* length. Further quick taps keep skipping, and a hint shows the total (−5 s, −10 s…). A single tap now shows or hides the controls about 0.3 s later.
 - **Delete exported files from the Gallery selection:** a red bin next to *Export* moves the files of the ticked clips to the phone's trash, after a warning and one Android confirmation. Solves and notes stay; restore from *Recently deleted*.
+- The **Edit window** zooms its picture onto the timer when a timer setup is saved. **Whole frame** shows the full picture.
+- Importing a video CubeCut has seen before asks first: **Imported before** shows its saved solves and last scan, with *Open saved* / *Cancel*.
 
 ### Changed
 - **Only solves to check** keeps its list while it is on. A solve that no longer needs a check stays, marked **✓ Fixed** or **✓ Checked**, instead of vanishing. Switch the filter off and on to tidy the list.
@@ -25,13 +31,11 @@ Notes on history:
 - After a delete, the Undo bar says which solve is now selected: *Deleted the 12.34 s solve · now on Solve 7 (9.87 s)*.
 - *Export only* and *Solve deleted* clips can now be ticked in the Gallery (for the bin). *Export* skips them and says so.
 - The Gallery's scramble switch, with every clip of a video ticked, now works like the editor's *Scramble in all clips*: a later *Find solves* still updates those solves and new ones follow the setting.
+- Documentation baseline: `CLAUDE.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `app/README.md`, and `docs/` (algorithms, data model, Android/release, glossary, user guide, known issues, roadmap, ADRs 0001–0014).
 
 ### Fixed
 - Opening a clip from the Gallery no longer sometimes flashes the top and bottom of the screen for a moment.
 - *Find solves* no longer says *again* (and the result no longer says *Re-scan*) when only solves added by hand exist and it has never run on the video.
-- The **Edit window** zooms its picture onto the timer when a timer setup is saved. **Whole frame** shows the full picture.
-- Importing a video CubeCut has seen before asks first: **Imported before** shows its saved solves and last scan, with *Open saved* / *Cancel*.
-- Documentation baseline: `CLAUDE.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `app/README.md`, and `docs/` (algorithms, data model, Android/release, glossary, user guide, known issues, roadmap, ADRs 0001–0014).
 
 ### Removed
 - `CUBECUT_PROJECT_GUIDE.md`. Its content was moved into the files above; personal notes and edition history were dropped.
@@ -186,7 +190,8 @@ How solves are found, how digits are read and how clips are calculated did **not
 - Pinch-zoom video.
 - Runs offline with no internet permission.
 
-[Unreleased]: https://github.com/justinihil/CubeCut/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/justinihil/CubeCut/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/justinihil/CubeCut/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/justinihil/CubeCut/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/justinihil/CubeCut/compare/v2.0.2...v3.0.0
 [2.0.2]: https://github.com/justinihil/CubeCut/compare/v2.0.1...v2.0.2

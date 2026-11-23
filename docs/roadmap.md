@@ -204,9 +204,17 @@ Rules:
 - [ADR-0008](adr/0008-never-delete-permanently.md): trash only, an `EffectLine` warning, a red `DangerButton`, one trash request for all the files.
 - Re-export is allowed but pointed out (settled).
 
-### 3.1-Z Release prep 3.1 ⬜
-- Bump to `versionCode 5` / `versionName "3.1.0"`. This also fixes the "version not bumped for 3.0.1" [known issue](known-issues.md).
+### 3.1-Z Release prep 3.1 🔶
+- Bump to `versionCode 5` / `versionName "3.1.0"`. This also fixes the "version not bumped for 3.0.1" known issue.
 - See [How to run a phase](#how-to-run-a-phase) for the rest.
+
+**Decided** (2026-11-23):
+- The code in the shared 3.0.1 APK is unknown; 5 is above either possibility.
+- After the phone pass, Claude pushes `dev-v3.1.0` and gives the compare link and PR text (no `gh` here). The owner opens the PR.
+- Closing 3.1-Z deletes this whole v3.1 section, so the PR carries the clean roadmap.
+- The CHANGELOG entries were re-sorted (Added / Changed / Fixed) when `[Unreleased]` became `[3.1.0]`.
+
+Built (2026-11-23): version bump, `[3.1.0] - 2026-11-23` in the CHANGELOG, README version, known-issues tidied (version row removed, lint line numbers updated), android.md TODO cleared.
 
 ---
 
