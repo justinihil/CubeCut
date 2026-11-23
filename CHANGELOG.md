@@ -17,6 +17,7 @@ Notes on history:
 
 ### Changed
 - The viewer's details (swipe up) are sorted into groups: the time and anything that needs a look first, then *Export* / *Editor* / *Delete file* with the export status under them, then **Solve** (puzzle, penalty), **Clip** (scramble, extra time), **Note and sharing**, and the video it comes from. *Reconnect video* moved from the bottom to the top. The clip's start and end times in the video are no longer listed.
+- A clip tagged the same puzzle as its video is no longer shown differently: the tag window has no separate *As the video* button (the video's puzzle is simply chosen), the viewer drops *From the video*, and the editor's solve card stays ticked instead of saying *own tag*.
 - **Buffers are now called "Extra time"** everywhere, with one line saying what it is: seconds kept before the solve starts and after the timer stops. *Follow video* is now *Same as video*. Nothing about how clips are cut changed.
 
 ## [3.2.0] - 2026-11-23

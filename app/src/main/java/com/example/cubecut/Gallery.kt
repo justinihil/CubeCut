@@ -1286,8 +1286,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 }
                 for (c in chosen) {
                     val whole = c.footage.id in wholeVideos
-                    val p = if (whole) resetOwnTag(c.cut.puzzle, choice.puzzle) else applyTagChoice(c.cut.puzzle, choice.puzzle)
-                    val k = if (whole) resetOwnTag(c.cut.category, choice.category) else applyTagChoice(c.cut.category, choice.category)
+                    val p = if (whole) resetOwnTag(c.cut.puzzle, choice.puzzle) else normalizeClipTag(applyTagChoice(c.cut.puzzle, choice.puzzle), c.footage.puzzle)
+                    val k = if (whole) resetOwnTag(c.cut.category, choice.category) else normalizeClipTag(applyTagChoice(c.cut.category, choice.category), c.footage.category)
                     if (p == c.cut.puzzle && k == c.cut.category) continue
                     try { SessionStore.updateCutTags(context, c.footage.id, c.cut.stopSec, p, k) } catch (e: Exception) { }
                 }
@@ -2420,8 +2420,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val one = chosen.map { it.footage }.distinctBy { it.id }.singleOrNull()
             TagDialog(
                 title = "Set puzzle for ${clipsText(chosen.size, "clip")}",
-                puzzle = chosen.map { it.cut.puzzle }.distinct().singleOrNull(),
-                category = chosen.map { it.cut.category }.distinct().singleOrNull(),
+                // a clip tagged the same as its video counts as following it, so it doesn't make the selection look mixed
+                puzzle = chosen.map { normalizeClipTag(it.cut.puzzle, it.footage.puzzle) }.distinct().singleOrNull(),
+                category = chosen.map { normalizeClipTag(it.cut.category, it.footage.category) }.distinct().singleOrNull(),
                 forClip = true,
                 followPuzzle = one?.puzzle,
                 followCategory = one?.category,
@@ -3459,8 +3460,8 @@ fun ClipViewer(
     /** (3.2-B) Sets one clip's own tags (saved at once, and marked `edited` like every change to one clip). */
     fun setTags(c: GalleryClip, choice: TagChoice) {
         val (ownP, ownK) = ownTags(c)
-        val p = applyTagChoice(ownP, choice.puzzle)
-        val k = applyTagChoice(ownK, choice.category)
+        val p = normalizeClipTag(applyTagChoice(ownP, choice.puzzle), c.footage.puzzle)
+        val k = normalizeClipTag(applyTagChoice(ownK, choice.category), c.footage.category)
         if (p == ownP && k == ownK) return
         tagOv[c.listKey] = p to k
         scope.launch {
@@ -3938,16 +3939,12 @@ fun ClipViewer(
                         SheetHeading("Solve")
                         val shownTag = tagTextOf(current)
                         val shownPuzzle = resolveTag(ownTags(current).first, current.footage.puzzle)
-                        val follows = ownTags(current).let { it.first == "" && it.second == "" }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (shownPuzzle.isNotEmpty()) {
                                 PuzzleIcon(shownPuzzle, MaterialTheme.colorScheme.primary, 30.dp)
                                 Spacer(Modifier.width(10.dp))
                             }
-                            Column(Modifier.weight(1f)) {
-                                Text("Puzzle: " + shownTag.ifEmpty { "not tagged" }, style = MaterialTheme.typography.bodyMedium)
-                                if (follows && shownTag.isNotEmpty()) Text("From the video", style = MaterialTheme.typography.labelSmall)
-                            }
+                            Text("Puzzle: " + shownTag.ifEmpty { "not tagged" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                             TextButton(onClick = { tagWindow = true }) { Text("Change") }
                         }
                         Spacer(Modifier.height(6.dp))

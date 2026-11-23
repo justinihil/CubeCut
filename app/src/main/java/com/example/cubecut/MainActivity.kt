@@ -1973,12 +1973,13 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     // (3.2-B) "not this puzzle": ticked = the solve follows the video's tag. Unticking it leaves it not
                                     // tagged (tag it in the Gallery). Both count as an edit, so a re-scan keeps them.
                                     val videoTag = tagLabel(videoPuzzle, videoCategory)
-                                    val ownTag = item.puzzle != "" || item.category != ""
+                                    // a solve tagged the same as the video counts as following it (normalizeClipTag)
+                                    val ownTag = !followsVideoTags(item.puzzle, item.category, videoPuzzle, videoCategory)
                                     if (!isLeftover(item) && (videoTag.isNotEmpty() || ownTag)) {
                                         fun toggleTag() {
                                             if (analyzing || index !in cuts.indices) return
                                             val c = cuts[index]
-                                            val follows = c.puzzle == "" && c.category == ""
+                                            val follows = followsVideoTags(c.puzzle, c.category, videoPuzzle, videoCategory)
                                             cuts[index] = if (follows) c.copy(puzzle = NO_TAG, category = NO_TAG, edited = true)
                                             else c.copy(puzzle = "", category = "", edited = true)
                                         }
