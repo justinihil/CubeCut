@@ -266,25 +266,7 @@ object SessionStore {
     ): OpenedSession {
         val (name, size) = nameAndSize(context, uri)
         val d = db(context)
-        var id = -1L
-        // 1. the very same link (this also survives renaming the file: the link doesn't change). The length must still fit.
-        d.query("footage", arrayOf("id", "duration_ms"), "uri = ?", arrayOf(uri.toString()), null, null, "added_ms DESC", "1").use { c ->
-            if (c.moveToFirst() && Math.abs(c.getLong(1) - durationMs) <= 1000L) id = c.getLong(0)
-        }
-        // 2. the same file name, size and length (the video was moved or restored and got a new link)
-        if (id < 0 && name.isNotEmpty()) {
-            d.query(
-                "footage", arrayOf("id"), "display_name = ? AND size_bytes = ? AND duration_ms = ?",
-                arrayOf(name, size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
-            ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
-        }
-        // 3. the same exact size and length under another name (the video was renamed AND got a new link)
-        if (id < 0 && size > 0) {
-            d.query(
-                "footage", arrayOf("id"), "size_bytes = ? AND duration_ms = ?",
-                arrayOf(size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
-            ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
-        }
+        val id = findKnownId(d, uri, name, size, durationMs)
         if (id >= 0) {
             val values = ContentValues()
             values.put("uri", uri.toString())
@@ -307,6 +289,40 @@ object SessionStore {
         values.put("scramble_all", if (scrambleAll) 1 else 0)
         val newId = d.insertOrThrow("footage", null, values)
         return OpenedSession(getFootage(context, newId)!!, emptyList(), true)
+    }
+
+    /**
+     * The saved record [openOrCreate] would reopen for this video, or null for a video seen for the first time. Changes nothing,
+     * so the import can ask "Imported before" first and a Cancel leaves no trace.
+     */
+    fun findKnown(context: Context, uri: Uri, durationMs: Long): Footage? {
+        val (name, size) = nameAndSize(context, uri)
+        val id = findKnownId(db(context), uri, name, size, durationMs)
+        return if (id >= 0) getFootage(context, id) else null
+    }
+
+    /** The identity rules of [openOrCreate] (ADR-0005): the record's id, or -1. */
+    private fun findKnownId(d: SQLiteDatabase, uri: Uri, name: String, size: Long, durationMs: Long): Long {
+        var id = -1L
+        // 1. the very same link (this also survives renaming the file: the link doesn't change). The length must still fit.
+        d.query("footage", arrayOf("id", "duration_ms"), "uri = ?", arrayOf(uri.toString()), null, null, "added_ms DESC", "1").use { c ->
+            if (c.moveToFirst() && Math.abs(c.getLong(1) - durationMs) <= 1000L) id = c.getLong(0)
+        }
+        // 2. the same file name, size and length (the video was moved or restored and got a new link)
+        if (id < 0 && name.isNotEmpty()) {
+            d.query(
+                "footage", arrayOf("id"), "display_name = ? AND size_bytes = ? AND duration_ms = ?",
+                arrayOf(name, size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
+            ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
+        }
+        // 3. the same exact size and length under another name (the video was renamed AND got a new link)
+        if (id < 0 && size > 0) {
+            d.query(
+                "footage", arrayOf("id"), "size_bytes = ? AND duration_ms = ?",
+                arrayOf(size.toString(), durationMs.toString()), null, null, "added_ms DESC", "1"
+            ).use { c -> if (c.moveToFirst()) id = c.getLong(0) }
+        }
+        return id
     }
 
     // ---------------------------------------------------------------- reading

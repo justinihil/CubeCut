@@ -13,6 +13,9 @@ Notes on history:
 ## [Unreleased]
 
 ### Added
+- **Add a missed solve at the playhead** shows as soon as a video is loaded, so solves can be added by hand before Find solves or without a timer setup. The two switches still wait until there are solves.
+- The **Edit window** zooms its picture onto the timer when a timer setup is saved. **Whole frame** shows the full picture.
+- Importing a video CubeCut has seen before asks first: **Imported before** shows its saved solves and last scan, with *Open saved* / *Cancel*.
 - Documentation baseline: `CLAUDE.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `app/README.md`, and `docs/` (algorithms, data model, Android/release, glossary, user guide, known issues, roadmap, ADRs 0001–0014).
 
 ### Removed

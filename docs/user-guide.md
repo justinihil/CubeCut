@@ -4,7 +4,7 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 
 ## Cutting a session
 
-1. **Import** the video with *Import video* in the Gallery. If CubeCut has seen the video before, its saved solves, settings and timer setup come back.
+1. **Import** the video with *Import video* in the Gallery. If CubeCut has seen the video before, it says *Imported before*. **Open saved** brings back its saved solves, settings and timer setup; **Cancel** leaves things as they were.
 2. **Set up the timer.** Everything depends on this step.
    1. Pause on a frame that shows **an actual time after a solve**: the timer has stopped and shows its final time. **Do not use 0.000.**
    2. Tap the display, drag the four dots onto its corners (a magnifier helps), and type the number shown. For 1:02.34, type `102.34`.
@@ -12,13 +12,13 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 3. **Find solves.** The app reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. You can switch apps (a notification shows progress) or press Cancel. While it runs, importing and timer setup are blocked.
 4. **Review** the list. The arrows step through solves. Tapping the timeline selects the solve there; playing the video doesn't change the selection.
    - **Missed solve:** put the playhead on the first frame that shows its final time, tap **Add a missed solve at the playhead**, and type the time.
-   - **Wrong time or cut point:** use **Edit**. It shows the frame the cut is on, and ◂ 0.1s / 0.1s ▸ buttons move the cut.
+   - **Wrong time or cut point:** use **Edit**. It shows the frame the cut is on, zoomed onto the timer, and ◂ 0.1s / 0.1s ▸ buttons move the cut. Tap **Whole frame** to see all of it.
    - **Not a solve:** delete it. Undo is available for 8 s. An exported solve asks whether to keep its file.
    - **Flagged *check*:** *Only show solves to check* narrows the list. **It's fine** clears a flag.
 5. **Choose what each clip contains:** with the scramble, or the solve only, plus the **before** and **after** buffers (2.5 s each by default, in the Setup box). The switch above the list sets the scramble for every clip, and each card's scramble button changes one clip.
 6. **Export** from the Gallery. Long-press a clip, drag over others to tick them, then tap **Export**. Files go to `Movies/CubeCut` and are named like `Sunday practice_Solve_03_11.263s.mp4`. Clips exported before are pointed out, so you don't make a second copy by accident.
 
-If the timer can't be read, nothing is blocked. You can always add solves by hand.
+If the timer can't be read, nothing is blocked. You can always add solves by hand, even before Find solves or without a timer setup.
 
 ## Things to know
 

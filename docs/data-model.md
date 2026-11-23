@@ -82,7 +82,7 @@ There is no `onDowngrade`, so installing an older APK over a newer database cras
 2. same `display_name` + `size_bytes` + `duration_ms`;
 3. same `size_bytes` + `duration_ms` (skipped if the size is unknown), so a renamed file is still recognised.
 
-On a match it refreshes the stored uri, name and size, and returns `isNew = false`. The editor then silently reopens the saved session; nothing warns the user (a warning is planned: [roadmap](roadmap.md) phase 3.1-A). `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
+On a match it refreshes the stored uri, name and size, and returns `isNew = false`. `findKnown` applies the same rules without changing anything. Both *Import video* buttons call it first, and a known video shows *Imported before* (*Open saved* / *Cancel*) before `openOrCreate` runs, so Cancel leaves no trace. Opening a session from the Gallery doesn't ask. `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
 
 ## How exports link to cuts
 

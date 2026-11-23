@@ -1221,15 +1221,19 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
 
-    // Import video: pick a video, then open it in the editor (a video seen before gets its saved cuts back).
+    // Import video: pick a video, then open it in the editor. (3.1) A video seen before asks first (ReimportDialog); Cancel stays here.
     // Reconnect video: the same picker, but the chosen video is attached to the session that lost its video, and you stay in the Gallery.
+    var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = relinkFor
         relinkFor = null
         if (uri != null) {
             SessionStore.keepAccess(context, uri)
             if (target == null) {
-                onOpenEditor(EditorRequest(uri, null))
+                scope.launch {
+                    val known = findImportedBefore(context, uri)
+                    if (known != null) reimportAsk = uri to known else onOpenEditor(EditorRequest(uri, null))
+                }
             } else {
                 scope.launch {
                     message = withContext(Dispatchers.IO) {
@@ -1239,6 +1243,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 }
             }
         }
+    }
+    val reimport = reimportAsk
+    if (reimport != null) {
+        ReimportDialog(
+            footage = reimport.second,
+            uri = reimport.first,
+            onOpen = {
+                reimportAsk = null
+                onOpenEditor(EditorRequest(reimport.first, null))
+            },
+            onCancel = { reimportAsk = null }
+        )
     }
 
     // ---- the phone's trash: Android asks the user to confirm, then tells us the answer ----

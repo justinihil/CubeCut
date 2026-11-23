@@ -490,10 +490,17 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
     // the system file picker (needs no storage permission). It is used instead of the photo picker because Android lets the app
     // keep its permission to read the chosen video, so a saved session can be opened again after the app or the phone restarted.
+    // (3.1) a video imported before asks first (ReimportDialog). Cancel keeps the editor as it was. The video already open
+    // here doesn't ask: it is simply the same video.
+    var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             SessionStore.keepAccess(context, uri)
-            videoUri = uri
+            scope.launch {
+                val known = findImportedBefore(context, uri)
+                if (analyzing) return@launch            // Find solves started meanwhile: never swap the video under it (invariant 1)
+                if (known != null && known.id != footageId) reimportAsk = uri to known else videoUri = uri
+            }
         }
     }
 
@@ -1302,13 +1309,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             Spacer(Modifier.height(4.dp))
 
             // ################ always at hand: Add a missed solve and the two switches ################
-            // (only once Find solves has run on this video: before that there is nothing to add to or switch, and the screen stays
-            // simple: video, timeline, the Setup box and Find solves. A video with solves saved counts as run.)
+            // (3.1) The button shows as soon as a video is loaded: solves can be added by hand without Find solves (or without a
+            // timer setup at all). The two switches wait until Find solves has run or a solve exists: before that there is nothing
+            // to switch. A video with solves saved counts as run.
             val showTools = videoUri != null && (scanned || cuts.isNotEmpty())
 
-            if (showTools) {
+            if (videoUri != null) {
                 // says what it is for: adding a solve Find solves missed, at the playhead (the "i" explains where to put it)
-                val cutEnabled = durationMs > 0 && !analyzing
+                // (not while the video is still being read: its saved solves may still be on their way in)
+                val cutEnabled = durationMs > 0 && !analyzing && !importing
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(
                         onClick = { startManualCut() },
@@ -1325,6 +1334,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         "Add a missed solve",
                         listOf(
                             "Find solves missed one? Add it by hand.",
+                            "Works before Find solves too, even without a timer setup.",
                             "Put the playhead on the first frame that shows its final time.",
                             "Tap the button and type the time the timer shows.",
                             "Not possible inside another solve: fix or delete that one first."
@@ -2035,6 +2045,20 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
 
+        // ===== "Imported before": the picked video has a saved session =====
+        val reimport = reimportAsk
+        if (reimport != null) {
+            ReimportDialog(
+                footage = reimport.second,
+                uri = reimport.first,
+                onOpen = {
+                    reimportAsk = null
+                    if (!analyzing) videoUri = reimport.first
+                },
+                onCancel = { reimportAsk = null }
+            )
+        }
+
         // ===== the edit window for one cut =====
         if (editIndex in cuts.indices) {
             val item = cuts[editIndex]
@@ -2051,15 +2075,28 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 exportedAt = exportedAt.map { if (Math.abs(it - from) < SAME_SOLVE_SEC) to else it }
                 seekToSec(to)
             }
-            // the frame the cut is on, shown in this window (made again after each move, a moment after the last tap)
+            // the frame the cut is on, shown in this window (made again after each move, a moment after the last tap).
+            // (3.1) Zoomed onto the timer when this video has a saved timer setup (its corners; the crop doesn't follow a camera
+            // that moved). "Whole frame" shows all of it; each time the window opens it starts zoomed again.
             val cutMs = Math.round(item.stopSec * 1000.0)
-            val cutFrame by produceState<ImageBitmap?>(initialValue = null, cutMs, videoUri) {
+            var wholeFrame by remember { mutableStateOf(false) }
+            val shownFrame by produceState<Pair<ImageBitmap?, Boolean>>(initialValue = null to false, cutMs, videoUri, wholeFrame) {
                 val uri = videoUri ?: return@produceState
+                val id = footageId
                 delay(150)
                 value = withContext(Dispatchers.IO) {
-                    try { ThumbCache.frame(context, uri, cutMs, 540)?.asImageBitmap() } catch (e: Exception) { null }
+                    try {
+                        // read fresh each time: a timer setup made since the video was opened counts too
+                        val corners = if (id != null) SessionStore.getFootage(context, id)?.let { SessionStore.timerCornersOf(it) } else null
+                        val zoomed = if (corners != null && !wholeFrame) ThumbCache.timerFrame(context, uri, cutMs, corners) else null
+                        (zoomed ?: ThumbCache.frame(context, uri, cutMs, 540))?.asImageBitmap() to (corners != null)
+                    } catch (e: Exception) {
+                        null to false
+                    }
                 }
             }
+            val cutFrame = shownFrame.first
+            val canZoom = shownFrame.second
             AlertDialog(
                 onDismissRequest = { editIndex = -1 },
                 title = { Text("Edit solve ${editIndex + 1}") },
@@ -2122,6 +2159,20 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     .background(Color(0x99000000))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             )
+                            if (canZoom) {
+                                Text(
+                                    if (wholeFrame) "Zoom on timer" else "Whole frame",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0x99000000))
+                                        .clickable { wholeFrame = !wholeFrame }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                         Spacer(Modifier.height(6.dp))
                         val tight = PaddingValues(horizontal = 6.dp)
