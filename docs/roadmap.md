@@ -65,7 +65,7 @@ The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in t
 
 The phases go editor first, then viewer, then Gallery, so each thread opens only one of the big files. There is no schema change in this version.
 
-### 3.1-A Editor quick wins 🔶
+### 3.1-A Editor quick wins ✅
 Items:
 - **#14 Manual cut before Find solves.** The *Add a missed solve* button shows as soon as a video is loaded.
 - **#1 Zoomed timer in the Edit window.** The frame is cropped around the saved timer corners plus a margin.
@@ -78,7 +78,7 @@ Items:
 - Added by the owner during the phase: a solve added by hand is selected, scrolled to, and its card blinks (3 blinks, under 2 s). If the check filter would hide it, the filter turns off, as *Go to solve* already does.
 - Found in the phone test: *Find solves again* / *Re-scan done* now depend on whether a scan ran (`scanned`), not on whether solves exist.
 
-Built (awaiting the phone test): `Reimport.kt`, `SessionStore.findKnown`, `ThumbCache.timerFrame`. The warning covers both *Import video* buttons.
+Built and phone-tested (2026-11-23): `Reimport.kt`, `SessionStore.findKnown`, `ThumbCache.timerFrame`. The warning covers both *Import video* buttons.
 
 Where to start:
 - **#14:** `showTools` in `EditorScreen` (`MainActivity.kt`) hides the button and both switches until Find solves has run or solves exist. `startManualCut` itself needs no scan.
