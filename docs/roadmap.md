@@ -139,7 +139,7 @@ Before any change:
 
 Keep one still per page that is never removed. This phase gets its own thread.
 
-### 3.1-D Rethink check navigation ⬜
+### 3.1-D Rethink check navigation ✅
 **#6:** items vanish from the filtered list without warning, and the selection after a delete is still confusing.
 
 **Decided** (2026-11-23):
@@ -148,7 +148,7 @@ Keep one still per page that is never removed. This phase gets its own thread.
 - **After a delete:** the next solve in the list, or the one before when it was the last. The Undo bar says "Deleted the 12.34 s solve · now on Solve 7 (9.87 s)", with the number the solve has after the delete.
 - Follow-on: a solve added by hand is never in the frozen list, so the filter always turns off when one is added (the 3.1-A rule).
 
-Built (2026-11-23), not yet phone-tested: `frozen` / `inList` / `freezeList` / `frozenRemoved` / `frozenInserted`, `checkCut`, `deleteNow` and the Undo bar in `EditorScreen` (`MainActivity.kt`).
+Built and phone-tested (2026-11-23): `frozen` / `inList` / `freezeList` / `frozenRemoved` / `frozenInserted`, `checkCut`, `deleteNow` and the Undo bar in `EditorScreen` (`MainActivity.kt`).
 
 Where to start: in `EditorScreen`:
 - `stepCut`;
