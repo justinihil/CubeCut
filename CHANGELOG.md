@@ -19,6 +19,7 @@ Notes on history:
 - **Double-tap to skip** in the clip viewer: the left half skips back, the right half forward, by the *Skip* length. Further quick taps keep skipping, and a hint shows the total (−5 s, −10 s…). A single tap now shows or hides the controls about 0.3 s later.
 
 ### Fixed
+- Opening a clip from the Gallery no longer sometimes flashes the top and bottom of the screen for a moment.
 - *Find solves* no longer says *again* (and the result no longer says *Re-scan*) when only solves added by hand exist and it has never run on the video.
 - The **Edit window** zooms its picture onto the timer when a timer setup is saved. **Whole frame** shows the full picture.
 - Importing a video CubeCut has seen before asks first: **Imported before** shows its saved solves and last scan, with *Open saved* / *Cancel*.

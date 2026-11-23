@@ -140,6 +140,7 @@ This is the black-flash bug that took five rounds to fix. In `ClipViewer`:
 - `activePage` follows the pager only once scrolling has stopped.
 - `PlayerView` has a transparent shutter and `setKeepContentOnPlayerReset(true)`.
 - `ThumbCache.peek` lets the first composition draw a picture that is already in memory.
+- The still's **background is black, also on the playing page**, and it fades with the still. A player that has never played (the viewer just opened from the Gallery) doesn't know the video's size when it draws its first frame. For 1–2 frames (about 17 ms at 120 fps) the `TextureView` fills the whole page, so the picture is stretched into the top and bottom bands. A transparent background let that show as a flash at the top and bottom on about 6 of 8 opens. Swiping is not affected, because the player already knows the size. Fixed in 3.1-C (2026-11-23).
 
 **Method:** if you touch this, record the screen at 120 fps and step through every frame (ffmpeg `-fps_mode passthrough`). A single black frame is invisible when sampled at normal speed. The real cause was found only this way: the still was being re-created on the page that became active.
 

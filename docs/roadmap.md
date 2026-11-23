@@ -121,7 +121,11 @@ Rules:
 - The viewer flicker rules in [algorithms §6](algorithms.md#6-viewer-still-to-video-handover).
 - Players take audio focus (settled).
 
-### 3.1-C Flicker at the top and bottom of the player (low priority) ⬜
+### 3.1-C Flicker at the top and bottom of the player (low priority) ✅
+**Found** (2026-11-23, 120 fps recording, every frame): the flicker shows only when a clip is opened from the Gallery, not after a swipe, and not every time (6 of 8 opens). For 2 frames, the first video picture is stretched over the whole page, because a new player doesn't know the video's size yet. The still covered the middle, but its transparent background let the stretched top and bottom show. Details: [algorithms §6](algorithms.md#6-viewer-still-to-video-handover).
+
+**Fix:** the still's background is black on the playing page too, and it fades with the still. Nothing else in the handover changed. The one still per page is still never removed.
+
 Where to start:
 - `ClipViewer` and `PlayerOverlay` (`Gallery.kt`).
 - `res/layout/video_player_view.xml`.

@@ -3073,10 +3073,13 @@ fun ClipViewer(
                     // removed and made again), so it never has to load again and there is no empty (black) frame when the swipe ends.
                     // Over the player it stays until the player has drawn its first picture, then fades out.
                     // (it is kept even when fully faded, see-through, so it is not made again when the page stops playing)
+                    // Its background is black, also over the player: a player that has never played yet doesn't know the video's shape
+                    // when it draws its first picture, so for a frame or two that picture is stretched over the whole page. The black
+                    // around the still hides the stretched top and bottom until the player has the right shape (it fades with the still).
                     Thumb(
                         stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c),
                         Modifier.fillMaxSize().alpha(if (playing) stillAlpha else 1f),
-                        ContentScale.Fit, VIEWER_PICTURE_HEIGHT, if (playing) Color.Transparent else Color.Black,
+                        ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black,
                         placeholderKey = clipPictureKey(c)
                     )
                     if (page == activePage && !playable) {
