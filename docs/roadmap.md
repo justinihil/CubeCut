@@ -68,7 +68,7 @@ Order:
 3. Single-solve import, which uses the tags, penalty and buffers (3.2-F).
 4. Backup last, because its file must include every new field (3.2-G).
 
-### 3.2-A Schema foundation (no UI) 🔶
+### 3.2-A Schema foundation (no UI) ✅
 Where to start: the [new per-video or per-clip field recipe](../ARCHITECTURE.md#new-per-video-or-per-clip-field-for-example-a-tag-or-a-penalty). Files:
 - `SessionStore.kt` (`Helper.onCreate` / `onUpgrade`, `loadCuts`, `saveSession`, `loadGallery`);
 - `ClipExporter.kt` (`CutItem`, `computeClips`);
