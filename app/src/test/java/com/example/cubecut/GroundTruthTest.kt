@@ -95,12 +95,71 @@ class GroundTruthTest {
     fun reportText_listsEachProblem() {
         val g = GroundTruth("a.mp4", "Stackmat", 100.0, listOf(ExpectedSolve(10.0, "9.000"), ExpectedSolve(40.0, "12.412")))
         val c = compareScan(g.solves, listOf(found(10.0, "9.000"), found(70.0, "8.000")))
-        val text = scanReportText(g, "b.mp4", c, 12.34, 0.8, "3.3.0")
+        val reading = listOf(ReadGrade(g.solves[0], 5, listOf("9.001"), 0), ReadGrade(g.solves[1], 0, emptyList(), 6))
+        val text = scanReportText(g, "b.mp4", true, "Timer saved.", reading, c, 12.34, 0.8, "3.3.0")
+        assertTrue(text, text.contains("1. Setup: Timer saved."))
+        assertTrue(text, text.contains("2. Reading: 5 right, 1 wrong, 6 unreadable of 12 held frames"))
+        assertTrue(text, text.contains("Misread: 0:10.00 9.000 as 9.001"))
+        assertTrue(text, text.contains("Never read: 0:40.00 12.412"))
         assertTrue(text, text.contains("WARNING: the expected solves are for a.mp4"))
         assertTrue(text, text.contains("Expected 2, found 1, missed 1, false 1, wrong time 0"))
         assertTrue(text, text.contains("Missed: 0:40.00 12.412"))
         assertTrue(text, text.contains("False: 1:10.00 8.000"))
         assertTrue(text, text.contains("Readable 80%"))
+    }
+
+    @Test
+    fun reportText_aRefusedSetupIsAResult() {
+        val g = GroundTruth("a.mp4", "csTimer (PC)", 100.0, listOf(ExpectedSolve(10.0, "9.00"), ExpectedSolve(40.0, "12.25")))
+        val text = scanReportText(g, "a.mp4", false, "Couldn't find digit shapes", emptyList(), compareScan(g.solves, emptyList()), 0.0, 0.0, "3.3.0")
+        assertTrue(text, text.contains("1. Setup: FAILED. Couldn't find digit shapes"))
+        assertTrue(text, text.contains("2. Reading: not tested"))
+        assertTrue(text, text.contains("Expected 2, found 0, missed 2"))
+    }
+
+    @Test
+    fun json_keepsTheSetupAttempt() {
+        val s = SetupAttempt(33400, listOf(25.0, 444.0, 810.0, 388.0, 796.0, 600.0, 70.0, 704.0), "12.25")
+        val g = GroundTruth("a.mp4", "csTimer (PC)", 100.0, listOf(ExpectedSolve(10.0, "9.00")), setup = s)
+        assertEquals(s, parseGroundTruth(groundTruthToJson(g)).setup)
+        assertEquals(s, parseSetupAttempt(setupAttemptToJson(s)))
+        assertEquals(null, parseGroundTruth(groundTruthToJson(g.copy(setup = null))).setup)
+        assertEquals(null, parseSetupAttempt("nonsense"))
+    }
+
+    @Test
+    fun sameTime_ignoresHowItIsWritten() {
+        assertTrue(sameTime("12.5", "12.50"))
+        assertTrue(sameTime("1:02.34", "62.34"))
+        assertTrue(!sameTime("12.25", "12.26"))
+    }
+
+    @Test
+    fun gradeReading_countsRightWrongUnreadableAndStopsAtAReset() {
+        val expected = listOf(ExpectedSolve(10.0, "12.25"), ExpectedSolve(30.0, ""), ExpectedSolve(50.0, "9.00"))
+        val grades = gradeReading(expected, 2, 100.0) { t ->
+            when {
+                t < 10.2 -> "1225"
+                t < 10.4 -> "1226"
+                t < 10.6 -> null
+                t < 20.0 -> "1225"
+                t < 50.2 -> "900"
+                else -> "000"                 // reset at once: not counted as wrong
+            }
+        }
+        assertEquals(2, grades.size)          // the solve with no known time is skipped
+        assertEquals(4, grades[0].right)
+        assertEquals(listOf("12.26"), grades[0].wrong)
+        assertEquals(1, grades[0].unreadable)
+        assertEquals(1, grades[1].right)
+        assertEquals(0, grades[1].wrong.size)
+    }
+
+    @Test
+    fun gradeReading_onACleanDisplay_isAllRight() {
+        val d = FakeDisplay.session(count = 6, seed = 2)
+        val grades = gradeReading(d.expected, d.decimals, d.durationSec, d::read)
+        assertEquals(6 * 6, grades.sumOf { it.right })
     }
 
     @Test

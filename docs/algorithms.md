@@ -31,7 +31,7 @@ Entry point: `SolveAnalyzer.analyze`, which calls `scan`. The scan only needs a 
 
 Cancellation: `isCancelled` is polled before each coarse read and each vote read, and throws `ScanCancelled`. The first-frame search of the current solve finishes first. `ScanResult.readableFraction` below 25 % triggers the amber "timer hard to read" note.
 
-**Known weakness:** a held time read without its last digit (`1151` while `11517` is held) can become a separate solve. If two short reads come first, it can even win the vote (a tie goes to the read that triggered the stop), so the real solve is saved as `1.151` and the real time becomes the false second solve. The too-fast check (see [§ Checks](#checks-after-a-scan)) flags it afterwards but doesn't prevent it. The ignored test `heldTimeMissingLastDigit_isTheSameHold` reproduces it for [3.3-B](roadmap.md).
+**Known weakness:** a held time read without its last digit (`1151` while `11517` is held) can become a separate solve. With a quarter of the held frames short, the simulator splits the hold in 132 of 200 runs. In 1 of them the short read also won the vote (a tie goes to the read that triggered the stop), so the real time was never reported. The too-fast check (see [§ Checks](#checks-after-a-scan)) flags it afterwards but doesn't prevent it. The ignored test `heldTimeMissingLastDigit_isTheSameHold` reproduces it for [3.3-B](roadmap.md).
 
 ### Checks after a scan
 
@@ -187,48 +187,60 @@ Every scan change is measured twice: on a simulated display in the unit tests, a
 |---|---|---|---|---|---|---|
 | 3.3-A (2026-11-23) | 880 / 880 | 0 | 2 | 809 | 871 | 0.183 s |
 
-The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or raises *false* or *wrong time*; update its floors and this table when a change improves them. Cuts more than one frame off come from one cause: a running frame just before the stop, with a 4→1 misread, looks like the final time to `similar`. They go both ways, early and late.
+The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or raises *false* or *wrong time*; update its floors and this table when a change improves them. The off-frame cuts by cause (same 880 solves, measured 2026-11-24):
 
-**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. TODO(owner): no reference videos recorded yet (2026-11-23). Fill one row per video with the report's numbers:
+| Noise | On the frame | Early | Late | Worst early / late |
+|---|---|---|---|---|
+| none | 875 | 5 | 0 | 0.067 s / – |
+| 20 % misreads only | 876 | 4 | 0 | 0.033 s / – |
+| 12 % unreadable only | 809 | 6 | 65 | 0.067 s / 0.183 s |
+| both | 809 | 6 | 65 | 0.067 s / 0.183 s |
 
-| Video (timer) | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
-|---|---|---|---|---|---|---|---|---|---|
+So the late cuts come from unreadable frames, and misreads add none. The few early ones also happen without noise: a running frame shortly before the stop can differ from the final time by one 1↔4 or 1↔7, which `similar` accepts. Part of the late error can't be avoided when the first frame itself is unreadable. (An earlier version of this page blamed misreads for all of them. That was never measured and was wrong.)
 
-**How it works.** Your hand-fixed list of a video is the answer key, the scan is what gets graded, and the debug *Scan report* (under *Find solves* in the editor) does the grading. It runs Find solves again from scratch **without changing the list**, then lists every missed solve, false solve, wrong time and off-frame cut against the answer key.
+**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. TODO(owner): no reference videos recorded yet (2026-11-24). One row per video, from its report; a video whose setup fails counts as 0 found:
 
-**Recording reference videos.** Settings for every video:
-- 1080p at 60 fps, with the phone on a stand (screens give the tracker nothing to follow);
+| Video (timer) | Setup | Reading: right / wrong / unreadable | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+
+**How it works.** Your hand-fixed list of a video is the answer key, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
+1. **Setup:** the timer is set up from scratch on the saved picture, corners and typed number. A refused setup is the result then, and the report still runs.
+2. **Reading:** the display is read 6 times in the 1.1 s after every expected stop (`gradeReading`): right, wrong or unreadable. Reset displays are left out.
+3. **Scan:** Find solves from scratch: found, missed, false, wrong times, off-frame cuts (`compareScan`).
+
+**Recording reference videos.** Film the timers **as they are really used**. Don't change a font or a display so that CubeCut can read it: what fails is what we need to know.
+- 1080p at 60 fps, with the phone on a stand (a screen gives the tracker little to follow);
 - the whole display in frame (unless that's what the video tests);
-- 10–15 solves (5–10 min), raw and unedited;
-- what's special about it in the file name, e.g. `ref_cstimer_lcd_dim_01.mp4`.
+- 10–15 solves (5–10 min), raw and unedited, with normal pauses, scrambles and fumbles;
+- what's special about it in the file name, e.g. `ref_cstimer_default_dim_01.mp4`.
 
-Keep every video on the phone: each scan change is re-measured on all of them. Don't stage perfect solves; normal pauses, scrambles and fumbles are what the scan must handle.
+**Where the videos live.** On the phone (don't delete them: every change is re-measured there), plus a copy in a PC folder outside the repo, `C:\CubeCutRef`, where frames are looked at while building readers. **Never committed.**
 
 | Set | Videos | For |
 |---|---|---|
-| **1 (first)** | csTimer in a seven-segment / LCD font, or a Stackmat: **easy** (good light, straight on, hands clear); **hard** (dim, side angle, hands over some stops); **edge cases** (a time already showing at the start, holds over 10 s, many 4s and 7s, a quick reset) | 3.3-B. Seven-segment digits are all the reader handles today, so these test the scan's logic rather than the font |
-| 2 | csTimer with glare; csTimer close enough to show moiré / flicker; csTimer's **default font** (smaller decimals); a phone timer app (note its name) | Screen problems; 3.3-D targets |
-| 3 | Stackmat, GAN, QiYi; one with the camera moved mid-session | Physical timers; shape tracking |
+| **1 (first)** | csTimer as you use it: **easy** (good light, straight on, hands clear, mouse pointer off the digits); **hard** (dim, steep angle, hands over some stops); a phone timer app (note its name) | 3.3-D, then B |
+| 2 | Stackmat, GAN, QiYi; one with the camera moved mid-session | Seven-segment displays; shape tracking |
+| 3 | **Edge cases** on any timer: a time already showing at the start, holds over 10 s, many 4s and 7s, a quick reset; glare; moiré / flicker | 3.3-B |
 | 4 | The display in different places and sizes in the frame; +2 / DNF marks on the display; a solve over a minute; a mixed-puzzle session | 3.3-C, 3.3-E |
-
-Owner priority: csTimer, phone apps, Stackmat, then GAN / QiYi. Sets 1 and 2's default-font and phone-app videos come first.
 
 **Making a reference** (debug build: run from Android Studio, or `./gradlew installDebug`):
 1. Import the video as *A session*.
-2. Set up the timer on a frame right after a solve. Check it with *Read timer here* on 2–3 other stopped times before going on; if it can't read the font at all, skip to step 4 and add every solve by hand.
-3. Run *Find solves*.
+2. **Try** the timer setup on a frame right after a solve: dots on the display's corners, the number typed as shown. If it's refused, tap *Cancel*; the attempt is remembered for the report.
+3. If the setup worked, run *Find solves*.
 4. Make the list exactly right. Check **every** solve, not only the flagged ones:
-   - delete false solves; add missed ones (*Add a missed solve* at the first frame of the final time);
+   - delete false solves; add missed ones (*Add a missed solve* at the first frame of the final time). With a refused setup, add them all this way;
    - correct times in *Edit*;
    - put each cut on the **first frame that shows the final time**: in *Edit*, use the 0.5 s / 0.1 s buttons, then finish with **◂ 1 frame / 1 frame ▸**. Leave cuts that are already on the right frame alone.
 5. *Scan report (debug)* → pick the timer → *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`; `groundTruthFiles_areValid` checks it on every test run.
 6. *Scan report (debug)* → *Compare with the list* → *Copy*. This is the video's "before" row in the table above. Don't change the video's list afterwards.
 
-**After every scan change** (each 3.3-B to 3.3-E change): install the new debug build, open each reference video, run *Scan report (debug)* → *Compare with the list* (or *Compare with a file…* after a reinstall or on another phone) → *Copy*. A change ships only if no video gets worse. 3.3-Z writes the before and after numbers here.
+**After every scan or reader change:** install the new debug build, open each reference video, run *Scan report (debug)* → *Compare with the list* (or *Compare with a file…* after a reinstall or on another phone) → *Copy*. The setup is tried again by itself. A change ships only if no video gets worse. 3.3-Z writes the before and after numbers here.
 
 **File format** (`GroundTruth.kt`; `format` 1). `stopSec` is the cut to the millisecond and `time` is what the timer showed (`""` = not checked). Left-overs are never listed.
 ```json
 { "format": 1, "video": "My_movie_7.mp4", "timer": "csTimer (PC)", "durationSec": 212.3, "note": "",
-  "solves": [ { "stopSec": 41.233, "time": "12.412" } ] }
+  "solves": [ { "stopSec": 41.233, "time": "12.412" } ],
+  "setup": { "frameMs": 35000, "typed": "12.412", "corners": [ 25.0, 444.0, 810.0, 388.0, 796.0, 600.0, 70.0, 704.0 ] } }
 ```
+`setup` is the timer setup as it was tried, also when it was refused (left out if none was): the picture's time, the typed number, and the corners in frame pixels (top-left, top-right, bottom-right, bottom-left). A refused one is kept per video in the debug build's `scan_report_setups` preferences, not in the database.
 `timer` is one of `TIMER_KINDS`. A found solve within 2 s of an expected one is matched to it (closest pairs first, each used once): further than that, it's a miss plus a false solve. The report lists every miss, false solve, wrong time and cut more than one frame off, with its place in the video.

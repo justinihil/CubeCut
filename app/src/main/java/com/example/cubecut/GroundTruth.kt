@@ -43,20 +43,37 @@ val TIMER_KINDS = listOf("csTimer (PC)", "Phone app", "Stackmat", "GAN", "QiYi",
 /** One solve a reference video should give: the first frame showing the final time, and that time as the timer showed it. */
 data class ExpectedSolve(val stopSec: Double, val time: String)
 
-/** Everything one ground-truth file says. [video] is the file name, used to warn when a file is compared with another video. */
+/**
+ * A timer setup as it was tried: the picture ([frameMs]), the four corners (8 numbers, in that picture's pixels) and the typed number.
+ * It is kept whether or not the setup worked, so a later reader is tried on exactly the same display.
+ */
+data class SetupAttempt(val frameMs: Long, val corners: List<Double>, val typed: String)
+
+/**
+ * Everything one ground-truth file says. [video] is the file name, used to warn when a file is compared with another video.
+ * [setup] is null if no timer setup was ever tried on the video.
+ */
 data class GroundTruth(
     val video: String,
     val timer: String,
     val durationSec: Double,
     val solves: List<ExpectedSolve>,
-    val note: String = ""
+    val note: String = "",
+    val setup: SetupAttempt? = null
 )
 
 /** An expected solve and the found solve matched to it. [offsetSec] is found minus expected (negative = the cut is early). */
 class ScanMatch(val expected: ExpectedSolve, val found: FoundSolve) {
     val offsetSec: Double get() = found.stopSec - expected.stopSec
     /** An expected time of "" (unknown) is not checked. */
-    val timeOk: Boolean get() = expected.time.isEmpty() || expected.time == found.timeText
+    val timeOk: Boolean get() = expected.time.isEmpty() || sameTime(expected.time, found.timeText)
+}
+
+/** The same time, however it is written: a hand-typed "12.5" and a read "12.50" are equal. */
+fun sameTime(a: String, b: String): Boolean {
+    val x = parseTimeSeconds(a)
+    val y = parseTimeSeconds(b)
+    return if (x != null && y != null) abs(x - y) < 1e-6 else a == b
 }
 
 /**
@@ -106,6 +123,39 @@ fun compareScan(expected: List<ExpectedSolve>, found: List<FoundSolve>): ScanCom
     )
 }
 
+// ---- grading the reader by itself: the answer key says what the display shows right after each stop ----
+
+/** Where after a stop the display is read, in seconds: the time is still held there, because the scan itself needs about 1.5 s of hold. */
+private val READ_AFTER_STOP = doubleArrayOf(0.1, 0.3, 0.5, 0.7, 0.9, 1.1)
+
+/** What the reader made of one solve's held time: how many frames it read right, wrong ([wrong] = what it read) and not at all. */
+class ReadGrade(val expected: ExpectedSolve, val right: Int, val wrong: List<String>, val unreadable: Int)
+
+/**
+ * Reads the display a few times after every expected stop and compares it with the expected time, so a failed scan can be told
+ * apart from a failed reader. A solve with no known time is skipped. A zero means the display was already reset: the rest of that solve
+ * is left out instead of being counted as wrong.
+ */
+fun gradeReading(expected: List<ExpectedSolve>, decimals: Int, durationSec: Double, read: (Double) -> String?): List<ReadGrade> =
+    expected.filter { it.time.isNotEmpty() }.map { e ->
+        var right = 0
+        var unreadable = 0
+        val wrong = ArrayList<String>()
+        for (after in READ_AFTER_STOP) {
+            val t = e.stopSec + after
+            if (t > durationSec) break
+            val digits = read(t)
+            if (digits == null) {
+                unreadable++
+                continue
+            }
+            if (digits.all { it == '0' }) break
+            val text = TimerVision.formatDigits(digits, decimals)
+            if (sameTime(text, e.time)) right++ else wrong.add(text)
+        }
+        ReadGrade(e, right, wrong, unreadable)
+    }
+
 /** The expected solves of an editor list you have checked by hand: every cut except the left-overs the scan switches off. */
 fun expectedFromCuts(cuts: List<CutItem>): List<ExpectedSolve> =
     cuts.filter { !isLeftover(it) }.map { ExpectedSolve(it.stopSec, it.timeText) }.sortedBy { it.stopSec }
@@ -117,13 +167,37 @@ fun videoPlace(sec: Double): String {
 }
 
 /**
- * The scan report as plain text, short enough to paste into a chat or into docs/algorithms.md § 8.
+ * The scan report as plain text, short enough to paste into a chat or into docs/algorithms.md § 8. Its three stages depend on each
+ * other: setup ([setup] = what it said, [setupOk] = there was an engine to read with), reading ([reading]), scan ([c]).
  * [seconds] is how long the scan took, [readable] the share of sampled frames the reader could read (0..1), [app] the app version.
+ * Without a setup nothing can be read or found: that is a result too (0 found), so the report says it instead of not running.
  */
-fun scanReportText(truth: GroundTruth, videoName: String, c: ScanComparison, seconds: Double, readable: Double, app: String): String {
+fun scanReportText(
+    truth: GroundTruth, videoName: String, setupOk: Boolean, setup: String, reading: List<ReadGrade>,
+    c: ScanComparison, seconds: Double, readable: Double, app: String
+): String {
     val lines = ArrayList<String>()
     lines.add("Scan report: $videoName" + (if (truth.timer.isNotEmpty()) " (${truth.timer})" else ""))
     if (truth.video.isNotEmpty() && truth.video != videoName) lines.add("WARNING: the expected solves are for ${truth.video}")
+    lines.add("1. Setup: " + (if (setupOk) "" else "FAILED. ") + setup)
+    if (!setupOk) {
+        lines.add("2. Reading: not tested")
+        lines.add("3. Scan: not tested. Expected ${c.expectedCount}, found 0, missed ${c.expectedCount}")
+        lines.add("CubeCut $app")
+        return lines.joinToString("\n")
+    }
+    val right = reading.sumOf { it.right }
+    val wrong = reading.sumOf { it.wrong.size }
+    val unreadable = reading.sumOf { it.unreadable }
+    lines.add("2. Reading: $right right, $wrong wrong, $unreadable unreadable of ${right + wrong + unreadable} held frames")
+    for (g in reading.filter { it.wrong.isNotEmpty() }) {
+        val seen = g.wrong.groupingBy { it }.eachCount().entries.joinToString(", ") { (t, n) -> if (n == 1) t else "$t (${n}x)" }
+        lines.add("Misread: ${videoPlace(g.expected.stopSec)} ${g.expected.time} as $seen")
+    }
+    for (g in reading.filter { it.right == 0 && it.wrong.isEmpty() && it.unreadable > 0 }) {
+        lines.add("Never read: ${videoPlace(g.expected.stopSec)} ${g.expected.time}")
+    }
+    lines.add("3. Scan:")
     lines.add(
         "Expected ${c.expectedCount}, found ${c.matches.size}, missed ${c.missed.size}, " +
                 "false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}"
@@ -156,8 +230,28 @@ fun groundTruthToJson(t: GroundTruth): String {
         .put("durationSec", Math.round(t.durationSec * 1000) / 1000.0)
         .put("note", t.note)
         .put("solves", solves)
+        .put("setup", t.setup?.let { setupToJson(it) })       // null leaves it out
         .toString(2)
 }
+
+private fun setupToJson(s: SetupAttempt): JSONObject {
+    val corners = JSONArray()
+    for (v in s.corners) corners.put(Math.round(v * 10) / 10.0)
+    return JSONObject().put("frameMs", s.frameMs).put("typed", s.typed).put("corners", corners)
+}
+
+private fun setupFromJson(o: JSONObject): SetupAttempt? {
+    val arr = o.optJSONArray("corners") ?: return null
+    val corners = (0 until arr.length()).map { arr.optDouble(it, Double.NaN) }
+    val typed = o.optString("typed", "")
+    return if (corners.size == 8 && corners.none { it.isNaN() } && typed.isNotEmpty()) SetupAttempt(o.optLong("frameMs", 0L), corners, typed) else null
+}
+
+/** One setup attempt as text, for the debug build's memory of a refused setup (see ScanReport.kt). */
+fun setupAttemptToJson(s: SetupAttempt): String = setupToJson(s).toString()
+
+/** Null if [text] isn't a setup attempt. */
+fun parseSetupAttempt(text: String): SetupAttempt? = try { setupFromJson(JSONObject(text)) } catch (e: Exception) { null }
 
 /** Reads a ground-truth file. Throws IllegalArgumentException with a short reason if it isn't one (or is from a newer CubeCut). */
 fun parseGroundTruth(text: String): GroundTruth {
@@ -170,5 +264,5 @@ fun parseGroundTruth(text: String): GroundTruth {
         val s = arr.getJSONObject(it)
         ExpectedSolve(s.getDouble("stopSec"), s.optString("time", ""))
     }
-    return GroundTruth(o.optString("video", ""), o.optString("timer", ""), o.optDouble("durationSec", 0.0), solves.sortedBy { it.stopSec }, o.optString("note", ""))
+    return GroundTruth(o.optString("video", ""), o.optString("timer", ""), o.optDouble("durationSec", 0.0), solves.sortedBy { it.stopSec }, o.optString("note", ""), o.optJSONObject("setup")?.let { setupFromJson(it) })
 }

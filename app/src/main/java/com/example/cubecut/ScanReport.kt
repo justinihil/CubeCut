@@ -64,8 +64,9 @@ class ScanReportResult(val text: String)
 
 /**
  * Everything the scan report needs from the editor. [listSolves] are the expected solves from the editor's list right now.
- * [canRun] is false while a scan or an export is running, or the timer isn't set up. [onRun] starts the scan (the editor owns the timer
- * engine and the `analyzing` guard); the editor then sets [result].
+ * [loadAttempt] gives the video's timer setup as last tried, also one that was refused (null = never tried).
+ * [canRun] is false while a scan, an import or a timer setup is running. A timer that couldn't be set up does NOT stop the report: "setup
+ * failed" is the result then. [onRun] starts it (the editor owns the `analyzing` guard); the editor then sets [result].
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -75,6 +76,7 @@ fun ScanReportHost(
     videoUri: Uri?,
     durationSec: Double,
     listSolves: () -> List<ExpectedSolve>,
+    loadAttempt: suspend () -> SetupAttempt?,
     canRun: Boolean,
     result: ScanReportResult?,
     onResultClose: () -> Unit,
@@ -86,19 +88,19 @@ fun ScanReportHost(
     var timerKind by remember { mutableStateOf(TIMER_KINDS[0]) }
     val videoName = remember(videoUri) { videoUri?.let { displayNameOf(context, it) } ?: "" }
 
-    fun listTruth() = GroundTruth(videoName, timerKind, durationSec, listSolves())
+    suspend fun listTruth() = GroundTruth(videoName, timerKind, durationSec, listSolves(), setup = loadAttempt())
 
     // (launchers live here, outside the dialogs, so a result still arrives after the dialog closed for the file picker)
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val truth = listTruth()
         scope.launch {
             message = try {
+                val truth = listTruth()
                 withContext(Dispatchers.IO) {
                     val out = context.contentResolver.openOutputStream(uri, "wt") ?: throw java.io.IOException("couldn't open the file")
                     out.use { it.write(groundTruthToJson(truth).toByteArray(Charsets.UTF_8)) }
                 }
-                "Saved ${truth.solves.size} solves. Copy the file to app/src/test/resources/groundtruth/."
+                "Saved ${truth.solves.size} solves" + (if (truth.setup != null) " and the timer setup." else ". No timer setup was tried yet.")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -117,7 +119,8 @@ fun ScanReportHost(
                 }
                 if (canRun) {
                     onClose()
-                    onRun(truth, videoName)
+                    // an answer key without a setup (none was tried when it was saved) uses this video's own
+                    onRun(if (truth.setup != null) truth else truth.copy(setup = loadAttempt()), videoName)
                 } else {
                     message = "Can't run now: wait for Find solves or the export to finish."
                 }
@@ -138,13 +141,13 @@ fun ScanReportHost(
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     BulletLines(
                         listOf(
-                            "Runs Find solves again. Your list doesn't change.",
-                            "Then shows found, missed and false solves, and how far off each cut is."
+                            "Tries the timer setup, the reading and Find solves. Your list doesn't change.",
+                            "Works when the timer can't be set up too: that is the result then."
                         )
                     )
                     Spacer(Modifier.height(10.dp))
                     Button(
-                        onClick = { onClose(); onRun(listTruth(), videoName) },
+                        onClick = { onClose(); scope.launch { onRun(listTruth(), videoName) } },
                         enabled = canRun && count > 0,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Compare with the list ($count solves)") }
@@ -153,7 +156,7 @@ fun ScanReportHost(
                         enabled = canRun,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Compare with a file...") }
-                    if (!canRun) Text("Set up the timer, and wait for any scan or export to finish.", style = MaterialTheme.typography.labelSmall)
+                    if (!canRun) Text("Wait for the import, the scan or the timer setup to finish.", style = MaterialTheme.typography.labelSmall)
 
                     HorizontalDivider(Modifier.padding(vertical = 10.dp))
                     Text("Save the list as a reference file", style = MaterialTheme.typography.titleSmall)
@@ -191,6 +194,62 @@ fun ScanReportHost(
             },
             dismissButton = { TextButton(onClick = onResultClose) { Text("Close") } }
         )
+    }
+}
+
+// ---- a refused timer setup is remembered per video (debug builds only, outside the database), so the report and the answer key know
+// where the display was and what it showed. A setup that worked is in the database (SessionStore.saveTimerSetup) and wins. ----
+private const val ATTEMPT_PREFS = "scan_report_setups"
+
+/** Remembers a setup that was refused on this video ([attempt] null = forget it, a setup worked). */
+fun rememberRefusedSetup(context: Context, footageId: Long, attempt: SetupAttempt?) {
+    val e = context.getSharedPreferences(ATTEMPT_PREFS, Context.MODE_PRIVATE).edit()
+    if (attempt == null) e.remove(footageId.toString()) else e.putString(footageId.toString(), setupAttemptToJson(attempt))
+    e.apply()
+}
+
+/** The video's timer setup as last tried: the one that worked, else the refused one, else null. Reads storage: call it on IO. */
+fun lastSetupAttempt(context: Context, footageId: Long): SetupAttempt? {
+    val f = SessionStore.getFootage(context, footageId)
+    val corners = f?.let { SessionStore.timerCornersOf(it) }
+    if (f != null && corners != null) return SetupAttempt(f.timerFrameMs, corners.toList(), f.timerTyped)
+    return context.getSharedPreferences(ATTEMPT_PREFS, Context.MODE_PRIVATE).getString(footageId.toString(), null)?.let { parseSetupAttempt(it) }
+}
+
+/**
+ * Runs the report's three stages and returns its text: sets the timer up from scratch as [truth] says (so a changed reader is tried on the
+ * same display), reads the held times, then scans. Blocking; run it on Dispatchers.Default. Its engine is its own and is freed here.
+ */
+fun runScanReportStages(
+    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
+    onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
+): String {
+    fun failed(why: String) = scanReportText(truth, videoName, false, why, emptyList(), compareScan(truth.solves, emptyList()), 0.0, 0.0, app)
+    val attempt = truth.setup ?: return failed("No timer setup was tried on this video. Try one first (it may be refused), then run this again.")
+    val frame = grabFrame(context, uri, attempt.frameMs) ?: return failed("No picture at ${videoPlace(attempt.frameMs / 1000.0)}.")
+    val res = TimerVision.createSetup(frame, attempt.corners.toDoubleArray(), attempt.typed)
+    val setup = res.setup
+    val ref = res.reference
+    if (setup == null || ref == null) return failed(res.message)
+    val engine = TimerEngine(setup, ref)
+    try {
+        val started = System.currentTimeMillis()
+        val scan = SolveAnalyzer.analyze(context, uri, durationMs, engine, onProgress, isCancelled)
+        val seconds = (System.currentTimeMillis() - started) / 1000.0
+        engine.forgetPosition()
+        val source = openFrameSource(context, uri, durationMs)
+        val reading = try {
+            gradeReading(truth.solves, engine.decimals, durationMs / 1000.0) { t ->
+                if (isCancelled()) throw ScanCancelled()
+                val gray = source.gray(t)
+                if (gray == null) null else try { engine.readDigitsGray(gray) } finally { gray.release() }
+            }
+        } finally {
+            source.close()
+        }
+        return scanReportText(truth, videoName, true, res.message, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
+    } finally {
+        engine.release()
     }
 }
 

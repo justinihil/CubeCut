@@ -908,35 +908,28 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
     }
 
-    // (3.3-A, debug builds) the scan report: Find solves again WITHOUT touching the list, then compare with [truth] (see ScanReport.kt).
-    // Same guard as Find solves: it sets `analyzing` and counts itself in on the engine, so nothing else reads with it meanwhile.
+    // (3.3-A, debug builds) the scan report: tries the setup, the reading and Find solves WITHOUT touching the list or this editor's timer
+    // engine, then compares with [truth] (see ScanReport.kt). It sets `analyzing`, so nothing else reads the video meanwhile.
     fun runScanReport(truth: GroundTruth, videoName: String) {
         val uri = videoUri
-        val engine = timerEngine
         val dur = durationMs
-        if (uri == null || engine == null || dur <= 0 || analyzing) return
+        if (uri == null || dur <= 0 || analyzing) return
         exoPlayer.pause()
+        analyzing = true
         scope.launch {
-            startUsing(engine)
-            analyzing = true
             cancelScan = false
             analysisDone = 0
             analysisTotal = 100
             analysisStatus = "Starting..."
             try {
-                val started = System.currentTimeMillis()
-                val found = withContext(Dispatchers.Default) {
-                    SolveAnalyzer.analyze(
-                        context, uri, dur, engine,
+                val text = withContext(Dispatchers.Default) {
+                    runScanReportStages(
+                        context, uri, dur, truth, videoName, BuildConfig.VERSION_NAME + " debug",
                         onProgress = { done, total -> analysisDone = done; analysisTotal = total },
                         isCancelled = { cancelScan || !isActive }
                     )
                 }
-                val seconds = (System.currentTimeMillis() - started) / 1000.0
-                val comparison = compareScan(truth.solves, found.solves)
-                scanToolResult = ScanReportResult(
-                    scanReportText(truth, videoName, comparison, seconds, found.readableFraction, BuildConfig.VERSION_NAME + " debug")
-                )
+                scanToolResult = ScanReportResult(text)
                 analysisStatus = "Scan report ready. Your list didn't change."
             } catch (e: CancellationException) {
                 throw e
@@ -946,7 +939,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 analysisStatus = "Scan report stopped: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 analyzing = false
-                stopUsing(engine)
             }
         }
     }
@@ -2126,7 +2118,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 videoUri = videoUri,
                 durationSec = durationMs / 1000.0,
                 listSolves = { expectedFromCuts(cuts) },
-                canRun = videoUri != null && timerEngine != null && durationMs > 0 && !analyzing,
+                loadAttempt = {
+                    val id = footageId
+                    if (id == null) null
+                    else withContext(Dispatchers.IO) { try { lastSetupAttempt(context, id) } catch (e: Exception) { null } }
+                },
+                canRun = videoUri != null && openCvReady && durationMs > 0 && !analyzing && !importing && !setupBusy,
                 result = scanToolResult,
                 onResultClose = { scanToolResult = null },
                 onRun = { truth, name -> runScanReport(truth, name) }
@@ -2591,6 +2588,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             // remember this setup for this video, so it is brought back the next time the session is opened
                             val savedId = footageId
                             if (savedId != null) {
+                                if (BuildConfig.DEBUG) rememberRefusedSetup(context, savedId, null)
                                 val problem = withContext(Dispatchers.IO) {
                                     try {
                                         SessionStore.saveTimerSetup(context, savedId, setupAtMs, corners, typed)
@@ -2605,6 +2603,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             }
                         } else {
                             setupMessage = res.message
+                            // (3.3-A, debug builds) a refused setup is a result too: the scan report tries it again later
+                            val id = footageId
+                            if (BuildConfig.DEBUG && id != null) rememberRefusedSetup(context, id, SetupAttempt(setupAtMs, corners.toList(), typed))
                         }
                         setupBusy = false
                     }

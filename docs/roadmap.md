@@ -68,12 +68,14 @@ The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in t
 
 The owner rule "change the reader only when asked" is lifted for this version. Every change is still measured against the harness from 3.3-A.
 
+**Order (decided 2026-11-24): A → D → B → C → E → Z.** csTimer is the owner's first priority and its default font is refused at timer setup, so fonts come before accuracy. Finding the display by itself (C) is little use before its digits can be read.
+
 ### 3.3-A Ground-truth harness 🔶
 - The owner records reference videos for each timer:
   - csTimer on a PC;
   - phone timer apps;
   - Stackmat, GAN and QiYi physical timers.
-- The videos stay on the phone and are **never committed**.
+- The videos stay on the phone, with a copy in `C:\CubeCutRef` on the PC (outside the repo, decided 2026-11-24). They are **never committed**.
 - The repo gets:
   - expected-solve files (JSON);
   - unit tests for `SolveAnalyzer.scan` with a fake `read(t)`;
@@ -83,16 +85,19 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 **Decided** (2026-11-23):
 - Timer priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi.
 - No reference videos are recorded yet. The harness was built first, and the real-footage baseline rows are filled in as the owner records them ([algorithms § 8](algorithms.md#ground-truth-harness-33-a)).
-- This thread did 3.3-A only. B to E wait until reference videos exist, so each change can be measured.
+- The other phases wait until reference videos exist, so each change can be measured.
+- (2026-11-24) Reference videos are filmed raw, as the timers are really used. A refused setup is a result, not a reason to change the font.
 - The ML question for 3.3-D is asked when D starts.
 
 **Built:** `FakeDisplay` + `SolveAnalyzerScanTest` (the simulated baseline), `GroundTruth.kt` + `GroundTruthTest`, the debug *Scan report* in the editor (`ScanReport.kt`), and 1-frame buttons in the *Edit* window, so a hand-made answer key is frame-exact.
 
-**Waiting on the owner (2026-11-23):** record reference videos (checklist in [algorithms § 8](algorithms.md#ground-truth-harness-33-a)), save their reference files, and send them with the *Compare* reports. Then fill in the real-footage baseline and close 3.3-A. Set 1 (two or three csTimer-LCD or Stackmat videos) is enough to start 3.3-B.
+**Waiting on the owner (2026-11-23):** record reference videos (checklist in [algorithms § 8](algorithms.md#ground-truth-harness-33-a)), save their reference files, and send them with the *Compare* reports. Then fill in the real-footage baseline and close 3.3-A. Set 1 (csTimer as used, easy and hard) is enough to start 3.3-D.
+
+**Reworked (2026-11-24):** the first version of the report needed a working timer setup, so it couldn't test the videos that fail at setup. It now grades setup, reading and scan separately and always runs.
 
 ### 3.3-B Scan accuracy ⬜
-- *Earlier note:* a held time misread without its last digit (`1151` while `11517` is held) should count as the same hold in `scan`. 3.3-A reproduced it: the short read can even win the vote. Un-ignore `heldTimeMissingLastDigit_isTheSameHold`.
-- *From the 3.3-A simulator:* 71 of 880 cuts land 2 or more frames off (worst 0.18 s). A running frame just before the stop, read with one 4→1 error, passes `similar` for the final time. Raise *on the frame* without lowering the other numbers.
+- *Earlier note:* a held time misread without its last digit (`1151` while `11517` is held) should count as the same hold in `scan`. 3.3-A reproduced it: the hold often splits, and rarely the real time is lost. Un-ignore `heldTimeMissingLastDigit_isTheSameHold`.
+- *From the 3.3-A simulator:* 71 of 880 cuts land 2 or more frames off (worst 0.18 s). 65 of them are late and come from unreadable frames, so look at what `firstAppearance` does when a read in the middle is empty; 6 are early ([numbers](algorithms.md#ground-truth-harness-33-a)). Raise *on the frame* without lowering the other numbers.
 - Check whether readings like `0.004` of 0.000 occur.
 - The too-fast check stays as a safety net.
 - Start: [algorithms §1–4](algorithms.md); `SolveAnalyzer.kt`.

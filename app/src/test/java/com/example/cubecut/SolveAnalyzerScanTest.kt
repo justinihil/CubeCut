@@ -114,10 +114,11 @@ class SolveAnalyzerScanTest {
     }
 
     /**
-     * Known weakness (algorithms § 1), for 3.3-B. Measured at 3.3-A: two `1151` reads in a row trigger the stop, tie the vote 4-4 with
-     * `11517` and win as the trigger, so the solve is saved as 1.151; a later run of `11517` then becomes a second, false solve.
+     * Known weakness (algorithms § 1), for 3.3-B: a held time read without its last digit splits the hold into several solves. With a
+     * quarter of the frames short, 132 of 200 seeds split; the real time was lost altogether in 1. This seed is that one: two `1151` reads
+     * in a row trigger the stop, tie the vote 4-4 with `11517` and win as the trigger, twice.
      */
-    @Ignore("3.3-B: a held 11.517 read as 1151 wins the vote and splits the hold")
+    @Ignore("3.3-B: a held 11.517 read as 1151 splits the hold")
     @Test
     fun heldTimeMissingLastDigit_isTheSameHold() {
         val d = FakeDisplay(listOf(Pair(10.0, 11.517)), 40.0, holdSec = 12.0, dropLastWhileHeld = 0.25, seed = 5)
