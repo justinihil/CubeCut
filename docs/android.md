@@ -14,6 +14,8 @@ The **sources of truth** are [app/build.gradle.kts](../app/build.gradle.kts), [g
 | Java target | 11 | Android Studio template default |
 | Gradle / AGP / Kotlin | Gradle 9.6.0 wrapper, AGP 9.4.1, Kotlin 2.2.10, JVM toolchain 25 (`gradle/gradle-daemon-jvm.properties`) | — |
 | Build types | `debug`, `release` (no flavors) | — |
+| `buildFeatures.buildConfig` | `true` (3.3-A) | `BuildConfig.DEBUG` shows the debug-only *Scan report* in the editor; release builds hide it |
+| Test-only dependency | `org.json:json` | Unit tests need a real `org.json` (`android.jar` has only stubs). Not in the APK |
 | Signing | **No `signingConfigs` in Gradle.** Release APKs are signed by hand with the Android Studio wizard | Keeps the keystore out of the repo (`.gitignore` excludes `*.jks`, `*.keystore`, `keystore.properties`) |
 
 The 16 KB page-size alignment of the `arm64-v8a` libraries was checked with Analyze APK for 3.0.0.

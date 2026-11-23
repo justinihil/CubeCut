@@ -16,7 +16,7 @@ Contents:
 
 ## 1. Finding solves
 
-Entry point: `SolveAnalyzer.analyze`, which calls `scan`. The scan only needs a function `read(t)` that returns the digits shown at second `t` (for example `"12412"`), an all-zero string for 0.000, or `null` when unreadable. In the app, `read` is `memoReader` (memoised per millisecond) over a `GraySource` plus `TimerEngine.readDigitsGray`. That separation keeps the decision logic testable without a phone, though no such test exists in the repo today.
+Entry point: `SolveAnalyzer.analyze`, which calls `scan`. The scan only needs a function `read(t)` that returns the digits shown at second `t` (for example `"12412"`), an all-zero string for 0.000, or `null` when unreadable. In the app, `read` is `memoReader` (memoised per millisecond) over a `GraySource` plus `TimerEngine.readDigitsGray`. That separation keeps the decision logic testable without a phone: `SolveAnalyzerScanTest` runs it on a simulated display (`FakeDisplay`, see [§ 8](#8-reference-measurements)).
 
 1. **Coarse scan.** Read every `SCAN_STEP` (0.5 s). The step widens to `ZERO_STEP` (2 s) while the display shows zero, and to `HOLD_STEP` (2 s) while it still shows an already-found time. An unreadable frame keeps the 0.5 s step.
 2. **Stopped timer.** The same non-zero time on at least `MIN_AGREE` (2) of the last `RECENT_N` (6) readable reads, within `AGREE_WINDOW_SEC` (6 s), with **no clearly different reading in between**. A running timer never agrees with itself. *Look-alikes* (same length, one digit differs by 1↔4 or 1↔7, `confusable`) do not break a run. These are the reader's two known errors.
@@ -31,7 +31,7 @@ Entry point: `SolveAnalyzer.analyze`, which calls `scan`. The scan only needs a 
 
 Cancellation: `isCancelled` is polled before each coarse read and each vote read, and throws `ScanCancelled`. The first-frame search of the current solve finishes first. `ScanResult.readableFraction` below 25 % triggers the amber "timer hard to read" note.
 
-**Known weakness:** a held time read without its last digit (`1151` while `11517` is held) can become a separate solve. It is caught afterwards by the too-fast check (see [§ Checks](#checks-after-a-scan)), not prevented. See [roadmap](roadmap.md).
+**Known weakness:** a held time read without its last digit (`1151` while `11517` is held) can become a separate solve. If two short reads come first, it can even win the vote (a tie goes to the read that triggered the stop), so the real solve is saved as `1.151` and the real time becomes the false second solve. The too-fast check (see [§ Checks](#checks-after-a-scan)) flags it afterwards but doesn't prevent it. The ignored test `heldTimeMissingLastDigit_isTheSameHold` reproduces it for [3.3-B](roadmap.md).
 
 ### Checks after a scan
 
@@ -177,4 +177,32 @@ These were measured on the owner's Galaxy S25 Ultra with a 1080×1920, 60 fps HE
 - `20261005_131422_1.mp4` (69 s) should give `11.108` and `14.338`.
 - TODO(owner): record the expected first-frame times and the `Done in …s` line for these, as the guide asked.
 
-**Simulation (historical):** a Python prototype (`pc_prototype/first_frame_scan_prototype.py`) once validated the scan design on 40 simulated sessions × 22 solves with 12 % unreadable reads and 20 % 4/7→1 misreads. It found 876 of 880 solves with 0 false ones, every cut within 0.25 s. The prototype is **not in this repo**, so these results cannot be reproduced. Validate scan changes on real footage, or add Kotlin unit tests (`scan` only needs a `read(t)` function).
+### Ground-truth harness (3.3-A)
+
+Every scan change is measured twice: on a simulated display in the unit tests, and on the owner's reference videos with the debug scan report.
+
+**Simulated baseline** (`SolveAnalyzerScanTest.noisySessions_baseline`; `FakeDisplay` in `src/test`). The setup is 40 sessions × 22 solves, 60 fps, 12 % unreadable frames, and 20 % of frames with one 4/7 read as 1. These are the old Python prototype's settings; the prototype isn't in the repo and claimed 876/880 found, 0 false, every cut within 0.25 s.
+
+| Measured | Found | False | Wrong time | Cut on the frame (≤ 0.02 s) | Within 0.1 s | Worst cut |
+|---|---|---|---|---|---|---|
+| 3.3-A (2026-11-23) | 880 / 880 | 0 | 2 | 809 | 871 | 0.183 s |
+
+The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or raises *false* or *wrong time*; update its floors and this table when a change improves them. Cuts more than one frame off come from one cause: a running frame just before the stop, with a 4→1 misread, looks like the final time to `similar`. They go both ways, early and late.
+
+**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. TODO(owner): no reference videos recorded yet (2026-11-23). Fill one row per video with the report's numbers:
+
+| Video (timer) | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
+|---|---|---|---|---|---|---|---|---|---|
+
+**Making a reference video** (debug build; the videos stay on the phone and are never committed):
+1. Film a session. Import it, set up the timer and run *Find solves*.
+2. Fix the list by hand until it's right: add missed solves, delete false ones, correct times, and put each cut on the first frame that shows the final time.
+3. Tap *Scan report (debug)* under *Find solves*. Pick the timer and tap *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`. `groundTruthFiles_areValid` then checks it on every test run.
+4. Tap *Compare with the list* (or, after a reinstall or on another build, *Compare with a file…*). *Copy* the report into the table above.
+
+**File format** (`GroundTruth.kt`; `format` 1). `stopSec` is the cut to the millisecond and `time` is what the timer showed (`""` = not checked). Left-overs are never listed.
+```json
+{ "format": 1, "video": "My_movie_7.mp4", "timer": "csTimer (PC)", "durationSec": 212.3, "note": "",
+  "solves": [ { "stopSec": 41.233, "time": "12.412" } ] }
+```
+`timer` is one of `TIMER_KINDS`. A found solve within 2 s of an expected one is matched to it (closest pairs first, each used once): further than that, it's a miss plus a false solve. The report lists every miss, false solve, wrong time and cut more than one frame off, with its place in the video.

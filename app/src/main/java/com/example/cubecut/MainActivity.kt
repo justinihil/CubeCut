@@ -435,6 +435,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var scanReport by remember { mutableStateOf<ScanResult?>(null) }   // what the last scan learned (for the warnings)
     var scanned by remember { mutableStateOf(false) }            // Find solves has run on this video (now or in an earlier visit)
     var setupExpanded by remember { mutableStateOf(true) }       // the Setup box: open at first, closes after Find solves
+    var showScanTools by remember { mutableStateOf(false) }       // (3.3-A, debug builds) the Scan report window
+    var scanToolResult by remember { mutableStateOf<ScanReportResult?>(null) }   // ...and its finished report
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     // keep the screen awake while a long job is running (so the phone doesn't go to sleep halfway)
@@ -896,6 +898,49 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     stopUsing(engine)                   // the scan has really stopped reading by now (also when the editor was closed)
                 }
                 finishedText?.let { AnalysisService.notifyDone(context, it) }
+            }
+        }
+    }
+
+    // (3.3-A, debug builds) the scan report: Find solves again WITHOUT touching the list, then compare with [truth] (see ScanReport.kt).
+    // Same guard as Find solves: it sets `analyzing` and counts itself in on the engine, so nothing else reads with it meanwhile.
+    fun runScanReport(truth: GroundTruth, videoName: String) {
+        val uri = videoUri
+        val engine = timerEngine
+        val dur = durationMs
+        if (uri == null || engine == null || dur <= 0 || analyzing) return
+        exoPlayer.pause()
+        scope.launch {
+            startUsing(engine)
+            analyzing = true
+            cancelScan = false
+            analysisDone = 0
+            analysisTotal = 100
+            analysisStatus = "Starting..."
+            try {
+                val started = System.currentTimeMillis()
+                val found = withContext(Dispatchers.Default) {
+                    SolveAnalyzer.analyze(
+                        context, uri, dur, engine,
+                        onProgress = { done, total -> analysisDone = done; analysisTotal = total },
+                        isCancelled = { cancelScan || !isActive }
+                    )
+                }
+                val seconds = (System.currentTimeMillis() - started) / 1000.0
+                val comparison = compareScan(truth.solves, found.solves)
+                scanToolResult = ScanReportResult(
+                    scanReportText(truth, videoName, comparison, seconds, found.readableFraction, BuildConfig.VERSION_NAME + " debug")
+                )
+                analysisStatus = "Scan report ready. Your list didn't change."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ScanCancelled) {
+                analysisStatus = "Cancelled."
+            } catch (e: Exception) {
+                analysisStatus = "Scan report stopped: ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                analyzing = false
+                stopUsing(engine)
             }
         }
     }
@@ -1677,6 +1722,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         else if (scanned) "Find solves again" else "Find solves"
                     )
                 }
+                // (3.3-A) debug builds only: measure the scan against the expected solves
+                if (BuildConfig.DEBUG) {
+                    OutlinedButton(onClick = { showScanTools = true }, enabled = videoUri != null, modifier = Modifier.fillMaxWidth()) {
+                        Text("Scan report (debug)")
+                    }
+                }
 
                 if (analyzing) {
                     val fraction = if (analysisTotal > 0) analysisDone.toFloat() / analysisTotal else 0f
@@ -2057,6 +2108,21 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     }) { Text("Mark as checked") }
                 },
                 dismissButton = { TextButton(onClick = { showClearChecks = false }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (3.3-A, debug builds) the scan report =====
+        if (BuildConfig.DEBUG) {
+            ScanReportHost(
+                open = showScanTools,
+                onClose = { showScanTools = false },
+                videoUri = videoUri,
+                durationSec = durationMs / 1000.0,
+                listSolves = { expectedFromCuts(cuts) },
+                canRun = videoUri != null && timerEngine != null && durationMs > 0 && !analyzing,
+                result = scanToolResult,
+                onResultClose = { scanToolResult = null },
+                onRun = { truth, name -> runScanReport(truth, name) }
             )
         }
 

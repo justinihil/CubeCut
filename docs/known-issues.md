@@ -9,7 +9,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 | **`lintDebug` fails** with 2 errors | `Gallery.kt:3586-3587`: `PlayerView.setShutterBackgroundColor` / `setKeepContentOnPlayerReset` are Media3 `@UnstableApi` without `@OptIn` | 65 warnings and 46 hints besides (checked 2026-11-23, 3.2.0). Add `@OptIn(UnstableApi::class)` or a lint baseline |
 | **Back on the timer setup screen leaves the editor** | `TimerSetupScreen.kt` has no `BackHandler`, so Back reaches the editor's (`leaveToGallery`) | Only the on-screen Cancel cancels setup |
 | **Dead template theme** | `app/src/main/java/com/example/cubecut/ui/theme/{Color,Theme,Type}.kt` | Unused, but declares a second `CubeCutTheme`, so a wrong auto-import is possible. An earlier changelog said it had been deleted. Delete it |
-| **Thin tests** | `app/src/test`, `ExampleInstrumentedTest` | Unit tests cover only the pure functions (`computeClips`, `parseTimeSeconds`, `mergeRescan`, `checkCuts`, the v7 field helpers). The SQL, including the v7 upgrade, the scan and the UI are checked only on the phone. See [app/README § Tests](../app/README.md#tests) |
+| **Thin tests** | `app/src/test`, `ExampleInstrumentedTest` | Unit tests cover the pure functions (`computeClips`, `parseTimeSeconds`, `mergeRescan`, `checkCuts`, the v7 field helpers) and, since 3.3-A, `SolveAnalyzer.scan` on a simulated display. The SQL (including the v7 upgrade), the digit reader on real frames and the UI are checked only on the phone. See [app/README § Tests](../app/README.md#tests) |
 | **Stale code comments** | `SolveAnalyzer.kt:53-57` (describes walk-back only, but the code bisects first; mentions a prototype test that isn't in the repo) | Fix when touching those files |
 | **`TimerStore.clear` shim** | `TimerReader.kt`, called at start-up | Deletes 1.x files. Can go once nobody runs 1.x |
 | **Find solves estimate is too high** | `estMin` = 0.3 × video length (`MainActivity.kt`) | Dates from before the 4× speed-up |
@@ -20,7 +20,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 
 - **Only seven-segment fonts**, and setup needs the user to mark the display and type a number ([ADR-0014](adr/0014-display-reader-seam.md)). +2/DNF marks next to the time and times of an hour or more aren't handled.
 - **Held time must stay on screen for about 1.5 s or more.** Timers that blank immediately aren't supported. A timer that updates its running display slower than every 0.5 s could look stopped; this has not been seen.
-- **Misread digits can win the vote** on short holds. A held time read without its last digit can become a separate solve, which the *too fast* check then flags ([algorithms](algorithms.md#checks-after-a-scan)).
+- **Misread digits can win the vote** on short holds. A held time read without its last digit can become a separate solve, or even replace the real time, which the *too fast* check then flags ([algorithms](algorithms.md#1-finding-solves)). Reproduced in the simulator; planned for 3.3-B.
 - **Deleted cuts can come back** on a re-scan ([ADR-0013](adr/0013-rescan-merge-keeps-user-edits.md)).
 - **No per-frame fallback** to the saved corners when tracking fails on a frame; that frame is skipped.
 - **The Edit window's timer zoom doesn't follow the camera.** It crops around the corners saved at timer setup, with a margin of half the timer's width. If the phone moved more than that, the timer is off the picture: tap *Whole frame*.

@@ -68,7 +68,7 @@ The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in t
 
 The owner rule "change the reader only when asked" is lifted for this version. Every change is still measured against the harness from 3.3-A.
 
-### 3.3-A Ground-truth harness ⬜
+### 3.3-A Ground-truth harness 🔶
 - The owner records reference videos for each timer:
   - csTimer on a PC;
   - phone timer apps;
@@ -80,12 +80,17 @@ The owner rule "change the reader only when asked" is lifted for this version. E
   - a debug-only scan report that shows found, missed and false solves.
 - Record the baseline in [algorithms §8](algorithms.md#8-reference-measurements).
 
-Ask first:
-- Which timers matter most?
-- Where are the reference videos stored on the phone?
+**Decided** (2026-11-23):
+- Timer priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi.
+- No reference videos are recorded yet. The harness was built first, and the real-footage baseline rows are filled in as the owner records them ([algorithms § 8](algorithms.md#ground-truth-harness-33-a)).
+- This thread did 3.3-A only. B to E wait until reference videos exist, so each change can be measured.
+- The ML question for 3.3-D is asked when D starts.
+
+**Built:** `FakeDisplay` + `SolveAnalyzerScanTest` (the simulated baseline), `GroundTruth.kt` + `GroundTruthTest`, and the debug *Scan report* in the editor (`ScanReport.kt`). The phone test is still to do.
 
 ### 3.3-B Scan accuracy ⬜
-- *Earlier note:* a held time misread without its last digit (`1151` while `11517` is held) should count as the same hold in `scan`.
+- *Earlier note:* a held time misread without its last digit (`1151` while `11517` is held) should count as the same hold in `scan`. 3.3-A reproduced it: the short read can even win the vote. Un-ignore `heldTimeMissingLastDigit_isTheSameHold`.
+- *From the 3.3-A simulator:* 71 of 880 cuts land 2 or more frames off (worst 0.18 s). A running frame just before the stop, read with one 4→1 error, passes `similar` for the final time. Raise *on the frame* without lowering the other numbers.
 - Check whether readings like `0.004` of 0.000 occur.
 - The too-fast check stays as a safety net.
 - Start: [algorithms §1–4](algorithms.md); `SolveAnalyzer.kt`.
