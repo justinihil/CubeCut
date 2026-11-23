@@ -30,6 +30,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
@@ -98,7 +99,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -138,6 +143,12 @@ import org.opencv.android.OpenCVLoader
 
 // should a new cut include the part before the solve (the scramble)? true = clip runs from the previous clip's end
 const val DEFAULT_INCLUDE_SCRAMBLE = true
+
+// (3.1) a solve added by hand: its card blinks this many times (each blink on + off, in ms) so the eye finds it.
+// More or slower blinks are easier to notice but keep the list busy longer (3 x 600 ms = under 2 s)
+private const val ADDED_FLASH_BLINKS = 3
+private const val ADDED_FLASH_ON_MS = 250
+private const val ADDED_FLASH_OFF_MS = 350
 
 // The author credit: a small line at the bottom of the main screen, and the About window it opens. The licence (NOTICE.md)
 // requires the credit to stay in the app, so anyone who shares a version of CubeCut has to keep it (changed versions
@@ -373,6 +384,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
     // ---- the cuts (one per solve) ----
     val cuts = remember { mutableStateListOf<CutItem>() }
+    // (3.1-D) The "Only solves to check" list is frozen: it holds the solves that needed a check when it was picked (indexes into
+    // cuts). A solve that stops needing one (It's fine, or a fix to it or to a neighbour) stays, marked "✓ Fixed", until the filter
+    // is switched off and on again, so nothing vanishes off-screen. Every add / remove in cuts shifts these indexes (frozenRemoved /
+    // frozenInserted, further down); switching the filter on, a load and a scan pick the list again.
+    var frozen by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    /** Picks the frozen list: every solve that needs a check now. [warnings] = checkCuts warnings for the current cuts. */
+    fun freezeList(warnings: Map<Int, String>) {
+        frozen = cuts.indices.filter { cuts[it].noteNeedsCheck() || warnings.containsKey(it) }.toSet()
+    }
     var analyzing by remember { mutableStateOf(false) }
     var analysisStatus by remember { mutableStateOf("") }
     var editIndex by remember { mutableStateOf(-1) }             // which cut is open in the edit window (-1 = none)
@@ -490,10 +510,17 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
     // the system file picker (needs no storage permission). It is used instead of the photo picker because Android lets the app
     // keep its permission to read the chosen video, so a saved session can be opened again after the app or the phone restarted.
+    // (3.1) a video imported before asks first (ReimportDialog). Cancel keeps the editor as it was. The video already open
+    // here doesn't ask: it is simply the same video.
+    var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             SessionStore.keepAccess(context, uri)
-            videoUri = uri
+            scope.launch {
+                val known = findImportedBefore(context, uri)
+                if (analyzing) return@launch            // Find solves started meanwhile: never swap the video under it (invariant 1)
+                if (known != null && known.id != footageId) reimportAsk = uri to known else videoUri = uri
+            }
         }
     }
 
@@ -510,6 +537,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         timerMessage = ""
         thumbs = emptyList()
         cuts.clear()
+        frozen = emptySet()
         rowBoxes.clear()
         selectedCut = -1
         analysisStatus = ""
@@ -554,12 +582,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         setupExpanded = false
                         openedNote = "Saved session: ${opened.cuts.size} cuts" +
                                 (if (opened.footage.lastScanMs > 0) ", found ${formatDate(opened.footage.lastScanMs)}" else "") +
-                                ". Set up the timer only to scan again."
+                                (if (opened.footage.lastScanMs > 0) ". Set up the timer only to scan again." else ". Set up the timer to find the other solves.")
                         analysisStatus = openedNote
                     }
                 }
                 footageId = opened.footage.id       // set last: from now on every change is saved
             }
+            // (3.1-D) the filter stays as it was: its list is picked from this video's solves
+            freezeList(checkCuts(cuts, computeClips(cuts, beforePad.toDouble(), afterPad.toDouble(), dur / 1000.0)).warnings)
 
             importStage = "Building film strip..."
             status = "Building film strip..."
@@ -691,6 +721,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         val c = cuts.getOrNull(i) ?: return false
         return c.noteNeedsCheck() || checks.warnings.containsKey(i)
     }
+    /** Does the list show row [i]? (all rows, or only the frozen ones while the filter is on; see frozen) */
+    fun inList(i: Int): Boolean = !onlyCheck || i in frozen
+    // keep the frozen indexes on the same solves when one is removed from / put into cuts at [at]
+    fun frozenRemoved(at: Int) {
+        frozen = frozen.filter { it != at }.map { if (it > at) it - 1 else it }.toSet()
+    }
+    fun frozenInserted(at: Int, shown: Boolean) {
+        frozen = frozen.map { if (it >= at) it + 1 else it }.toSet() + (if (shown) setOf(at) else emptySet())
+    }
     fun markChecked(i: Int) {
         if (i in cuts.indices) cuts[i] = cuts[i].copy(reviewed = true, edited = true)
     }
@@ -782,6 +821,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     selectedCut = -1
                     cuts.addAll(merged.cuts)
                     scanReport = report
+                    val firstScan = !scanned            // (3.1) hand-added solves alone don't make this a re-scan
                     scanned = true
                     footageId?.let { id ->
                         withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
@@ -792,10 +832,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     val nowChecks = checkCuts(merged.cuts, computeClips(merged.cuts, beforePad.toDouble(), afterPad.toDouble(), dur / 1000.0))
                     val solveCount = merged.cuts.count { !isLeftover(it) }
                     val toCheck = merged.cuts.indices.count { merged.cuts[it].noteNeedsCheck() || nowChecks.warnings.containsKey(it) }
+                    freezeList(nowChecks.warnings)      // (3.1-D) the cuts were replaced: the filtered list is picked again
                     analysisStatus = if (saved.isEmpty()) {
                         "Done in ${seconds}s: $solveCount solves, $toCheck to check"
                     } else {
-                        "Re-scan done in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "")
+                        (if (firstScan) "Done" else "Re-scan done") + " in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "")
                     }
                     finishedText = analysisStatus
                     setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job
@@ -818,6 +859,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     // ---- delete a cut straight from its row; the last deletion can be undone ----
     var undoCut by remember { mutableStateOf<Pair<Int, CutItem>?>(null) }      // (where it was, the cut) of the last deleted cut
     var undoVideo by remember { mutableStateOf<Uri?>(null) }                   // the video it was deleted from (another video: no Undo)
+    var undoInList by remember { mutableStateOf(false) }                       // it was in the frozen check list (Undo puts it back there)
+    var undoNowOn by remember { mutableStateOf("") }                           // the solve selected after it: "Solve 7 (9.87 s)" ("" = none)
     LaunchedEffect(undoCut) {
         if (undoCut != null) {
             delay(8000)                         // the Undo bar goes away by itself after a while
@@ -832,7 +875,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
     /** The first row the list shows at or after [start] (or, if there is none, the last one it shows); -1 = it shows none. */
     fun shownFrom(start: Int): Int {
-        val shown = cuts.indices.filter { !onlyCheck || needsCheck(it) }
+        val shown = cuts.indices.filter { inList(it) }
         return shown.firstOrNull { it >= start } ?: shown.lastOrNull() ?: -1
     }
     // a row being removed: it slides away first (about a quarter of a second), then the change is made
@@ -848,30 +891,25 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
     fun deleteNow(index: Int) {
         if (index !in cuts.indices) return
-        undoCut = Pair(index, cuts[index])
-        undoVideo = videoUri
+        val removedCut = cuts[index]
+        undoInList = index in frozen
         cuts.removeAt(index)
+        frozenRemoved(index)
         rowBoxes.clear()
         selectedCut = -1
-        selectAfterChange(shownFrom(index))       // the next solve has moved up into this place
+        // (3.1-D) the next solve in the list (it has moved up into this place), or the one before when it was the last;
+        // the Undo bar says where you landed, with the number that solve now has
+        val landed = shownFrom(index)
+        selectAfterChange(landed)
+        undoNowOn = cuts.getOrNull(landed)?.let { "Solve ${landed + 1}" + (if (it.timeText.isNotEmpty()) " (${it.timeText} s)" else "") } ?: ""
+        undoVideo = videoUri
+        undoCut = Pair(index, removedCut)
     }
     /** Delete button: the row slides away, then the solve after it is selected. */
     fun deleteCut(index: Int) {
         val c = cuts.getOrNull(index) ?: return
         editIndex = -1
         slideOut(c) { deleteNow(cuts.indexOf(c)) }
-    }
-    /** Checked button: the flag goes, and the next solve in the list is selected (the row slides away if only solves to check are shown). */
-    fun checkCut(index: Int) {
-        val c = cuts.getOrNull(index) ?: return
-        val done = {
-            val i = cuts.indexOf(c)
-            if (i >= 0) {
-                markChecked(i)
-                selectAfterChange(shownFrom(i + 1))
-            }
-        }
-        if (onlyCheck) slideOut(c, done) else done()
     }
     /**
      * The red bin and the Edit window's Delete cut. A solve that was not exported goes at once (Undo brings it back). An exported
@@ -945,6 +983,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         if (undoVideo != videoUri) return
         val at = u.first.coerceIn(0, cuts.size)
         cuts.add(at, u.second)
+        frozenInserted(at, undoInList)
         rowBoxes.clear()
         selectAfterChange(at)
     }
@@ -974,7 +1013,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
     // Prev / Next: step through the rows the list shows (only the ones to check while that filter is on)
     fun stepCut(dir: Int) {
-        val shown = cuts.indices.filter { !onlyCheck || needsCheck(it) }
+        val shown = cuts.indices.filter { inList(it) }
         if (shown.isEmpty()) return
         val sel = selectedCut
         // nothing selected (the playhead is between clips): go to the next / previous solve from where the playhead is
@@ -992,11 +1031,27 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     /** Selects solve [i] and jumps to it (switching the "only show solves to check" filter off if it would hide that solve). */
     fun showSolve(i: Int) {
         if (i !in cuts.indices) return
-        if (onlyCheck && !needsCheck(i)) {
+        if (!inList(i)) {
             onlyCheck = false
             rowBoxes.clear()
         }
         goToCut(i)
+    }
+
+    /**
+     * It's fine: the flag goes and the card stays where it is (with the filter on it shows "✓ Checked", see frozen). Then the next
+     * solve is selected and brought into view: with the filter on, the next one that still needs a check (after this one, else
+     * before it); with it off, simply the next solve.
+     */
+    fun checkCut(index: Int) {
+        if (index !in cuts.indices) return
+        markChecked(index)
+        val next = if (onlyCheck) {
+            // marking one solve as checked doesn't change whether another one needs a check (checkCuts flags each cut on its own)
+            val open = frozen.filter { it != index && needsCheck(it) }.sorted()
+            open.firstOrNull { it > index } ?: open.firstOrNull() ?: shownFrom(index + 1)
+        } else shownFrom(index + 1)
+        if (next in cuts.indices) goToCut(next)
     }
 
     /**
@@ -1027,7 +1082,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         var zoneStart = 0.0
         for (c in clips) {                                       // clips are in time order
             if (t >= minOf(zoneStart, c.startSec) && t < c.endSec) {
-                return if (!onlyCheck || needsCheck(c.cutIndex)) c.cutIndex else -1
+                return if (inList(c.cutIndex)) c.cutIndex else -1
             }
             zoneStart = c.endSec
         }
@@ -1058,6 +1113,33 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 keepTimelineNow.value(ms)                // (the selection doesn't follow the playhead: see pickSolveAt)
             }
         }
+    }
+
+    // (3.1) a solve just added by hand: once its card has been laid out, scroll it into view (only if it isn't fully visible),
+    // then blink its border a few times. [flashItem] is that solve, [flashRun] starts a new blink (adding twice in a row blinks again).
+    var flashItem by remember { mutableStateOf<CutItem?>(null) }
+    var flashRun by remember { mutableStateOf(0) }
+    val flashLevel = remember { Animatable(0f) }
+    LaunchedEffect(flashRun) {
+        if (flashRun == 0) return@LaunchedEffect
+        flashLevel.snapTo(0f)          // (a blink cut short by a newer add starts again from off)
+        var tries = 0
+        while (tries < 30) {
+            val i = selectedCut
+            val rowBox = rowBoxes[i]
+            val areaBox = listBox[0]
+            if (i >= 0 && rowBox != null && areaBox != null && rowBox.isAttached && areaBox.isAttached) {
+                scrollListTo(i)
+                break
+            }
+            delay(50)
+            tries++
+        }
+        repeat(ADDED_FLASH_BLINKS) {
+            flashLevel.animateTo(1f, tween(ADDED_FLASH_ON_MS))
+            flashLevel.animateTo(0f, tween(ADDED_FLASH_OFF_MS))
+        }
+        flashItem = null               // (not in a finally: a newer add cancels this run after it has set its own flashItem)
     }
 
     // opened from a Gallery clip: once the list has been laid out, scroll so the selected row is in view
@@ -1290,9 +1372,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         .padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // (3.1-D) says where you landed: "Deleted the 12.34 s solve · now on Solve 7 (9.87 s)"
                     Text(
                         "Deleted " + (if (undone.second.timeText.isNotEmpty()) "the ${undone.second.timeText} s solve" else "a cut") +
-                                " at ${formatTime((undone.second.stopSec * 1000).toLong())}",
+                                (if (undoNowOn.isNotEmpty()) "  ·  now on $undoNowOn" else ""),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(1f)
                     )
@@ -1302,13 +1385,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             Spacer(Modifier.height(4.dp))
 
             // ################ always at hand: Add a missed solve and the two switches ################
-            // (only once Find solves has run on this video: before that there is nothing to add to or switch, and the screen stays
-            // simple: video, timeline, the Setup box and Find solves. A video with solves saved counts as run.)
+            // (3.1) The button shows as soon as a video is loaded: solves can be added by hand without Find solves (or without a
+            // timer setup at all). The two switches wait until Find solves has run or a solve exists: before that there is nothing
+            // to switch. A video with solves saved counts as run.
             val showTools = videoUri != null && (scanned || cuts.isNotEmpty())
 
-            if (showTools) {
+            if (videoUri != null) {
                 // says what it is for: adding a solve Find solves missed, at the playhead (the "i" explains where to put it)
-                val cutEnabled = durationMs > 0 && !analyzing
+                // (not while the video is still being read: its saved solves may still be on their way in)
+                val cutEnabled = durationMs > 0 && !analyzing && !importing
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(
                         onClick = { startManualCut() },
@@ -1325,6 +1410,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         "Add a missed solve",
                         listOf(
                             "Find solves missed one? Add it by hand.",
+                            "Works before Find solves too, even without a timer setup.",
                             "Put the playhead on the first frame that shows its final time.",
                             "Tap the button and type the time the timer shows.",
                             "Not possible inside another solve: fix or delete that one first."
@@ -1366,7 +1452,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     }
                     Switch(
                         checked = onlyCheck,
-                        onCheckedChange = { onlyCheck = it; rowBoxes.clear() },
+                        // (3.1-D) switching on picks the list once; it then stays the same until it is switched off and on again
+                        onCheckedChange = { on ->
+                            if (on) freezeList(checks.warnings)
+                            onlyCheck = on
+                            rowBoxes.clear()
+                        },
                         enabled = toCheck > 0 || onlyCheck
                     )
                 }
@@ -1516,7 +1607,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 ) {
                     Text(
                         if (analyzing) "Working... ${if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0}%"
-                        else if (cuts.isEmpty()) "Find solves" else "Find solves again"
+                        // (3.1) "again" only after a real scan: solves added by hand don't count
+                        else if (scanned) "Find solves again" else "Find solves"
                     )
                 }
 
@@ -1638,16 +1730,17 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 "View: open the clip in the Gallery.",
                                 "Red bin: delete a cut that isn't a solve. Undo brings it back.",
                                 "Check: needs a look. Fix it, or tap It's fine.",
+                                "Only solves to check: fixed solves stay, marked ✓, until you switch it off.",
                                 "To export, choose clips in the Gallery."
                             )
                         )
                     }
                     // one row per cut: tap the row to jump there, Edit to fix or delete it, Gallery to see its clip
                     cuts.forEachIndexed { index, item ->
-                        if (onlyCheck && !needsCheck(index)) return@forEachIndexed
+                        if (!inList(index)) return@forEachIndexed
                         val clip = clipByCut[index]
                         val isSelected = index == selectedCut
-                        // the row slides away when it is deleted, or when it is marked as checked while only solves to check are shown
+                        // the row slides away when it is deleted (It's fine keeps it, see checkCut)
                         key(item) {
                             AnimatedVisibility(
                                 visible = leavingCut != item,
@@ -1667,6 +1760,29 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                             shape
                                         )
                                         .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface)
+                                        .then(
+                                            // (3.1) a solve just added by hand blinks: a thick border and a light tint, read while
+                                            // drawing so only this card redraws during the blink
+                                            if (item === flashItem) {
+                                                val blink = MaterialTheme.colorScheme.primary
+                                                Modifier.drawWithContent {
+                                                    drawContent()
+                                                    val level = flashLevel.value
+                                                    if (level > 0f) {
+                                                        val w = 4.dp.toPx()
+                                                        val r = CornerRadius(10.dp.toPx() - w / 2)
+                                                        drawRoundRect(blink.copy(alpha = 0.18f * level), cornerRadius = r)
+                                                        drawRoundRect(
+                                                            blink.copy(alpha = level),
+                                                            topLeft = Offset(w / 2, w / 2),
+                                                            size = Size(size.width - w, size.height - w),
+                                                            cornerRadius = r,
+                                                            style = Stroke(w)
+                                                        )
+                                                    }
+                                                }
+                                            } else Modifier
+                                        )
                                         .clickable {
                                             selectedCut = index
                                             seekToSec(item.stopSec - 0.5)
@@ -1743,6 +1859,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     if (warning != null) Text(highlightCheck("check: $warning"), style = MaterialTheme.typography.bodySmall)
                                     if (item.noteNeedsCheck()) {
                                         Text(highlightCheck("check: ${item.note}"), style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    // (3.1-D) in the frozen check list but no longer flagged: say so instead of hiding the card
+                                    if (onlyCheck && !needsCheck(index)) {
+                                        Text(
+                                            if (item.reviewed) "✓  Checked" else "✓  Fixed",
+                                            color = AppColors.keep,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
                                     }
                                     // it was looked at and is fine: stop flagging it
                                     if (needsCheck(index) && !item.reviewed) {
@@ -1960,10 +2085,18 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 } else {
                                     var position = cuts.indexOfFirst { it.stopSec > newCutAt }
                                     if (position < 0) position = cuts.size
-                                    cuts.add(position, CutItem(newCutAt, typed, true, ADDED_BY_YOU_NOTE, scrambleAll, edited = true))
+                                    val added = CutItem(newCutAt, typed, true, ADDED_BY_YOU_NOTE, scrambleAll, edited = true)
+                                    cuts.add(position, added)
+                                    frozenInserted(position, false)
                                     rowBoxes.clear()
                                     addCutAt = null
                                     selectedCut = position
+                                    // (3.1) show the new card: the check filter would hide it, so it goes off (like "Go to solve");
+                                    // then the list scrolls to the card and it blinks (flashRun effect). (3.1-D) A new solve is
+                                    // never in the frozen check list, so the filter always goes off here.
+                                    if (onlyCheck) onlyCheck = false
+                                    flashItem = added
+                                    flashRun++
                                     analysisStatus = "Solve added at ${at(newCutAt)}: $typed s."
                                 }
                             }
@@ -2035,6 +2168,20 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
 
+        // ===== "Imported before": the picked video has a saved session =====
+        val reimport = reimportAsk
+        if (reimport != null) {
+            ReimportDialog(
+                footage = reimport.second,
+                uri = reimport.first,
+                onOpen = {
+                    reimportAsk = null
+                    if (!analyzing) videoUri = reimport.first
+                },
+                onCancel = { reimportAsk = null }
+            )
+        }
+
         // ===== the edit window for one cut =====
         if (editIndex in cuts.indices) {
             val item = cuts[editIndex]
@@ -2051,15 +2198,28 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 exportedAt = exportedAt.map { if (Math.abs(it - from) < SAME_SOLVE_SEC) to else it }
                 seekToSec(to)
             }
-            // the frame the cut is on, shown in this window (made again after each move, a moment after the last tap)
+            // the frame the cut is on, shown in this window (made again after each move, a moment after the last tap).
+            // (3.1) Zoomed onto the timer when this video has a saved timer setup (its corners; the crop doesn't follow a camera
+            // that moved). "Whole frame" shows all of it; each time the window opens it starts zoomed again.
             val cutMs = Math.round(item.stopSec * 1000.0)
-            val cutFrame by produceState<ImageBitmap?>(initialValue = null, cutMs, videoUri) {
+            var wholeFrame by remember { mutableStateOf(false) }
+            val shownFrame by produceState<Pair<ImageBitmap?, Boolean>>(initialValue = null to false, cutMs, videoUri, wholeFrame) {
                 val uri = videoUri ?: return@produceState
+                val id = footageId
                 delay(150)
                 value = withContext(Dispatchers.IO) {
-                    try { ThumbCache.frame(context, uri, cutMs, 540)?.asImageBitmap() } catch (e: Exception) { null }
+                    try {
+                        // read fresh each time: a timer setup made since the video was opened counts too
+                        val corners = if (id != null) SessionStore.getFootage(context, id)?.let { SessionStore.timerCornersOf(it) } else null
+                        val zoomed = if (corners != null && !wholeFrame) ThumbCache.timerFrame(context, uri, cutMs, corners) else null
+                        (zoomed ?: ThumbCache.frame(context, uri, cutMs, 540))?.asImageBitmap() to (corners != null)
+                    } catch (e: Exception) {
+                        null to false
+                    }
                 }
             }
+            val cutFrame = shownFrame.first
+            val canZoom = shownFrame.second
             AlertDialog(
                 onDismissRequest = { editIndex = -1 },
                 title = { Text("Edit solve ${editIndex + 1}") },
@@ -2122,6 +2282,20 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     .background(Color(0x99000000))
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             )
+                            if (canZoom) {
+                                Text(
+                                    if (wholeFrame) "Zoom on timer" else "Whole frame",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0x99000000))
+                                        .clickable { wholeFrame = !wholeFrame }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                         Spacer(Modifier.height(6.dp))
                         val tight = PaddingValues(horizontal = 6.dp)

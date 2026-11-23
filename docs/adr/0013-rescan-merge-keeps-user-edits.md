@@ -17,6 +17,6 @@ Once sessions were saved (3.0.0), running Find solves again would wipe the user'
 | Untouched and not found again | Kept and flagged (`NOT_FOUND_AGAIN_NOTE`) |
 
 ## Consequences
-- **Every user action that changes a cut must set `edited`** (`user_edited`): time, position, per-clip scramble, notes, cuts added by hand, *It's fine*. The all-clips scramble switch is a video setting and does not count.
+- **Every user action that changes a cut must set `edited`** (`user_edited`): time, position, per-clip scramble, notes, cuts added by hand, *It's fine*. The all-clips scramble switch is a video setting and does not count. The same goes for the Gallery's selection scramble switch when every clip of a video is ticked (3.1-E, `setVideoScramble`); a video only partly ticked is changed clip by clip, with `edited`.
 - Deleted cuts leave no trace, so a re-scan may bring one back. This was the owner's choice; deleting again is quick.
 - Solve numbers ("Solve N") can shift after a re-scan. That is accepted. Notes and exports link by stop time, and files already on disk keep their names.

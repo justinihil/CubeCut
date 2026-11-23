@@ -148,20 +148,20 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Export file names and where files are written | `ClipExporter.fileName` / `safeTitle` / `openOutput` |
 | Re-scan merge, timing checks ("too close", "overlap", "too fast") | `mergeRescan`, `checkCuts` in `RescanMerge.kt` |
 | Adding a missed solve | `startManualCut` (`MainActivity.kt`); `solveAtPlayhead` / `solveOverlappedBy` (`RescanMerge.kt`) |
-| Importing a video, re-import of a known video | An `OpenDocument` launcher (`picker` in `GalleryScreen`, which also handles relink, or in `EditorScreen`) → `keepAccess` → the editor's "when a video is chosen" effect on `videoUri` → `SessionStore.openOrCreate` (returns `isNew`) |
-| Check filter, stepping through checks, *It's fine* | `stepCut`, the *Only show solves to check* filter and `needsCheck` in `EditorScreen`; `checkCuts` (`RescanMerge.kt`); `CutItem.noteNeedsCheck()` |
+| Importing a video, re-import of a known video | An `OpenDocument` launcher (`picker` in `GalleryScreen`, which also handles relink, or in `EditorScreen`) → `keepAccess` → `findImportedBefore` (`Reimport.kt`; a known video shows `ReimportDialog` first) → the editor's "when a video is chosen" effect on `videoUri` → `SessionStore.openOrCreate` (returns `isNew`) |
+| Check filter, stepping through checks, *It's fine* | `stepCut`, `checkCut`, the *Only show solves to check* filter (frozen list: `frozen`, `inList`, `freezeList`) and `needsCheck` in `EditorScreen`; `checkCuts` (`RescanMerge.kt`); `CutItem.noteNeedsCheck()` |
 | Database tables, migrations, video identity | `SessionStore.kt` (`Helper.onCreate` / `onUpgrade`, `openOrCreate`); [data-model](docs/data-model.md) |
 | What the Gallery shows, tags, "Solve deleted" | `SessionStore.loadGallery`, `GalleryClip` |
 | Gallery sort / filter / persisted UI settings | `ClipKey`, `FootageSort`, `ExportFilter`, `sortClips`, `GalleryUiState` (`Gallery.kt`) |
-| Multi-select and batch export | `dragToSelect`, `runBatchExport`, `exportFromSession`, `setScrambleForSelected` (`Gallery.kt`) |
+| Multi-select, batch export and batch delete | `dragToSelect`, `selectable` / `exportable`, `runBatchExport`, `exportFromSession`, `setScrambleForSelected` (whole video → `SessionStore.setVideoScramble`), `startBatchTrash` and the `askDelete` dialog (`Gallery.kt`) |
 | Full-screen viewer, its player, its flicker | `ClipViewer`, `PlayerOverlay` (`Gallery.kt`); read [algorithms §6](docs/algorithms.md#6-viewer-still-to-video-handover) first |
 | Editor layout, solve cards, Edit window, delete/Undo | `EditorScreen` (`MainActivity.kt`): `deleteCut`, `requestDelete`, `pendingMoves`, `stepCut`, `pickSolveAt` |
 | Timeline drawing, markers, taps | `Timeline.kt` (`onSeek`, `onPick`, `ClipBar`, `CROWDED_DP` / `ROOMY_DP`) |
-| Thumbnails and the Edit window's frame picture | `ThumbCache` (`Thumbnails.kt`): `get`, `peek`, `frame` |
+| Thumbnails and the Edit window's frame picture | `ThumbCache` (`Thumbnails.kt`): `get`, `peek`, `frame`, `timerFrame` (zoomed onto the timer) |
 | Notes, info buttons, message colours | `Notes.kt` (`InfoNote`, `InfoButton`, `kindOfMessage`) |
 | Colours, dark mode | `Theme.kt` (`CubeCutTheme`, `AppColors`, `ThemeMode`) |
 | Background notification during Find solves | `AnalysisService.kt` |
-| Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf` |
+| Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf`; many exported files at once: `startBatchTrash` and `PendingTrash.batch` (one request) |
 | Destructive-action warnings | `DangerButton`, `EffectLine`, `FootageHeader` (`Gallery.kt`) |
 | Permissions, SDK, backup, signing | [docs/android.md](docs/android.md) |
 | Tuning numbers | [algorithms § Tuning map](docs/algorithms.md#7-tuning-map) |

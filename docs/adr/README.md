@@ -14,7 +14,7 @@ To add a new one, copy [0000-template.md](0000-template.md) to the next number. 
 | [0006](0006-lossless-export-to-mediastore.md) | Lossless remux export to MediaStore `Movies/CubeCut`; store cuts, compute clips | Accepted |
 | [0007](0007-mediacodec-frame-source-with-fallback.md) | One running MediaCodec decoder for the scan, with an automatic retriever fallback | Accepted |
 | [0008](0008-never-delete-permanently.md) | Never delete permanently; use the MediaStore trash after a visual warning | Accepted |
-| [0009](0009-no-backup-or-transfer.md) | No Google backup or device transfer | Accepted (open to revisit: roadmap item 5) |
+| [0009](0009-no-backup-or-transfer.md) | No Google backup or device transfer | Accepted (to be superseded in roadmap phase 3.2-G) |
 | [0010](0010-portrait-lock-config-changes.md) | Portrait lock and `configChanges` instead of state restoration | Accepted |
 | [0011](0011-foreground-service-for-notification-only.md) | Foreground service only for the notification; work stays in the screen | Accepted |
 | [0012](0012-min-sdk-30-arm64-only.md) | Android 11+ only, arm64-only, R8 off | Accepted |
