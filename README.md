@@ -2,7 +2,7 @@
 
 **Cut a long speedcubing session video into one clip per solve, automatically, on your phone.**
 
-CubeCut reads the timer display along the whole video. When a solve ends, the timer freezes on its final time, and the **first frame that shows that time** is where the cut goes. Each solve becomes its own clip named with its time, for example `Sunday practice_Solve_03_11.263s.mp4`. A clip can be **just the solve** or **include the scramble**, with adjustable buffers before and after.
+CubeCut reads the timer display along the whole video. When a solve ends, the timer freezes on its final time, and the **first frame that shows that time** is where the cut goes. Each solve becomes its own clip named with its time, for example `Sunday practice_Solve_03_11.263s.mp4`. A clip can be **just the solve** or **include the scramble**, with adjustable extra time before and after.
 
 - Runs **offline on the phone**: no cloud, no accounts, no internet permission.
 - **No AI or machine learning.** It uses classic OpenCV image processing and counting.

@@ -102,7 +102,7 @@ private const val PAD_MAX = 8f
 private const val PAD_STEPS = 15
 
 /**
- * (3.2-D) One clip's own buffers. *Follow video* = null (the clip uses the video's sliders, [videoBefore] / [videoAfter]); *Custom*
+ * (3.2-D) One clip's own extra time ("buffers" in the code). *Same as video* = null (the clip uses the video's sliders, [videoBefore] / [videoAfter]); *Custom*
  * starts from the video's values. [onChange] gets (before, after) when a choice is made or a slider is let go, not while it moves.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -112,13 +112,14 @@ fun PadEditor(videoBefore: Double, videoAfter: Double, before: Double?, after: D
     var b by remember(before, videoBefore) { mutableStateOf((before ?: videoBefore).toFloat()) }
     var a by remember(after, videoAfter) { mutableStateOf((after ?: videoAfter).toFloat()) }
     Column {
+        Text("Seconds kept before the solve starts and after the timer stops.", style = MaterialTheme.typography.bodySmall)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ChoiceChip("Follow video", !custom, enabled) { onChange(null, null) }
+            ChoiceChip("Same as video", !custom, enabled) { onChange(null, null) }
             ChoiceChip("Custom", custom, enabled) { if (!custom) onChange(videoBefore, videoAfter) }
         }
         if (!custom) {
             Text(
-                "${"%.1f".format(videoBefore)} s before · ${"%.1f".format(videoAfter)} s after, from the video",
+                "${"%.1f".format(videoBefore)} s before · ${"%.1f".format(videoAfter)} s after, same as the video",
                 style = MaterialTheme.typography.labelSmall
             )
         } else {

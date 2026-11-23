@@ -1581,7 +1581,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                if (setupExpanded) "Setup: timer, buffers and puzzle"
+                                if (setupExpanded) "Setup: timer, extra time and puzzle"
                                 else tagLabel(videoPuzzle, videoCategory).let { if (it.isEmpty()) "" else "$it \u00B7 " } +
                                         (if (engineNow != null) "Timer ready" else "Timer not set up") +
                                         " \u00B7 ${"%.1f".format(beforePad)} s before \u00B7 ${"%.1f".format(afterPad)} s after",
@@ -1665,7 +1665,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 }
 
                                 Spacer(Modifier.height(12.dp))
-                                Text("2. Buffers around the solve", style = MaterialTheme.typography.titleSmall)
+                                Text("2. Extra time around the solve", style = MaterialTheme.typography.titleSmall)
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Before the solve: ${"%.1f".format(beforePad)} s", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                                     InfoButton(
@@ -1937,7 +1937,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                                 }
                                                 isLeftover(item) -> "  \u00B7  not a clip"
                                                 else -> ""
-                                            } + (if (item.beforePad != null || item.afterPad != null) "  \u00B7  own buffers" else "")
+                                            } + (if (item.beforePad != null || item.afterPad != null) "  \u00B7  own extra time" else "")
                                             Text(
                                                 detail,
                                                 style = MaterialTheme.typography.bodySmall,
@@ -2520,7 +2520,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(10.dp))
-                        Text("Buffers for this clip", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text("Extra time for this clip", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         PadEditor(beforePad.toDouble(), afterPad.toDouble(), pads.first, pads.second) { b, a -> pads = b to a }
                         if (item.note.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))

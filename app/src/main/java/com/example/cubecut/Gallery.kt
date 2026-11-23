@@ -764,6 +764,8 @@ private fun ClipCell(
             // very small cells: just a green corner mark for "exported"
             Box(Modifier.align(Alignment.TopStart).padding(3.dp).size(10.dp).background(GREEN, RoundedCornerShape(5.dp)))
         }
+        // the puzzle's logo in the top-right corner (not on the smallest cells)
+        if (columns <= 4) PuzzleBadge(clip.puzzle, if (columns >= 4) 20.dp else 24.dp, Modifier.align(Alignment.TopEnd).padding(6.dp))
         if (columns <= 4) {
             Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
                 // the solve time, at the right just above the "Solve N of M" band
@@ -833,10 +835,13 @@ private fun ClipRow(
         if (selecting) {
             Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) { if (canPick) SelectMark(selected, 24.dp) }
         }
-        Thumb(
-            clipPictureKey(clip), clipPictureUri(clip, openable), clipPictureMs(clip),
-            Modifier.width(60.dp).aspectRatio(THUMB_ASPECT).clip(RoundedCornerShape(8.dp))
-        )
+        Box {
+            Thumb(
+                clipPictureKey(clip), clipPictureUri(clip, openable), clipPictureMs(clip),
+                Modifier.width(60.dp).aspectRatio(THUMB_ASPECT).clip(RoundedCornerShape(8.dp))
+            )
+            PuzzleBadge(clip.puzzle, 18.dp, Modifier.align(Alignment.TopEnd).padding(3.dp))
+        }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(clip.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -882,10 +887,14 @@ private fun FootageCell(
     ) {
         Thumb(footageThumbKey(f), if (openable) Uri.parse(f.uri) else null, f.durationMs / 10, Modifier.fillMaxSize())
         if (hidden) Box(Modifier.fillMaxSize().background(Color(0x66000000)))
-        Badge(
-            "${stats?.solves ?: 0} " + (if (openable) "solves" else "exported"), Color(0xCC000000),
-            modifier = Modifier.align(Alignment.TopEnd).padding(if (columns >= 5) 3.dp else 6.dp)
-        )
+        Column(
+            Modifier.align(Alignment.TopEnd).padding(if (columns >= 5) 3.dp else 6.dp),
+            horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Badge("${stats?.solves ?: 0} " + (if (openable) "solves" else "exported"), Color(0xCC000000))
+            // the video's puzzle logo, under the count (not on the smallest cells)
+            if (columns <= 4) PuzzleBadge(f.puzzle, if (columns >= 4) 20.dp else 24.dp)
+        }
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 if (f.trashedMs > 0) Badge("In trash", RED) else if (!openable) Badge("Video deleted", RED)
@@ -927,10 +936,13 @@ private fun FootageRow(
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Thumb(
-            footageThumbKey(f), if (openable) Uri.parse(f.uri) else null, f.durationMs / 10,
-            Modifier.width(60.dp).aspectRatio(THUMB_ASPECT).clip(RoundedCornerShape(8.dp))
-        )
+        Box {
+            Thumb(
+                footageThumbKey(f), if (openable) Uri.parse(f.uri) else null, f.durationMs / 10,
+                Modifier.width(60.dp).aspectRatio(THUMB_ASPECT).clip(RoundedCornerShape(8.dp))
+            )
+            PuzzleBadge(f.puzzle, 18.dp, Modifier.align(Alignment.TopEnd).padding(3.dp))
+        }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(f.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -3921,47 +3933,47 @@ fun ClipViewer(
                         Text("The original video is gone, so this is the exported file.", style = MaterialTheme.typography.bodySmall)
                     }
 
-                    // ===== 3. the solve's result: (3.2-C) penalty, (3.2-B) puzzle tag (its own, or its video's) =====
+                    // ===== 3. the solve: (3.2-B) puzzle tag (its own, or its video's) with its logo, then (3.2-C) the penalty =====
                     if (current.index >= 0) {
                         SheetHeading("Solve")
-                        Text("Penalty", style = MaterialTheme.typography.labelLarge)
-                        PenaltyPicker(plus2Now, dnfNow) { n, dnf -> setPenalty(current, n, dnf) }
-                        if (exportedFile != null && exportedFile.trashedMs == 0L) {
-                            Text("A penalty renames the exported file to match.", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Spacer(Modifier.height(4.dp))
                         val shownTag = tagTextOf(current)
+                        val shownPuzzle = resolveTag(ownTags(current).first, current.footage.puzzle)
                         val follows = ownTags(current).let { it.first == "" && it.second == "" }
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (shownPuzzle.isNotEmpty()) {
+                                PuzzleIcon(shownPuzzle, MaterialTheme.colorScheme.primary, 30.dp)
+                                Spacer(Modifier.width(10.dp))
+                            }
                             Column(Modifier.weight(1f)) {
                                 Text("Puzzle: " + shownTag.ifEmpty { "not tagged" }, style = MaterialTheme.typography.bodyMedium)
                                 if (follows && shownTag.isNotEmpty()) Text("From the video", style = MaterialTheme.typography.labelSmall)
                             }
                             TextButton(onClick = { tagWindow = true }) { Text("Change") }
                         }
+                        Spacer(Modifier.height(6.dp))
+                        Text("Penalty", style = MaterialTheme.typography.labelLarge)
+                        PenaltyPicker(plus2Now, dnfNow) { n, dnf -> setPenalty(current, n, dnf) }
+                        if (exportedFile != null && exportedFile.trashedMs == 0L) {
+                            Text("A penalty renames the exported file to match.", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
 
                     // ===== 4. what the clip file contains (changes here show up in the editor too) =====
                     if (editable) {
                         SheetHeading("Clip")
-                        if (window != null) {
-                            Text(
-                                "${formatTime(Math.round(window.first * 1000.0))} to ${formatTime(Math.round(window.second * 1000.0))} " +
-                                        "(${Math.round(window.second - window.first)} s)",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
                         if (!single) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Include the scramble", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                                 Switch(checked = withScramble(current), onCheckedChange = { setScramble(current, it) })
                             }
-                            // (3.2-D) this clip's own buffers (a single solve has its trim instead)
-                            Text("Buffers", style = MaterialTheme.typography.labelLarge)
+                            // (3.2-D) this clip's own extra time ("buffers" in the code; a single solve has its trim instead)
+                            Text("Extra time", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
                             val (ownBefore, ownAfter) = padsOf(current)
                             PadEditor(footage.beforePad.toDouble(), footage.afterPad.toDouble(), ownBefore, ownAfter) { b, a -> setPads(current, b, a) }
                         } else if (wholeFile) {
-                            Text("Tap Edit above to trim it.", style = MaterialTheme.typography.labelSmall)
+                            Text("The whole video file is the clip. Tap Edit above to trim it.", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text("Trimmed. Tap Edit above to change it.", style = MaterialTheme.typography.bodySmall)
                         }
                         if (exportedFile != null) {
                             Text(
@@ -4108,7 +4120,7 @@ fun ClipViewer(
             )
         }
 
-        // ===== (3.2-D) buffers changed on an exported clip: make the file again? =====
+        // ===== (3.2-D) extra time changed on an exported clip: make the file again? =====
         val reexportFile = exportedFor(current)
         if (reexportAsk == current.listKey && reexportFile != null && editable) {
             AlertDialog(
@@ -4117,7 +4129,7 @@ fun ClipViewer(
                 text = {
                     BulletLines(
                         listOf(
-                            "The exported file still has the old buffers.",
+                            "The exported file still has the old extra time.",
                             "Re-export makes a new file. Then you choose what happens to the old one."
                         )
                     )
@@ -4137,7 +4149,7 @@ fun ClipViewer(
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                         Text(oldFile.fileName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(10.dp))
-                        EffectLine(Effect.STAYS, "The new file with the new buffers stays")
+                        EffectLine(Effect.STAYS, "The new file with the new extra time stays")
                         EffectLine(Effect.GOES, "The old file goes to the phone's trash")
                         EffectLine(Effect.UNDO, "Restore it from Recently deleted within about 30 days")
                         Spacer(Modifier.height(8.dp))

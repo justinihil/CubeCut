@@ -87,13 +87,16 @@ private class TagSection(start: String?, val known: List<String>, val forClip: B
  * out clearly: Material's default chosen colour is a grey that is hard to tell from the window behind it.
  */
 @Composable
-private fun TagChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun TagChip(label: String, selected: Boolean, logo: String = "", onClick: () -> Unit) {
     val blue = MaterialTheme.colorScheme.primary
     FilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
-        leadingIcon = if (selected) ({ Text("✓", fontWeight = FontWeight.Bold) }) else null,
+        // a puzzle button shows its logo (the solid blue already marks the chosen one); other buttons get a tick when chosen
+        leadingIcon = if (logo.isNotEmpty()) ({
+            PuzzleIcon(logo, if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary, 18.dp)
+        }) else if (selected) ({ Text("✓", fontWeight = FontWeight.Bold) }) else null,
         colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = blue,
             selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
@@ -141,7 +144,7 @@ fun TagDialog(
                 TagChip(shown, s.pick == PICK_FOLLOW) { s.pick = PICK_FOLLOW }
             }
             for (name in s.known) {
-                TagChip(name, s.pick == name) { s.pick = name }
+                TagChip(name, s.pick == name, logo = if (s.known === PUZZLES) name else "") { s.pick = name }
             }
             TagChip("Other", s.pick == PICK_OTHER) { s.pick = PICK_OTHER }
             TagChip("Not tagged", s.pick == PICK_NONE) { s.pick = PICK_NONE }
