@@ -86,7 +86,9 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 - This thread did 3.3-A only. B to E wait until reference videos exist, so each change can be measured.
 - The ML question for 3.3-D is asked when D starts.
 
-**Built:** `FakeDisplay` + `SolveAnalyzerScanTest` (the simulated baseline), `GroundTruth.kt` + `GroundTruthTest`, and the debug *Scan report* in the editor (`ScanReport.kt`). The phone test is still to do.
+**Built:** `FakeDisplay` + `SolveAnalyzerScanTest` (the simulated baseline), `GroundTruth.kt` + `GroundTruthTest`, the debug *Scan report* in the editor (`ScanReport.kt`), and 1-frame buttons in the *Edit* window, so a hand-made answer key is frame-exact.
+
+**Waiting on the owner (2026-11-23):** record reference videos (checklist in [algorithms § 8](algorithms.md#ground-truth-harness-33-a)), save their reference files, and send them with the *Compare* reports. Then fill in the real-footage baseline and close 3.3-A. Set 1 (two or three csTimer-LCD or Stackmat videos) is enough to start 3.3-B.
 
 ### 3.3-B Scan accuracy ⬜
 - *Earlier note:* a held time misread without its last digit (`1151` while `11517` is held) should count as the same hold in `scan`. 3.3-A reproduced it: the short read can even win the vote. Un-ignore `heldTimeMissingLastDigit_isTheSameHold`.
@@ -103,6 +105,7 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 ### 3.3-D More fonts ⬜
 - **First, an ADR.** Does a bundled, offline digit classifier count as "ML" under [ADR-0001](adr/0001-offline-classic-cv-no-ml.md)?
 - Then add readers behind the [`DisplayReader` seam](adr/0014-display-reader-seam.md), starting from the disabled `GlyphReader` ([recipe](../ARCHITECTURE.md#new-display-reader-another-font)).
+- csTimer's default look has smaller digits after the point. The segment reader measures all digits in one height band ([known issue](known-issues.md)). A per-digit band might be a small fix inside `SegmentReader`; measure it on the default-font reference videos.
 
 ### 3.3-E Penalty marks and long times on the display ⬜
 - Read +2 and DNF marks next to the time, and times of one hour or more.

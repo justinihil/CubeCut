@@ -194,11 +194,37 @@ The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or 
 | Video (timer) | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
 |---|---|---|---|---|---|---|---|---|---|
 
-**Making a reference video** (debug build; the videos stay on the phone and are never committed):
-1. Film a session. Import it, set up the timer and run *Find solves*.
-2. Fix the list by hand until it's right: add missed solves, delete false ones, correct times, and put each cut on the first frame that shows the final time.
-3. Tap *Scan report (debug)* under *Find solves*. Pick the timer and tap *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`. `groundTruthFiles_areValid` then checks it on every test run.
-4. Tap *Compare with the list* (or, after a reinstall or on another build, *Compare with a file…*). *Copy* the report into the table above.
+**How it works.** Your hand-fixed list of a video is the answer key, the scan is what gets graded, and the debug *Scan report* (under *Find solves* in the editor) does the grading. It runs Find solves again from scratch **without changing the list**, then lists every missed solve, false solve, wrong time and off-frame cut against the answer key.
+
+**Recording reference videos.** Settings for every video:
+- 1080p at 60 fps, with the phone on a stand (screens give the tracker nothing to follow);
+- the whole display in frame (unless that's what the video tests);
+- 10–15 solves (5–10 min), raw and unedited;
+- what's special about it in the file name, e.g. `ref_cstimer_lcd_dim_01.mp4`.
+
+Keep every video on the phone: each scan change is re-measured on all of them. Don't stage perfect solves; normal pauses, scrambles and fumbles are what the scan must handle.
+
+| Set | Videos | For |
+|---|---|---|
+| **1 (first)** | csTimer in a seven-segment / LCD font, or a Stackmat: **easy** (good light, straight on, hands clear); **hard** (dim, side angle, hands over some stops); **edge cases** (a time already showing at the start, holds over 10 s, many 4s and 7s, a quick reset) | 3.3-B. Seven-segment digits are all the reader handles today, so these test the scan's logic rather than the font |
+| 2 | csTimer with glare; csTimer close enough to show moiré / flicker; csTimer's **default font** (smaller decimals); a phone timer app (note its name) | Screen problems; 3.3-D targets |
+| 3 | Stackmat, GAN, QiYi; one with the camera moved mid-session | Physical timers; shape tracking |
+| 4 | The display in different places and sizes in the frame; +2 / DNF marks on the display; a solve over a minute; a mixed-puzzle session | 3.3-C, 3.3-E |
+
+Owner priority: csTimer, phone apps, Stackmat, then GAN / QiYi. Sets 1 and 2's default-font and phone-app videos come first.
+
+**Making a reference** (debug build: run from Android Studio, or `./gradlew installDebug`):
+1. Import the video as *A session*.
+2. Set up the timer on a frame right after a solve. Check it with *Read timer here* on 2–3 other stopped times before going on; if it can't read the font at all, skip to step 4 and add every solve by hand.
+3. Run *Find solves*.
+4. Make the list exactly right. Check **every** solve, not only the flagged ones:
+   - delete false solves; add missed ones (*Add a missed solve* at the first frame of the final time);
+   - correct times in *Edit*;
+   - put each cut on the **first frame that shows the final time**: in *Edit*, use the 0.5 s / 0.1 s buttons, then finish with **◂ 1 frame / 1 frame ▸**. Leave cuts that are already on the right frame alone.
+5. *Scan report (debug)* → pick the timer → *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`; `groundTruthFiles_areValid` checks it on every test run.
+6. *Scan report (debug)* → *Compare with the list* → *Copy*. This is the video's "before" row in the table above. Don't change the video's list afterwards.
+
+**After every scan change** (each 3.3-B to 3.3-E change): install the new debug build, open each reference video, run *Scan report (debug)* → *Compare with the list* (or *Compare with a file…* after a reinstall or on another phone) → *Copy*. A change ships only if no video gets worse. 3.3-Z writes the before and after numbers here.
 
 **File format** (`GroundTruth.kt`; `format` 1). `stopSec` is the cut to the millisecond and `time` is what the timer showed (`""` = not checked). Left-overs are never listed.
 ```json
