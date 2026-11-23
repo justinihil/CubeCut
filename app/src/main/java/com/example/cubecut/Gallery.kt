@@ -49,6 +49,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -307,7 +317,7 @@ class FootageStats(val bestText: String, val best: Double?, val solves: Int, val
 fun statsOf(clips: List<GalleryClip>): FootageStats {
     val on = clips.filter { it.cut.included && !it.solveDeleted }        // (a file whose solve was deleted is not a solve any more)
     val best = on.filter { it.seconds != null }.minByOrNull { it.seconds ?: Double.MAX_VALUE }
-    return FootageStats(best?.cut?.timeText ?: "", best?.seconds, on.size, clips.count { it.needsCheck })
+    return FootageStats(best?.shownTime ?: "", best?.seconds, on.size, clips.count { it.needsCheck })
 }
 
 fun sortFootage(list: List<Footage>, sort: FootageSort, stats: Map<Long, FootageStats>): List<Footage> = when (sort) {
@@ -345,6 +355,11 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var footageSort by mutableStateOf(FootageSort.from(prefs.getString("footage_sort", null)))
     var exportFilter by mutableStateOf(ExportFilter.from(prefs.getString("export_filter", null)))
     var checkOnly by mutableStateOf(prefs.getBoolean("check_only", false))   // show only clips that need a check
+    // (3.2-B) show only clips with this puzzle / type tag: null = any, "" = only clips that are not tagged
+    var puzzleFilter by mutableStateOf(prefs.getString("puzzle_filter", null))
+    var categoryFilter by mutableStateOf(prefs.getString("category_filter", null))
+    // (3.2-E) show only clips shared on this platform: null = any, "" = only clips not shared yet
+    var sharedFilter by mutableStateOf(prefs.getString("shared_filter", null))
     var themeMode by mutableStateOf(ThemeMode.from(prefs.getString("theme", null)))  // light, dark or as the phone (the whole app)
     // sessions switched off in the Clips tab (everything else is shown, so a new session shows up by itself)
     var hidden by mutableStateOf(
@@ -357,7 +372,9 @@ class GalleryUiState(private val prefs: SharedPreferences) {
         detail = clip
     }
 
-    val filterActive: Boolean get() = hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly
+    val filterActive: Boolean get() =
+        hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly || puzzleFilter != null || categoryFilter != null ||
+                sharedFilter != null
 
     /** Remember the view, sort and filter choices for the next time the app opens. */
     fun save() {
@@ -370,6 +387,9 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("footage_sort", footageSort.name)
             .putString("export_filter", exportFilter.name)
             .putBoolean("check_only", checkOnly)
+            .putString("puzzle_filter", puzzleFilter)          // (null removes the key: any tag)
+            .putString("category_filter", categoryFilter)
+            .putString("shared_filter", sharedFilter)
             .putString("theme", themeMode.name)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
@@ -561,9 +581,12 @@ private fun Badge(text: String, background: Color, textColor: Color = Color.Whit
     )
 }
 
-/** Can this clip be exported? Only solves whose original video is here and that have a clip of their own. */
+/**
+ * Can this clip be exported? Only solves whose original video is here and that have a clip of their own. (3.2-F) An untrimmed single
+ * solve is the whole file already, so it needs no export.
+ */
 private fun exportable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
-    !c.exportOnly && c.index >= 0 && !c.noClip && openable[c.footage.id] == true
+    !c.exportOnly && c.index >= 0 && !c.noClip && openable[c.footage.id] == true && (!c.footage.isSingle || c.footage.isTrimmed)
 
 /**
  * Can this clip be ticked? Every clip that can be exported, and (3.1-E) every clip with an exported file, so the bin can delete it.
@@ -575,6 +598,7 @@ private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
 private fun notSelectableReason(c: GalleryClip, openable: Map<Long, Boolean>): String = when {
     c.noClip -> "This solve is too close to the one before. Fix it in the editor first."
     openable[c.footage.id] != true -> "This clip's original video is missing, so it can't be exported again."
+    c.footage.isSingle && !c.footage.isTrimmed -> "This clip is the whole video file, so it needs no export."
     else -> "This clip can't be ticked."
 }
 
@@ -643,8 +667,10 @@ private class BatchResult(val made: Int, val skipped: Int, val problems: List<St
  */
 private fun exportFromSession(context: Context, f: Footage, indices: Set<Int>, onClip: (Int) -> Unit): BatchResult {
     val cuts = SessionStore.loadCuts(context, f.id)
-    val clips = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0).filter { it.cutIndex in indices }
-    val result = ClipExporter.export(context, Uri.parse(f.uri), clips, f.title) { i, _ -> onClip(i) }
+    val clips = clipsFor(f, cuts).filter { it.cutIndex in indices }
+    // (3.2-B) each file is named with its clip's tag: its own, else the video's
+    val tagOf = { c: Clip -> cuts.getOrNull(c.cutIndex)?.let { tagLabel(resolveTag(it.puzzle, f.puzzle), resolveTag(it.category, f.category)) } ?: "" }
+    val result = ClipExporter.export(context, Uri.parse(f.uri), clips, f.title, tagOf) { i, _ -> onClip(i) }
     val now = System.currentTimeMillis()
     val records = result.files.mapNotNull { ef ->
         val cut = cuts.getOrNull(ef.clip.cutIndex)
@@ -654,7 +680,8 @@ private fun exportFromSession(context: Context, f: Footage, indices: Set<Int>, o
     return BatchResult(result.done, indices.size - clips.size, result.failed)
 }
 
-private fun timeBadgeText(clip: GalleryClip): String = if (clip.cut.timeText.isBlank()) "?" else clip.cut.timeText
+/** (3.2-C) The time on a card, with its penalty ("13.263 (+2)", "DNF(11.263)"); "?" when unknown. */
+private fun timeBadgeText(clip: GalleryClip): String = clip.shownTime.ifEmpty { "?" }
 
 /** Where the picture of a clip comes from: the exported file when the video is gone, else the video (null = nothing to take it from). */
 private fun clipPictureUri(clip: GalleryClip, openable: Map<Long, Boolean>): Uri? = when {
@@ -666,8 +693,12 @@ private fun clipPictureUri(clip: GalleryClip, openable: Map<Long, Boolean>): Uri
 private fun clipPictureKey(clip: GalleryClip): String =
     if (clip.exportOnly && clip.exported != null) "x_${clip.exported.id}" else "c_${clip.key}"
 
-private fun clipPictureMs(clip: GalleryClip): Long =
-    if (clip.exportOnly && clip.exported != null) Math.round(clip.exported.offsetSec * 1000.0) else Math.round(clip.cut.stopSec * 1000.0)
+private fun clipPictureMs(clip: GalleryClip): Long = when {
+    clip.exportOnly && clip.exported != null -> Math.round(clip.exported.offsetSec * 1000.0)
+    // (3.2-F) a single solve stops at the very end of its clip, where there may be no picture: a moment before it
+    clip.footage.isSingle -> Math.round(max(singleRange(clip.footage).first, clip.cut.stopSec - 0.5) * 1000.0)
+    else -> Math.round(clip.cut.stopSec * 1000.0)
+}
 
 /** "You were just here": a blue glow and border over a picture cell. [level] goes from 0 (nothing) to 1 (full). */
 @Composable
@@ -722,6 +753,10 @@ private fun ClipCell(
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
                 if (!clip.cut.included) Badge("Left over", GREY)
+                // (3.2-F) only a single solve shows without its video and without a file
+                if (!clip.exportOnly && clip.exported == null && openable[clip.footage.id] != true) {
+                    Badge(if (clip.footage.trashedMs > 0) "In trash" else "Video missing", RED)
+                }
             }
         } else if (selecting && canPick) {
             Box(Modifier.align(Alignment.TopStart).padding(3.dp)) { SelectMark(selected, 16.dp) }
@@ -743,7 +778,7 @@ private fun ClipCell(
                         .padding(start = 6.dp, top = 3.dp, bottom = 3.dp, end = if (selecting) 34.dp else 6.dp)
                 ) {
                     Text(
-                        if (clip.index >= 0) "Solve ${clip.index + 1} of ${clip.total}" else "Solve",
+                        clip.placeText,
                         style = MaterialTheme.typography.labelMedium, color = Color.White, maxLines = 1
                     )
                     if (columns <= 3) {
@@ -751,10 +786,11 @@ private fun ClipCell(
                             clip.footage.title, style = MaterialTheme.typography.labelSmall, color = Color(0xFFDDDDDD),
                             maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
-                        val shared = clip.sharedList
-                        if (shared.isNotEmpty()) {
+                        // (3.2-B) the puzzle tag, then where it was shared, on one line
+                        val extra = listOf(clip.tagText, clip.sharedList.joinToString(", ")).filter { it.isNotEmpty() }
+                        if (extra.isNotEmpty()) {
                             Text(
-                                shared.joinToString(", "), style = MaterialTheme.typography.labelSmall, color = Color(0xFF90CAF9),
+                                extra.joinToString(" \u00B7 "), style = MaterialTheme.typography.labelSmall, color = Color(0xFF90CAF9),
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -806,7 +842,8 @@ private fun ClipRow(
             Text(clip.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
                 formatDate(dateOf(clip.footage)) +
-                        (if (clip.index >= 0) "  |  Solve ${clip.index + 1} of ${clip.total}" else "") +
+                        (if (clip.index >= 0) "  |  " + clip.placeText else "") +
+                        (if (clip.tagText.isNotEmpty()) "  |  " + clip.tagText else "") +
                         (if (clip.solveDeleted) "  |  exported, solve deleted" else if (clip.exportOnly) "  |  export only (raw footage gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
                         (if (!clip.cut.included) "  |  left over" else "") +
                         (if (clip.needsCheck) "  |  check" else "") +
@@ -866,8 +903,9 @@ private fun FootageCell(
                 Text(f.title, style = MaterialTheme.typography.labelLarge, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (columns <= 3) {
                     Text(
-                        formatDate(dateOf(f)) + "  |  " + formatTime(f.durationMs),
-                        style = MaterialTheme.typography.labelSmall, color = Color(0xFFDDDDDD), maxLines = 1
+                        formatDate(dateOf(f)) + "  |  " + formatTime(f.durationMs) +
+                                tagLabel(f.puzzle, f.category).let { if (it.isEmpty()) "" else "  |  $it" },
+                        style = MaterialTheme.typography.labelSmall, color = Color(0xFFDDDDDD), maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -898,6 +936,7 @@ private fun FootageRow(
             Text(f.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
                 formatDate(dateOf(f)) + "  |  " + formatTime(f.durationMs) + "  |  ${stats?.solves ?: 0} " + (if (openable) "solves" else "exported") +
+                        tagLabel(f.puzzle, f.category).let { if (it.isEmpty()) "" else "  |  $it" } +
                         (if (stats?.best != null) "  |  best ${stats.bestText}" else "") +
                         (if ((stats?.check ?: 0) > 0) "  |  ${stats?.check} to check" else "") +
                         (if (f.trashedMs > 0) "  |  in trash" else if (!openable) "  |  video deleted" else "") +
@@ -961,6 +1000,38 @@ private fun LevelPicker(title: String, current: ClipKey?, allowNone: Boolean, en
             }
         }
     }
+}
+
+/** How tall a filter chip's touch area is: smaller than Material's 48 dp so every filter fits on one screen (the chip is 32 dp). */
+private val FILTER_CHIP_TOUCH = 40.dp
+
+/** One part of the Filter window: its name, then its choices as one wrapping row of chips (the chosen one is blue). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun <T> FilterChips(label: String, options: List<Pair<T, String>>, current: T, onPick: (T) -> Unit) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides FILTER_CHIP_TOUCH) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((value, text) in options) ChoiceChip(text, current == value) { onPick(value) }
+            }
+        }
+    }
+}
+
+/**
+ * (3.2-B) One tag part of the Filter window (Puzzle or Type): Any, each tag some clip has ([values], the clips' resolved tags, ordered
+ * by [known]), and Not tagged when some clip has none. [current]: null = any, "" = not tagged. A chosen tag no clip has any more
+ * still shows, so it can be switched off.
+ */
+@Composable
+private fun TagFilterSection(label: String, values: List<String>, known: List<String>, current: String?, onPick: (String?) -> Unit) {
+    val options: List<String?> = buildList {
+        add(null)
+        addAll(orderTags(values + listOfNotNull(current), known))
+        if (values.any { it.isEmpty() } || current == "") add("")
+    }
+    FilterChips(label, options.map { it to (when (it) { null -> "Any"; "" -> "Not tagged"; else -> it }) }, current, onPick)
 }
 
 /** One active filter on the Clips tab, shown as a small rounded chip with a cross. Tapping it removes that filter. */
@@ -1070,16 +1141,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var showMore by remember { mutableStateOf(false) }
     var showTrash by remember { mutableStateOf(false) }                  // the "Recently deleted" window
+    var showBackup by remember { mutableStateOf(false) }                 // (3.2-G) the "Backup and restore" window
     var trashData by remember { mutableStateOf<TrashData?>(null) }
     var pendingTrash by remember { mutableStateOf<PendingTrash?>(null) } // waiting for the system's confirmation
     var confirmTrashFootage by remember { mutableStateOf<Footage?>(null) }   // our own warning before moving a video to the trash
     var showFilter by remember { mutableStateOf(false) }
+    var showVideoFilter by remember { mutableStateOf(false) }           // the Filter window's video list, in a window of its own
     var footageMenu by remember { mutableStateOf<Footage?>(null) }      // the session whose options window is open
     var renaming by remember { mutableStateOf<Footage?>(null) }
     var forgetting by remember { mutableStateOf<Footage?>(null) }
     var relinkFor by remember { mutableStateOf<Footage?>(null) }        // the session whose video is being picked again
     var askExport by remember { mutableStateOf(false) }                 // the "Export N clips?" window
     var askDelete by remember { mutableStateOf(false) }                 // (3.1-E) the "Delete N exported files?" window
+    var tagSelection by remember { mutableStateOf(false) }              // (3.2-B) the "Set puzzle" window for the chosen clips
+    var tagFootage by remember { mutableStateOf<Footage?>(null) }       // (3.2-B) the video whose "Puzzle for this video" window is open
     var batchDone by remember { mutableStateOf(-1) }                    // clips exported so far in a batch export (-1 = not exporting)
     var batchTotal by remember { mutableStateOf(0) }
     // ---- "you were just here": the video or clip you came back from lights up for a moment ----
@@ -1115,6 +1190,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ui.tab = 0
         ui.hidden = loaded.footage.map { it.id }.filter { it != id }.toSet()
         ui.exportFilter = ExportFilter.ALL
+        ui.puzzleFilter = null              // (3.2-B) every clip of the video shows, so nothing ticked is hidden
+        ui.categoryFilter = null
+        ui.sharedFilter = null
         ui.save()
         ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && exportable(it, loaded.openable) }.map { it.listKey }.toSet()
         ui.selecting = true
@@ -1177,6 +1255,34 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             ui.refresh++                    // reload, so every clip shows its new setting
         }
     }
+    /**
+     * (3.2-B) Tags the chosen clips ([chosen]: only clips that still have a cut). Like the scramble switch: a video whose clips are all
+     * ticked takes the tag as a video setting, so its clips follow it again and are not marked `edited` (only those that had their
+     * own tag are rewritten). A video only partly ticked is tagged clip by clip, and those clips are `edited`, so a re-scan keeps them.
+     */
+    fun setTagsForSelected(choice: TagChoice, chosen: List<GalleryClip>, loaded: GalleryData) {
+        val wholeVideos = chosen.groupBy { it.footage.id }.filter { (id, group) ->
+            val keys = group.map { it.listKey }.toSet()
+            loaded.clips.filter { it.footage.id == id && it.index >= 0 }.all { it.listKey in keys }
+        }.keys
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                for (f in chosen.map { it.footage }.distinctBy { it.id }.filter { it.id in wholeVideos }) {
+                    try {
+                        SessionStore.updateFootageTags(context, f.id, videoTagFor(f.puzzle, choice.puzzle), videoTagFor(f.category, choice.category))
+                    } catch (e: Exception) { }
+                }
+                for (c in chosen) {
+                    val whole = c.footage.id in wholeVideos
+                    val p = if (whole) resetOwnTag(c.cut.puzzle, choice.puzzle) else applyTagChoice(c.cut.puzzle, choice.puzzle)
+                    val k = if (whole) resetOwnTag(c.cut.category, choice.category) else applyTagChoice(c.cut.category, choice.category)
+                    if (p == c.cut.puzzle && k == c.cut.category) continue
+                    try { SessionStore.updateCutTags(context, c.footage.id, c.cut.stopSec, p, k) } catch (e: Exception) { }
+                }
+            }
+            ui.refresh++                    // reload, so every clip shows its new tag
+        }
+    }
     BackHandler(enabled = ui.selecting) { exitSelection() }
 
     /** Tapping a video on the Footage tab opens it in the editor; a video that can't be opened shows its options instead (Reconnect). */
@@ -1215,7 +1321,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val clipsListState = rememberLazyListState()
     val footageGridState = rememberLazyGridState()
     val footageListState = rememberLazyListState()
-    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly) {
+    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
         clipsGridState.scrollToItem(0)
         clipsListState.scrollToItem(0)
     }
@@ -1268,6 +1374,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     // Import video: pick a video, then open it in the editor. (3.1) A video seen before asks first (ReimportDialog); Cancel stays here.
     // Reconnect video: the same picker, but the chosen video is attached to the session that lost its video, and you stay in the Gallery.
     var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
+    var importKindFor by remember { mutableStateOf<Uri?>(null) }                 // (3.2-F) a new video: "A session or one solve?"
+    var knownSingle by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }    // (3.2-F) a single solve picked again
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = relinkFor
         relinkFor = null
@@ -1276,7 +1384,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             if (target == null) {
                 scope.launch {
                     val known = findImportedBefore(context, uri)
-                    if (known != null) reimportAsk = uri to known else onOpenEditor(EditorRequest(uri, null))
+                    when {
+                        known != null && known.isSingle -> knownSingle = uri to known
+                        known != null -> reimportAsk = uri to known
+                        else -> importKindFor = uri
+                    }
                 }
             } else {
                 scope.launch {
@@ -1300,6 +1412,55 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             onCancel = { reimportAsk = null }
         )
     }
+    /** (3.2-F) Opens the viewer on one solve once the data has loaded again. */
+    fun showSolve(footageId: Long, stopSec: Double) {
+        ui.tab = 0
+        ui.openClip = footageId to stopSec
+        ui.refresh++
+    }
+    val kindUri = importKindFor
+    if (kindUri != null) {
+        ImportKindDialog(
+            onSession = { importKindFor = null; onOpenEditor(EditorRequest(kindUri, null)) },
+            onSingle = {
+                // saved at once with no time; the viewer opens on it and asks for the time over the video
+                importKindFor = null
+                scope.launch {
+                    val made = withContext(Dispatchers.IO) {
+                        try {
+                            val dur = readDurationMs(context, kindUri)
+                            if (dur <= 0) null else SessionStore.createSingle(context, kindUri, dur, "", 0, false, "", "", null, null)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    if (made == null) message = "Couldn't read that video. Try another file." else showSolve(made.first.id, made.second)
+                }
+            },
+            onCancel = { importKindFor = null }
+        )
+    }
+    val againSingle = knownSingle
+    if (againSingle != null) {
+        KnownSingleDialog(
+            footage = againSingle.second,
+            onShow = {
+                knownSingle = null
+                scope.launch {
+                    val stop = withContext(Dispatchers.IO) {
+                        try {
+                            SessionStore.relink(context, againSingle.second, againSingle.first)   // the newly picked link replaces the old one
+                            SessionStore.loadCuts(context, againSingle.second.id).firstOrNull()?.stopSec
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    if (stop != null) showSolve(againSingle.second.id, stop) else ui.refresh++
+                }
+            },
+            onCancel = { knownSingle = null }
+        )
+    }
 
     // ---- the phone's trash: Android asks the user to confirm, then tells us the answer ----
     val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
@@ -1312,7 +1473,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     withContext(Dispatchers.IO) {
                         try {
                             if (p.footage != null) SessionStore.setFootageTrashed(context, p.footage.id, stamp)
-                            else if (p.export != null) SessionStore.setExportTrashed(context, p.export.id, stamp)
+                            else if (p.export != null) SessionStore.setExportTrashed(context, p.export, stamp)
                             for (e in p.batch) SessionStore.setExportTrashed(context, e.id, stamp)
                         } catch (e: Exception) {
                         }
@@ -1377,11 +1538,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
     }
     // the Clips tab's clips, filtered and sorted
-    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.clipKeys) {
+    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
         if (d == null) emptyList()
         else sortClips(
             d.clips.filter { c ->
-                c.footage.id !in ui.hidden && (!ui.checkOnly || c.needsCheck) && when (ui.exportFilter) {
+                c.footage.id !in ui.hidden && (!ui.checkOnly || c.needsCheck) &&
+                        tagMatches(c.puzzle, ui.puzzleFilter) && tagMatches(c.category, ui.categoryFilter) &&
+                        sharedMatches(c.sharedList, ui.sharedFilter) && when (ui.exportFilter) {
                     ExportFilter.ALL -> true
                     ExportFilter.EXPORTED -> c.exported != null
                     ExportFilter.NOT_EXPORTED -> c.exported == null
@@ -1405,7 +1568,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         val footageId = target.footageId
         val back = target.clip
         if (footageId != null) {
-            val order = sortFootage(loaded.footage, ui.footageSort, latestStats)
+            val order = sortFootage(loaded.footage.filter { !it.isSingle }, ui.footageSort, latestStats)
             val i = order.indexOfFirst { it.id == footageId }
             if (i < 0) return@LaunchedEffect
             if (ui.footageGrid) revealGridItem(footageGridState, i) else revealListItem(footageListState, i)
@@ -1493,6 +1656,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         Switch(checked = onCount == chosenNow.size, onCheckedChange = { on -> setScrambleForSelected(on, chosenNow, d) })
                     }
                 }
+                // (3.2-B) the puzzle tag of the chosen clips (a clip whose solve was deleted has no cut to tag)
+                val taggable = ticked.filter { it.index >= 0 }
+                if (taggable.isNotEmpty()) {
+                    val labels = taggable.map { it.tagText }.distinct()
+                    Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Puzzle: " + (if (labels.size == 1) labels[0].ifEmpty { "not tagged" } else "mixed"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { tagSelection = true }, enabled = batchDone < 0) { Text("Set puzzle\u2026") }
+                    }
+                }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
                     painter = painterResource(R.drawable.cubecut_logo),
@@ -1503,7 +1680,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("CubeCut", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        if (d == null) "Loading..." else "${d.clips.size} clips in ${d.footage.size} sessions",
+                        if (d == null) "Loading..." else "${d.clips.size} clips in ${d.footage.count { !it.isSingle }} sessions",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -1512,6 +1689,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
                         DropdownMenuItem(text = { Text("Refresh") }, onClick = { showMore = false; ui.refresh++ })
                         DropdownMenuItem(text = { Text("Recently deleted") }, onClick = { showMore = false; showTrash = true })
+                        DropdownMenuItem(
+                            text = { Text("Backup and restore") }, enabled = batchDone < 0,
+                            onClick = { showMore = false; showBackup = true }
+                        )
                         DropdownMenuItem(text = { Text("Settings") }, onClick = { showMore = false; showSettings = true })
                     }
                 }
@@ -1568,7 +1749,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         ExportFilter.EXPORTED -> "Exported only"
                         ExportFilter.NOT_EXPORTED -> "Not exported only"
                     }
-                    val active = listOfNotNull(videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null).size
+                    val puzzleLabel = ui.puzzleFilter?.let { "Puzzle: " + it.ifEmpty { "not tagged" } }
+                    val typeLabel = ui.categoryFilter?.let { "Type: " + it.ifEmpty { "not tagged" } }
+                    val sharedLabel = ui.sharedFilter?.let { if (it.isEmpty()) "Not shared yet" else "Shared on: $it" }
+                    val active = listOfNotNull(videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null, puzzleLabel, typeLabel, sharedLabel).size
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -1580,6 +1764,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         if (videoLabel != null) ActiveFilterChip(videoLabel) { ui.hidden = emptySet(); ui.save() }
                         if (exportLabel != null) ActiveFilterChip(exportLabel) { ui.exportFilter = ExportFilter.ALL; ui.save() }
                         if (ui.checkOnly) ActiveFilterChip("Needs a check") { ui.checkOnly = false; ui.save() }
+                        if (puzzleLabel != null) ActiveFilterChip(puzzleLabel) { ui.puzzleFilter = null; ui.save() }
+                        if (typeLabel != null) ActiveFilterChip(typeLabel) { ui.categoryFilter = null; ui.save() }
+                        if (sharedLabel != null) ActiveFilterChip(sharedLabel) { ui.sharedFilter = null; ui.save() }
                         if (active >= 2) {
                             Text(
                                 "Clear all",
@@ -1592,6 +1779,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                         ui.hidden = emptySet()
                                         ui.exportFilter = ExportFilter.ALL
                                         ui.checkOnly = false
+                                        ui.puzzleFilter = null
+                                        ui.categoryFilter = null
+                                        ui.sharedFilter = null
                                         ui.save()
                                     }
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -1751,8 +1941,15 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             }
                         }
                     } else {
-                        val shown = remember(d, ui.footageSort) { sortFootage(d.footage, ui.footageSort, statsById) }
-                        if (ui.footageGrid) {
+                        // (3.2-F) single solves live in the Clips tab only
+                        val shown = remember(d, ui.footageSort) { sortFootage(d.footage.filter { !it.isSingle }, ui.footageSort, statsById) }
+                        if (shown.isEmpty()) {
+                            InfoNote(
+                                title = "No session videos yet",
+                                text = "Your single solves are in the Clips tab. Import a session to find its solves.",
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        } else if (ui.footageGrid) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(ui.footageColumns),
                                 state = footageGridState,
@@ -1833,8 +2030,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ui.detail = null
                     startTrash(PendingTrash(null, e, true))
                 },
+                onTrashOldExport = { e -> startTrash(PendingTrash(null, e, true)) },
                 selection = if (ui.selecting) ui.selected else null,
-                onToggleSelect = { c -> toggleSelect(c, d.openable) }
+                onToggleSelect = { c -> toggleSelect(c, d.openable) },
+                onSingleSaved = { f, stop -> ui.detail = null; showSolve(f.id, stop) },
+                onDeleteVideo = { f -> ui.detail = null; ui.refresh++; confirmTrashFootage = f },
+                onForget = { f -> ui.detail = null; ui.refresh++; forgetting = f }
             )
         }
 
@@ -2016,7 +2217,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             )
         }
 
-        // ===== filter window: which sessions, exported or not =====
+        // ===== filter window: every filter as a row of chips, so all of them are on screen at once; the videos have their own window =====
         if (showFilter && d != null) {
             AlertDialog(
                 onDismissRequest = { showFilter = false },
@@ -2024,37 +2225,86 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 text = {
                     Column(
                         Modifier
-                            .heightIn(max = 460.dp)
-                            .verticalScroll(rememberScrollState())
+                            .heightIn(max = 560.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Show clips that are", style = MaterialTheme.typography.labelLarge)
-                        for (opt in ExportFilter.entries) {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { ui.exportFilter = opt; ui.save() },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(selected = ui.exportFilter == opt, onClick = { ui.exportFilter = opt; ui.save() })
-                                Text(opt.label, style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
+                        FilterChips(
+                            "Show",
+                            listOf(ExportFilter.ALL to "All", ExportFilter.EXPORTED to "Exported", ExportFilter.NOT_EXPORTED to "Not exported"),
+                            ui.exportFilter
+                        ) { ui.exportFilter = it; ui.save() }
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .clickable { ui.checkOnly = !ui.checkOnly; ui.save() },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Checkbox(checked = ui.checkOnly, onCheckedChange = { ui.checkOnly = it; ui.save() })
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides FILTER_CHIP_TOUCH) {
+                                Checkbox(checked = ui.checkOnly, onCheckedChange = { ui.checkOnly = it; ui.save() })
+                            }
                             Text("Only clips that need a check", style = MaterialTheme.typography.bodyMedium)
                         }
-                        Spacer(Modifier.height(10.dp))
-                        Text("Show clips from these videos", style = MaterialTheme.typography.labelLarge)
+                        // (3.2-B) puzzle and type: only the tags some clip has, plus Not tagged
+                        TagFilterSection("Puzzle", d.clips.map { it.puzzle }, PUZZLES, ui.puzzleFilter) { ui.puzzleFilter = it; ui.save() }
+                        TagFilterSection("Type", d.clips.map { it.category }, CATEGORIES, ui.categoryFilter) { ui.categoryFilter = it; ui.save() }
+                        // (3.2-E) where the clips were shared: every platform, then Not shared yet
+                        FilterChips(
+                            "Shared on",
+                            (listOf<String?>(null) + SOCIAL_PLATFORMS + listOf("")).map { it to (when (it) { null -> "Any"; "" -> "Not shared yet"; else -> it }) },
+                            ui.sharedFilter
+                        ) { ui.sharedFilter = it; ui.save() }
+                        // the videos: one line here, the list in its own window
+                        val shownN = d.footage.count { it.id !in ui.hidden }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showVideoFilter = true }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Videos", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                            Text(
+                                if (ui.hidden.isEmpty()) "All (${d.footage.size})" else "$shownN of ${d.footage.size}",
+                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary
+                            )
+                            Text("  ›", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                },
+                confirmButton = { Button(onClick = { showFilter = false }) { Text("Done") } }
+            )
+        }
+
+        // ===== which videos the Clips tab shows (opened from the Filter window's Videos line) =====
+        if (showVideoFilter && d != null) {
+            AlertDialog(
+                onDismissRequest = { showVideoFilter = false },
+                title = { Text("Show clips from these videos") },
+                text = {
+                    Column(
+                        Modifier
+                            .heightIn(max = 460.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         Row {
                             TextButton(onClick = { ui.hidden = emptySet(); ui.save() }) { Text("All") }
                             TextButton(onClick = { ui.hidden = d.footage.map { it.id }.toSet(); ui.save() }) { Text("None") }
                         }
-                        for (f in sortFootage(d.footage, FootageSort.NEWEST, statsById)) {
+                        // (3.2-F) single solves are switched on and off together, so the list stays short
+                        val singles = d.footage.filter { it.isSingle }.map { it.id }
+                        if (singles.isNotEmpty()) {
+                            val on = singles.any { it !in ui.hidden }
+                            Row(
+                                Modifier.fillMaxWidth().clickable { ui.hidden = if (on) ui.hidden + singles else ui.hidden - singles.toSet(); ui.save() },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked = on, onCheckedChange = { ui.hidden = if (on) ui.hidden + singles else ui.hidden - singles.toSet(); ui.save() })
+                                Text("Single solves (${singles.size})", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        for (f in sortFootage(d.footage.filter { !it.isSingle }, FootageSort.NEWEST, statsById)) {
                             val on = f.id !in ui.hidden
                             Row(
                                 Modifier
@@ -2081,7 +2331,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                     }
                 },
-                confirmButton = { Button(onClick = { showFilter = false }) { Text("Done") } }
+                confirmButton = { Button(onClick = { showVideoFilter = false }) { Text("Done") } }
             )
         }
 
@@ -2100,6 +2350,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                     (if (canOpenIt) "${st?.solves ?: 0} solves, ${menuFootage.cutCount} cuts saved" else "${st?.solves ?: 0} exported clips") +
                                     (if (st?.best != null) ", best ${st.bestText}" else "") + "\n" +
                                     (if (menuFootage.lastScanMs > 0) "Last scanned ${formatDate(menuFootage.lastScanMs)}" else "Not scanned yet") +
+                                    "\nPuzzle: " + tagLabel(menuFootage.puzzle, menuFootage.category).ifEmpty { "not tagged" } +
                                     "\nFile: ${menuFootage.displayName}",
                             style = MaterialTheme.typography.bodyMedium
                         )
@@ -2134,6 +2385,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             TextButton(onClick = { footageMenu = null; startTrash(PendingTrash(menuFootage, null, false)) }) { Text("Restore video") }
                         }
                         TextButton(onClick = { renaming = menuFootage; footageMenu = null }) { Text("Rename") }
+                        TextButton(onClick = { tagFootage = menuFootage; footageMenu = null }) { Text("Set puzzle for this video\u2026") }
 
                         // the two that remove things: apart, at the bottom, in red (each one warns first)
                         Spacer(Modifier.height(8.dp))
@@ -2147,6 +2399,48 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }
                 },
                 confirmButton = { Button(onClick = { footageMenu = null }) { Text("Close") } }
+            )
+        }
+
+        // ===== (3.2-B) puzzle tag of the chosen clips =====
+        if (tagSelection && d != null) {
+            val chosen = d.clips.filter { it.listKey in ui.selected && it.index >= 0 }
+            val one = chosen.map { it.footage }.distinctBy { it.id }.singleOrNull()
+            TagDialog(
+                title = "Set puzzle for ${clipsText(chosen.size, "clip")}",
+                puzzle = chosen.map { it.cut.puzzle }.distinct().singleOrNull(),
+                category = chosen.map { it.cut.category }.distinct().singleOrNull(),
+                forClip = true,
+                followPuzzle = one?.puzzle,
+                followCategory = one?.category,
+                onDismiss = { tagSelection = false },
+                onDone = { choice -> tagSelection = false; setTagsForSelected(choice, chosen, d) }
+            )
+        }
+
+        // ===== (3.2-B) puzzle tag of a whole video (Footage menu) =====
+        val taggingFootage = tagFootage
+        if (taggingFootage != null) {
+            TagDialog(
+                title = "Puzzle for this video",
+                puzzle = taggingFootage.puzzle,
+                category = taggingFootage.category,
+                forClip = false,
+                intro = "Its clips follow it. Tag odd clips in the Clips tab.",
+                onDismiss = { tagFootage = null },
+                onDone = { choice ->
+                    tagFootage = null
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            try {
+                                SessionStore.updateFootageTags(
+                                    context, taggingFootage.id, choice.puzzle ?: taggingFootage.puzzle, choice.category ?: taggingFootage.category
+                                )
+                            } catch (e: Exception) { }
+                        }
+                        ui.refresh++
+                    }
+                }
             )
         }
 
@@ -2285,7 +2579,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val exportedN = its.count { it.exported != null }
             AlertDialog(
                 onDismissRequest = { forgetting = null },
-                title = { Text("Forget this session?") },
+                title = { Text(if (forgetTarget.isSingle) "Forget this solve?" else "Forget this session?") },
                 text = {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                         FootageHeader(forgetTarget, d?.openable?.get(forgetTarget.id) == true)
@@ -2323,6 +2617,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             )
         }
 
+        // ===== (3.2-G) backup file, restore, reconnect in bulk =====
+        if (showBackup) {
+            BackupDialog(onMessage = { message = it }, onChanged = { ui.refresh++ }, onDismiss = { showBackup = false })
+        }
+
         if (showAbout) AboutDialog { showAbout = false }
     }
 }
@@ -2335,13 +2634,14 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
 private fun clipWindow(clip: GalleryClip, cuts: List<CutItem>): Pair<Double, Double> {
     val f = clip.footage
     val durSec = f.durationMs / 1000.0
+    if (f.isSingle) return singleRange(f)              // (3.2-F) the trim, or the whole file
     val computed = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), durSec).firstOrNull { it.cutIndex == clip.index }
     if (computed != null) return Pair(computed.startSec, computed.endSec)
     // a solve with no clip (too close to the one before, or left over from before the video): show the stretch leading up to it instead
     return Pair(max(0.0, clip.cut.stopSec - 20.0), min(durSec, clip.cut.stopSec + f.afterPad))
 }
 
-/** A round button for one social media platform; lit when the note already mentions it. */
+/** (3.2-E) A round button for one social media platform; lit when the clip is marked as shared there. */
 @Composable
 private fun SocialChip(label: String, on: Boolean, onClick: () -> Unit) {
     Text(
@@ -2824,8 +3124,12 @@ fun ClipViewer(
     onReconnect: (Footage) -> Unit,
     onShowSession: (Footage) -> Unit,
     onTrashExport: (ExportedClip) -> Unit,
+    onTrashOldExport: (ExportedClip) -> Unit = onTrashExport,   // (3.2-D) the old file after a re-export: the viewer stays on the clip
     selection: Set<String>? = null,                 // not null while clips are being chosen for an export: the chosen ones
-    onToggleSelect: (GalleryClip) -> Unit = { }
+    onToggleSelect: (GalleryClip) -> Unit = { },
+    onSingleSaved: (Footage, Double) -> Unit = { _, _ -> },   // (3.2-F) a single solve's time or trim was changed: (video, new stop)
+    onDeleteVideo: (Footage) -> Unit = { },                    // (3.2-F) a single solve's Delete video (it has no Footage card)
+    onForget: (Footage) -> Unit = { }                          // (3.2-F) a single solve's Forget
 ) {
     if (list.isEmpty()) return
     val context = LocalContext.current
@@ -2875,6 +3179,16 @@ fun ClipViewer(
     val noteDrafts = remember { mutableStateMapOf<String, String>() }
     val noteSaved = remember { mutableStateMapOf<String, String>() }
     val checkedNow = remember { mutableStateMapOf<String, Boolean>() }      // clips marked as checked here (saved at once)
+    val tagOv = remember { mutableStateMapOf<String, Pair<String, String>>() }   // (3.2-B) clips tagged here: their own (puzzle, type)
+    val penaltyOv = remember { mutableStateMapOf<String, Pair<Int, Boolean>>() } // (3.2-C) clips given a penalty here: (+2 count, DNF)
+    val padOv = remember { mutableStateMapOf<String, Pair<Double?, Double?>>() }  // (3.2-D) clips given their own buffers here (null = follow)
+    val sharedOv = remember { mutableStateMapOf<String, List<String>>() }        // (3.2-E) clips whose Shared on was changed here
+    val timeOv = remember { mutableStateMapOf<String, String>() }                // (3.2-F) single solves whose time was typed here
+    val keyboard = LocalSoftwareKeyboardController.current
+    var reexportAsk by remember { mutableStateOf("") }           // (3.2-D) the clip whose buffers changed after its export: "Re-export now?"
+    var replaceOld by remember { mutableStateOf<ExportedClip?>(null) }   // (3.2-D) after that re-export: move the old file to the trash?
+    var singleEdit by remember { mutableStateOf(false) }         // (3.2-F) the Edit window of a single solve (time and trim)
+    var tagWindow by remember { mutableStateOf(false) }          // (3.2-B) the "Puzzle for this clip" window
     var noteVersion by remember { mutableStateOf(0) }
     var overrideVersion by remember { mutableStateOf(0) }
     var controlsVisible by remember { mutableStateOf(false) }
@@ -2887,7 +3201,22 @@ fun ClipViewer(
     var renderedKey by remember { mutableStateOf("") }           // the clip whose first picture the player has drawn
 
     fun withScramble(c: GalleryClip): Boolean = scrambleOv[c.listKey] ?: c.cut.includeScramble
+    /** (3.2-B) The clip's own (puzzle, type) tags, with a change made here. */
+    fun ownTags(c: GalleryClip): Pair<String, String> = tagOv[c.listKey] ?: (c.cut.puzzle to c.cut.category)
+    /** (3.2-B) The clip's tag as shown and as put into an exported file's name ("" = not tagged). */
+    fun tagTextOf(c: GalleryClip): String {
+        val (p, k) = ownTags(c)
+        return tagLabel(resolveTag(p, c.footage.puzzle), resolveTag(k, c.footage.category))
+    }
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
+    /** (3.2-F) The time the timer showed, with one typed here. */
+    fun timeOf(c: GalleryClip): String = timeOv[c.listKey] ?: c.cut.timeText
+    /** (3.2-E) Where the clip was shared, with a change made here. */
+    fun sharedOf(c: GalleryClip): List<String> = sharedOv[c.listKey] ?: c.cut.sharedOn
+    /** (3.2-D) The clip's own buffers (before, after; null = follows the video), with a change made here. */
+    fun padsOf(c: GalleryClip): Pair<Double?, Double?> = padOv[c.listKey] ?: (c.cut.beforePad to c.cut.afterPad)
+    /** (3.2-C) The clip's penalty (+2 count, DNF), with a change made here. */
+    fun penaltyOf(c: GalleryClip): Pair<Int, Boolean> = penaltyOv[c.listKey] ?: (c.cut.plus2Count to c.cut.dnf)
     /**
      * All cuts of one session as they are right now (the editor's list, with the scramble choices made here). The cut of [clip] itself is
      * counted as switched on even if it is off in the editor: asking for this clip here is an explicit request for it.
@@ -2895,7 +3224,13 @@ fun ClipViewer(
     fun cutsFor(clip: GalleryClip): List<CutItem> =
         allClips.filter { it.footage.id == clip.footage.id && !it.exportOnly && it.index >= 0 }
             .sortedBy { it.index }
-            .map { c -> c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c)) }
+            .map { c ->
+                val (before, after) = padsOf(c)
+                c.cut.copy(
+                    included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c), beforePad = before, afterPad = after,
+                    timeText = timeOf(c)
+                )
+            }
 
     /** The moment of the video a clip starts at (what the player shows first), so the still and the first frame are the same picture. */
     fun stillMsFor(c: GalleryClip): Long =
@@ -3020,7 +3355,9 @@ fun ClipViewer(
         exportMessage = ""
         actionHint = ""
         confirmReexport = false
+        reexportAsk = ""
         confirmTrash = false
+        tagWindow = false
         taps.pending?.cancel()           // a tap on the clip before must not toggle the controls of this one
         taps.pending = null
         taps.streakSide = 0
@@ -3097,18 +3434,98 @@ fun ClipViewer(
         }
     }
 
+    /** (3.2-B) Sets one clip's own tags (saved at once, and marked `edited` like every change to one clip). */
+    fun setTags(c: GalleryClip, choice: TagChoice) {
+        val (ownP, ownK) = ownTags(c)
+        val p = applyTagChoice(ownP, choice.puzzle)
+        val k = applyTagChoice(ownK, choice.category)
+        if (p == ownP && k == ownK) return
+        tagOv[c.listKey] = p to k
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutTags(context, c.footage.id, c.cut.stopSec, p, k) } catch (e: Exception) { }
+            }
+        }
+    }
+
+    // (3.2-C) a penalty renames the clip's exported file (Android may ask first); the message says how it went
+    val renamer = rememberExportRenamer { exportMessage = it }
+
+    /**
+     * (3.2-C) Sets one clip's penalty (saved at once, marked `edited`). Its exported file, if any, is renamed to match; the export keeps
+     * its link (`stop_sec`).
+     */
+    fun setPenalty(c: GalleryClip, plus2Count: Int, dnf: Boolean) {
+        if (penaltyOf(c) == (plus2Count to dnf)) return
+        penaltyOv[c.listKey] = plus2Count to dnf
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutPenalty(context, c.footage.id, c.cut.stopSec, plus2Count, dnf) } catch (e: Exception) { }
+            }
+        }
+        val e = exportedFor(c) ?: return
+        if (e.trashedMs != 0L) return
+        val newName = penaltyRename(e, timeOf(c), plus2Count, dnf) ?: return
+        renamer.rename(e, newName) { name ->
+            exportedNow[c.listKey] = ExportedClip(e.id, e.footageId, e.stopSec, e.timeText, e.uri, name, e.offsetSec, e.exportedMs, e.trashedMs)
+        }
+    }
+
+    /** (3.2-F) Saves the time typed for a single solve (marked `edited`). */
+    fun setTime(c: GalleryClip, timeText: String) {
+        timeOv[c.listKey] = timeText
+        overrideVersion++
+        keyboard?.hide()
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutTime(context, c.footage.id, c.cut.stopSec, timeText) } catch (e: Exception) { }
+            }
+        }
+    }
+
+    /** (3.2-E) Marks one clip as shared on [platform], or not any more (saved at once, marked `edited`). The note is not touched. */
+    fun toggleSharedOn(c: GalleryClip, platform: String) {
+        val now = toggleShared(sharedOf(c), platform)
+        sharedOv[c.listKey] = now
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutSharedOn(context, c.footage.id, c.cut.stopSec, now) } catch (e: Exception) { }
+            }
+        }
+    }
+
+    /**
+     * (3.2-D) Sets one clip's own buffers (saved at once, marked `edited`). Its clip changes at once; an exported clip asks
+     * "Re-export now?", because the file still has the old buffers.
+     */
+    fun setPads(c: GalleryClip, before: Double?, after: Double?) {
+        if (padsOf(c) == (before to after)) return
+        padOv[c.listKey] = before to after
+        overrideVersion++
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutPads(context, c.footage.id, c.cut.stopSec, before, after) } catch (e: Exception) { }
+            }
+        }
+        val e = exportedFor(c)
+        if (e != null && e.trashedMs == 0L) reexportAsk = c.listKey
+    }
+
     // ---- export this one clip (the same maths and rules as the batch export) ----
-    fun doExport() {
+    // [replacing]: (3.2-D) the file this export replaces; once the new one is saved, the old one is offered to the trash
+    fun doExport(replacing: ExportedClip? = null) {
         if (exporting) return
         val c = current
         val f = c.footage
         val cuts = cutsFor(c)
-        val clip = computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0).firstOrNull { it.cutIndex == c.index }
+        val clip = clipsFor(f, cuts).firstOrNull { it.cutIndex == c.index }
         if (clip == null) {
             exportMessage = "This solve is too close to the one before to make a clip."
             return
         }
-        val cut = cuts.getOrNull(c.index) ?: return
+        val (p2, dnf) = penaltyOf(c)
+        val cut = cuts.getOrNull(c.index)?.copy(plus2Count = p2, dnf = dnf) ?: return
+        val named = Clip(clip.number, clip.startSec, clip.endSec, clip.timeText, clip.cutIndex, clip.withScramble, clip.solveStartSec, clip.noTime, p2, dnf)
         exporting = true
         exportMessage = "Exporting..."
         scope.launch {
@@ -3116,7 +3533,8 @@ fun ClipViewer(
             // cancelled, but the background step still finishes, so the new file is always recorded (and shows as Exported).
             val done: Pair<ExportResult, ExportedClip?>? = withContext(Dispatchers.IO) {
                 try {
-                    val result = ClipExporter.export(context, Uri.parse(f.uri), listOf(clip), f.title) { _, _ -> }
+                    val tag = tagTextOf(c)
+                    val result = ClipExporter.export(context, Uri.parse(f.uri), listOf(named), f.title, { tag }) { _, _ -> }
                     val now = System.currentTimeMillis()
                     val records = result.files.map { ef ->
                         ExportedClip(0L, f.id, cut.stopSec, cut.timeText, ef.uri, ef.fileName, max(0.0, cut.stopSec - ef.startSec), now)
@@ -3134,7 +3552,10 @@ fun ClipViewer(
             } else {
                 exportMessage = done.first.message
                 val record = done.second
-                if (record != null) exportedNow[c.listKey] = record
+                if (record != null) {
+                    exportedNow[c.listKey] = record
+                    if (replacing != null && replacing.uri != record.uri) replaceOld = replacing
+                }
             }
             exporting = false
         }
@@ -3288,6 +3709,46 @@ fun ClipViewer(
             }
         }
 
+        // ===== (3.2-F) a single solve with no time yet: asked here, over the video, so it can be read off the stopped timer =====
+        if (footage.isSingle && current.index >= 0 && timeOf(current).isBlank() && sheetP < 0.5f) {
+            var draft by remember(current.listKey) { mutableStateOf("") }
+            val ok = parseTimeSeconds(draft) != null
+            val faint = Color(0x99FFFFFF)
+            Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .systemBarsPadding()
+                    .padding(top = if (controlsVisible) 56.dp else 8.dp, start = 10.dp, end = 10.dp)
+                    .background(Color(0xDD000000), RoundedCornerShape(12.dp))
+                    .padding(10.dp)
+            ) {
+                Text("Type the time the timer showed", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ':' } },
+                        singleLine = true,
+                        placeholder = { Text("e.g. 12.412 or 1:02.34") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (ok) setTime(current, draft.trim()) }),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White,
+                            focusedBorderColor = Color.White, unfocusedBorderColor = faint,
+                            focusedPlaceholderColor = faint, unfocusedPlaceholderColor = faint
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { setTime(current, draft.trim()) }, enabled = ok) { Text("Save") }
+                }
+                Text(
+                    "Pause on the stopped timer. Penalty, puzzle and trim are in the details (swipe up).",
+                    color = Color(0xFFCCCCCC), style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
         if (showHint && sheetP < 0.05f && !controlsVisible) {
             SwipeUpHint(Modifier.align(Alignment.Center).padding(top = 120.dp))
         }
@@ -3327,14 +3788,21 @@ fun ClipViewer(
                         .padding(bottom = 28.dp)
                 ) {
                     val exportedFile = exportedFor(current)
+                    val (plus2Now, dnfNow) = penaltyOf(current)
                     Row(verticalAlignment = Alignment.Bottom) {
+                        // (3.2-C) with its penalty: "13.263 (+2)", "DNF(11.263)"
+                        val shown = shownTime(timeOf(current), plus2Now, dnfNow)
                         Text(
-                            if (current.cut.timeText.isBlank()) "time unknown" else "${current.cut.timeText} s",
+                            when {
+                                shown.isEmpty() -> "time unknown"
+                                hasPenalty(plus2Now, dnfNow) -> shown
+                                else -> "$shown s"
+                            },
                             style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.width(12.dp))
                         Text(
-                            (if (current.index >= 0) "Solve ${current.index + 1} of ${current.total}  |  " else "") +
+                            (if (current.index >= 0) current.placeText + "  |  " else "") +
                                     "at ${formatTime(Math.round(current.cut.stopSec * 1000.0))} in the video",
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -3348,24 +3816,31 @@ fun ClipViewer(
                     val noVideoHint = if (current.solveDeleted) "This solve was deleted in the editor. Only its exported file is left."
                     else if (!sourceOk) "The original video is missing. Tap Reconnect video below to use it again."
                     else "This clip no longer matches a solve. Open the video in the editor from the Footage tab."
-                    val noFileHint = if (exportedFile == null) "Not exported yet, so there's no file to delete.\nWrong solve? Tap Editor to fix or delete it."
+                    // (3.2-F) a single solve: the file is the clip unless it is trimmed, and it is edited here, not in the editor
+                    val single = footage.isSingle
+                    val wholeFile = single && !footage.isTrimmed
+                    val noFileHint = if (exportedFile == null && single) "Not exported, so there's no copy to delete. To remove the solve, use Forget below."
+                    else if (exportedFile == null) "Not exported yet, so there's no file to delete.\nWrong solve? Tap Editor to fix or delete it."
                     else "This file is already in the phone's trash. Restore it from Recently deleted."
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SheetAction(
                             if (exporting) "Exporting..." else if (exportedFile != null) "Export again" else "Export",
                             MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary,
-                            enabled = editable && !exporting, modifier = Modifier.weight(1f),
-                            onDisabledClick = { if (!exporting) actionHint = noVideoHint },
+                            enabled = editable && !exporting && !wholeFile, modifier = Modifier.weight(1f),
+                            onDisabledClick = {
+                                if (wholeFile) actionHint = "This clip is the whole video file, so it needs no export. Trim it (Edit) to make a copy."
+                                else if (!exporting) actionHint = noVideoHint
+                            },
                             icon = { c -> ExportIcon(c, 22.dp) }
                         ) { if (exportedFile != null) confirmReexport = true else doExport() }
                         SheetAction(
-                            "Editor",
+                            if (single) "Edit" else "Editor",
                             MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurface,
                             enabled = editable, modifier = Modifier.weight(1f),
                             onDisabledClick = { actionHint = noVideoHint },
                             icon = { c -> EditIcon(c, 22.dp) }
-                        ) { scope.launch { flushNotes(); onOpenEditor(current) } }
+                        ) { if (single) singleEdit = true else scope.launch { flushNotes(); onOpenEditor(current) } }
                         SheetAction(
                             "Delete file",
                             MaterialTheme.colorScheme.surfaceContainerHighest, AppColors.danger,
@@ -3417,9 +3892,11 @@ fun ClipViewer(
                     // ===== what the clip contains (changes here show up in the editor too) =====
                     if (editable) {
                         Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Include the scramble", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            Switch(checked = withScramble(current), onCheckedChange = { setScramble(current, it) })
+                        if (!single) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Include the scramble", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Switch(checked = withScramble(current), onCheckedChange = { setScramble(current, it) })
+                            }
                         }
                         if (window != null) {
                             Text(
@@ -3434,9 +3911,39 @@ fun ClipViewer(
                                 style = MaterialTheme.typography.labelSmall
                             )
                         }
+                        // ===== (3.2-D) this clip's own buffers (a single solve has its trim instead) =====
+                        if (!single) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Buffers", style = MaterialTheme.typography.labelLarge)
+                            val (ownBefore, ownAfter) = padsOf(current)
+                            PadEditor(footage.beforePad.toDouble(), footage.afterPad.toDouble(), ownBefore, ownAfter) { b, a -> setPads(current, b, a) }
+                        } else if (wholeFile) {
+                            Text("The whole file is the clip. Tap Edit to trim it.", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
 
-                    // ===== note and social media buttons =====
+                    // ===== (3.2-B) puzzle tag: its own, or its video's =====
+                    if (current.index >= 0) {
+                        Spacer(Modifier.height(8.dp))
+                        val shownTag = tagTextOf(current)
+                        val follows = ownTags(current).let { it.first == "" && it.second == "" }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Puzzle: " + shownTag.ifEmpty { "not tagged" }, style = MaterialTheme.typography.bodyMedium)
+                                if (follows && shownTag.isNotEmpty()) Text("From the video", style = MaterialTheme.typography.labelSmall)
+                            }
+                            TextButton(onClick = { tagWindow = true }) { Text("Change") }
+                        }
+                        // ===== (3.2-C) penalty: renames the exported file too =====
+                        Spacer(Modifier.height(8.dp))
+                        Text("Penalty", style = MaterialTheme.typography.labelLarge)
+                        PenaltyPicker(plus2Now, dnfNow) { n, dnf -> setPenalty(current, n, dnf) }
+                        if (exportedFile != null && exportedFile.trashedMs == 0L) {
+                            Text("A penalty renames the exported file to match.", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
+                    // ===== note, and (3.2-E) where it was shared =====
                     Spacer(Modifier.height(10.dp))
                     val canNote = current.index >= 0
                     val note = noteDrafts[current.listKey] ?: current.cut.userNote
@@ -3450,9 +3957,12 @@ fun ClipViewer(
                         OutlinedTextField(
                             value = note,
                             onValueChange = { noteDrafts[current.listKey] = it; noteVersion++ },
-                            placeholder = { Text("Write a note, or press a button below") },
+                            placeholder = { Text("Write a note") },
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Spacer(Modifier.height(10.dp))
+                        Text("Shared on", style = MaterialTheme.typography.labelLarge)
+                        val shared = sharedOf(current)
                         Row(
                             Modifier
                                 .horizontalScroll(rememberScrollState())
@@ -3460,10 +3970,7 @@ fun ClipViewer(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             for (p in SOCIAL_PLATFORMS) {
-                                SocialChip(p, noteMentions(note, p)) {
-                                    noteDrafts[current.listKey] = togglePlatform(note, p)
-                                    noteVersion++
-                                }
+                                SocialChip(p, p in shared) { toggleSharedOn(current, p) }
                             }
                         }
                     } else {
@@ -3475,12 +3982,12 @@ fun ClipViewer(
 
                     // ===== where it comes from =====
                     Spacer(Modifier.height(10.dp))
-                    Text("From this video", style = MaterialTheme.typography.labelLarge)
+                    Text(if (single) "This video" else "From this video", style = MaterialTheme.typography.labelLarge)
                     Card(
                         Modifier
                             .fillMaxWidth()
                             .padding(top = 4.dp)
-                            .clickable(onClick = { scope.launch { flushNotes(); onShowSession(footage) } })
+                            .clickable(enabled = !single, onClick = { scope.launch { flushNotes(); onShowSession(footage) } })
                     ) {
                         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Thumb(
@@ -3491,17 +3998,27 @@ fun ClipViewer(
                             Column(Modifier.weight(1f)) {
                                 Text(footage.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 Text(
-                                    formatDate(dateOf(footage)) + "  |  " + formatTime(footage.durationMs) + "  |  ${stats[footage.id]?.solves ?: 0} " +
-                                            (if (sourceOk) "solves" else "exported"),
+                                    formatDate(dateOf(footage)) + "  |  " + formatTime(footage.durationMs) +
+                                            (if (single) "  |  one solve" else "  |  ${stats[footage.id]?.solves ?: 0} " + (if (sourceOk) "solves" else "exported")),
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text(
                                     "File: ${footage.displayName}" + (if (!sourceOk) " (deleted or moved)" else ""),
                                     style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis
                                 )
-                                Text("Tap to see only this video's clips", style = MaterialTheme.typography.labelSmall)
+                                if (!single) Text("Tap to see only this video's clips", style = MaterialTheme.typography.labelSmall)
                             }
                         }
+                    }
+
+                    // (3.2-F) a single solve has no Footage card, so its Delete video and Forget are here (each one warns first)
+                    if (single) {
+                        Spacer(Modifier.height(10.dp))
+                        if (sourceOk && footage.trashedMs == 0L) {
+                            DangerButton("Delete video") { scope.launch { flushNotes(); onDeleteVideo(footage) } }
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        DangerButton("Forget this solve") { scope.launch { flushNotes(); onForget(footage) } }
                     }
 
                     if (!sourceOk) {
@@ -3520,6 +4037,20 @@ fun ClipViewer(
             }
         }
 
+        if (tagWindow && current.index >= 0) {
+            val (ownP, ownK) = ownTags(current)
+            TagDialog(
+                title = "Puzzle for this clip",
+                puzzle = ownP,
+                category = ownK,
+                forClip = true,
+                followPuzzle = current.footage.puzzle,
+                followCategory = current.footage.category,
+                onDismiss = { tagWindow = false },
+                onDone = { choice -> tagWindow = false; setTags(current, choice) }
+            )
+        }
+
         val trashTarget = exportedFor(current)
         if (confirmTrash && trashTarget != null) {
             AlertDialog(
@@ -3536,6 +4067,78 @@ fun ClipViewer(
                 },
                 confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Delete") } },
                 dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (3.2-F) a single solve's time and trim (its penalty, tag, note and Shared on are in the sheet) =====
+        if (singleEdit && footage.isSingle && current.index >= 0) {
+            val f = footage
+            SingleSolveDialog(
+                title = "Edit this solve",
+                uri = Uri.parse(f.uri),
+                durationMs = f.durationMs,
+                startTime = timeOf(current),
+                startTrim = f.trimStartSec to f.trimEndSec,
+                askPenalty = false,
+                askPuzzle = false,
+                exported = exportedFor(current) != null,
+                onCancel = { singleEdit = false },
+                onSave = { input ->
+                    singleEdit = false
+                    scope.launch {
+                        flushNotes()
+                        val stop = withContext(Dispatchers.IO) {
+                            try { SessionStore.updateSingle(context, f, input.timeText, input.trimStart, input.trimEnd) } catch (e: Exception) { null }
+                        }
+                        if (stop != null) onSingleSaved(f, stop) else exportMessage = "Couldn't save the change."
+                    }
+                }
+            )
+        }
+
+        // ===== (3.2-D) buffers changed on an exported clip: make the file again? =====
+        val reexportFile = exportedFor(current)
+        if (reexportAsk == current.listKey && reexportFile != null && editable) {
+            AlertDialog(
+                onDismissRequest = { reexportAsk = "" },
+                title = { Text("Re-export now?") },
+                text = {
+                    BulletLines(
+                        listOf(
+                            "The exported file still has the old buffers.",
+                            "Re-export makes a new file. Then you choose what happens to the old one."
+                        )
+                    )
+                },
+                confirmButton = { Button(onClick = { reexportAsk = ""; doExport(replacing = reexportFile) }) { Text("Re-export") } },
+                dismissButton = { TextButton(onClick = { reexportAsk = "" }) { Text("Later") } }
+            )
+        }
+
+        // ===== (3.2-D) after that re-export: the old file goes to the trash (ADR-0008), after this warning =====
+        val oldFile = replaceOld
+        if (oldFile != null) {
+            AlertDialog(
+                onDismissRequest = { replaceOld = null },
+                title = { Text("Move the old file to the trash?") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text(oldFile.fileName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(10.dp))
+                        EffectLine(Effect.STAYS, "The new file with the new buffers stays")
+                        EffectLine(Effect.GOES, "The old file goes to the phone's trash")
+                        EffectLine(Effect.UNDO, "Restore it from Recently deleted within about 30 days")
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Android asks you to confirm next.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton("Move old file to trash") { replaceOld = null; onTrashOldExport(oldFile) }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { replaceOld = null }) { Text("Keep both") } }
             )
         }
 

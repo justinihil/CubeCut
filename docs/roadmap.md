@@ -22,11 +22,11 @@ Use `/effort medium` for docs-only, release-prep and small phases.
 
 **To start a version** (the first phase of it):
 ```
-Start v3.2: create dev-v3.2.0 from dev, then Phase 3.2-A.
+Start v3.3: create dev-v3.3.0 from dev, then Phase 3.3-A.
 ```
 **To start a phase** (change the phase id and the branch):
 ```
-Phase 3.2-A from docs/roadmap.md, branch dev-v3.2.0.
+Phase 3.3-A from docs/roadmap.md, branch dev-v3.3.0.
 Read CLAUDE.md, then that phase section, then only the files it names.
 Ask me the phase's open questions first. Then build it, update the owning docs + CHANGELOG in the same commit,
 run assembleDebug + testDebugUnitTest, commit, and give me numbered phone test steps.
@@ -37,7 +37,7 @@ run assembleDebug + testDebugUnitTest, commit, and give me numbered phone test s
 
 **To end a version** (its `-Z` phase):
 ```
-Release prep for v3.2 (phase 3.2-Z).
+Release prep for v3.3 (phase 3.3-Z).
 ```
 This phase:
 - bumps `versionCode` / `versionName`;
@@ -52,200 +52,10 @@ The owner then merges `dev → main` and tags the release by hand ([release step
 
 | Version | Branch | Theme | DB |
 |---|---|---|---|
-| **3.2** | `dev-v3.2.0` | Organise your clips: tags, penalty, per-clip buffers, *Shared on*, single solves, backup | v7 |
 | **3.3** | `dev-v3.3.0` | Better Find solves: no timer setup, more fonts, more accurate | — |
 | **4.0** | `dev-v4.0.0` | Find solves runs in the background after import | v8 |
 
 The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in two so that the quick wins, which need no database change, ship first. The owner's "v3.2" (Find solves) became 3.3.
-
----
-
-## v3.2: organise your clips (DB v7)
-
-Order:
-1. All schema plumbing first, with no UI (3.2-A), so the later threads only build screens and never touch `saveSession` or `mergeRescan`.
-2. Tags, penalty, buffers and *Shared on* (3.2-B to E).
-3. Single-solve import, which uses the tags, penalty and buffers (3.2-F).
-4. Backup last, because its file must include every new field (3.2-G).
-
-### 3.2-A Schema foundation (no UI) ⬜
-Where to start: the [new per-video or per-clip field recipe](../ARCHITECTURE.md#new-per-video-or-per-clip-field-for-example-a-tag-or-a-penalty). Files:
-- `SessionStore.kt` (`Helper.onCreate` / `onUpgrade`, `loadCuts`, `saveSession`, `loadGallery`);
-- `ClipExporter.kt` (`CutItem`, `computeClips`);
-- `RescanMerge.kt`;
-- `app/src/test`.
-
-Steps:
-1. **Lock the current behaviour first.** Write unit tests for `computeClips`, `parseTimeSeconds`, `mergeRescan` and `checkCuts` on today's code, and commit them.
-2. **Add one `if (oldVersion < 7)` step:**
-   - `footage`: `puzzle TEXT ''`, `category TEXT ''`, `kind TEXT 'session'` (`'single'` for 3.2-F), plus the trim fields that 3.2-F needs.
-   - `cuts`: `puzzle` and `category` (`''` = follows the video), `plus2_count INTEGER 0`, `dnf INTEGER 0`, `before_pad` and `after_pad` (`REAL`, NULL = follows the video), `shared_on TEXT ''`.
-   - One-off: fill `cuts.shared_on` from `platformsIn(user_note)`. Leave the note text unchanged.
-3. **Plumbing:**
-   - `CutItem` fields with defaults; reads in `loadCuts`; writes in the `saveSession` insert; `GalleryClip`.
-   - `mergeRescan` keeps every user-set field.
-   - One `update…` function per Gallery write, shaped like `updateCutScramble`, which sets `user_edited = 1`.
-4. **`computeClips`** uses per-cut pads only when they are set. The tests from step 1 must still pass unchanged.
-
-Rules:
-- Invariant 9: bump `DB_VERSION`, never edit old steps.
-- Invariant 4: a user-set value marks the cut `edited`.
-- Changing `computeClips` is the task here, so it is allowed. The tests prove nothing else moved.
-
-Docs: [data-model.md](data-model.md), the [glossary](glossary.md) and the CHANGELOG.
-
-Phone test: install over 3.1 and check that existing solves, notes and exports survive the upgrade.
-
-### 3.2-B Puzzle and category tags ⬜
-**#3**, the owner's requirements:
-- The **WCA puzzles**, including FTO and Clock.
-- **Other**, with free text.
-- Categories such as relay and PLL attack.
-- Encourage **one puzzle per video** at import.
-- An easy fix for mixed footage:
-  - in the editor, tag the whole video, then untick the clips that don't belong;
-  - tag those clips in the Gallery.
-- Adjust filters and sorts to match.
-
-**Decided:**
-- The editor is crowded, so it gets only *Puzzle for this video* (in the Setup box) and a per-card "not this puzzle" untick.
-- Per-clip tagging lives in the Gallery: *Set puzzle…* on a selection and in the viewer sheet.
-- A clip follows its video's tag unless the tag is set on the clip itself.
-
-*Earlier note:*
-- Two tags:
-  - *Puzzle*: 3x3, 2x2, 4x4–7x7, Megaminx, Pyraminx, Skewb, Square-1, Clock, FTO, Other;
-  - *Type*: Normal, OH, BLD, Relay, PLL attack, Other.
-- Places to set them: an import dialog ("one puzzle per video works best", with *Decide later*), the Setup box, the Edit window, the Gallery selection, the viewer sheet and the Footage menu.
-
-Ask first:
-- The final puzzle and category lists.
-- One list or two?
-- Does the puzzle go into file names?
-- Grouping or sorting by puzzle in the Gallery?
-
-Where to start, Gallery filter and sort: `ClipKey`, `ExportFilter`, the Filter dialog and `GalleryUiState` (`Gallery.kt`).
-
-### 3.2-C Penalty (+2 / DNF) ⬜
-**#7:**
-- A DNF shows as the time in brackets, for example `DNF(12.34)`.
-- +2 can be added several times, and the time shown includes them.
-- In the editor, and maybe in the Gallery.
-- Adding a penalty to an exported clip renames the file, but the clip keeps its link to the export.
-
-**Decided:**
-- The penalty is set in the Edit window and in the viewer sheet.
-- An exported file is **renamed**, and the export stays linked by `stop_sec`.
-
-Ask first:
-- The exact title and file-name format, for example `DNF(12.34)` and `16.34 (+2×2)` / `16.34+`.
-- Does the clip start (solve-only clip) use the raw time or the penalised time? It should use the raw time on the timer, because that is what was filmed.
-
-Where to start:
-- `CutItem.timeText` and `parseTimeSeconds` (`ClipExporter.kt`);
-- the Edit window;
-- the Gallery viewer sheet;
-- `ClipExporter.fileName`.
-
-Rules:
-- The time drives the solve-only clip start and the file name.
-- The export link uses `stop_sec`, so it survives a time change ([data-model](data-model.md#how-exports-link-to-cuts)).
-- **Renaming is new behaviour.** Today an exported file is never touched again.
-  - Update `DISPLAY_NAME` through `ContentResolver.update`. This works while the app owns the file.
-  - After a reinstall, the app no longer owns the file and needs `MediaStore.createWriteRequest`.
-  - Store the new name in `exports.file_name`.
-- Penalty marks on the timer display itself are a reader limitation; see 3.3-E.
-
-### 3.2-D Per-clip buffers ⬜
-**#11:** adjust the before and after buffers of one clip, in the editor and in the Gallery, instead of only one slider for the whole video.
-
-**Decided:**
-- Each clip is *Follow video* (the default) or *Custom*.
-- **On an exported clip, a change offers "Re-export now?"** If the user agrees, a new file is made and the old one goes to the trash through the standard warning dialog.
-
-Where to start:
-- The editor Edit window (`MainActivity.kt`) and the viewer sheet (`Gallery.kt`).
-- `computeClips` already reads the per-cut pads after 3.2-A.
-- The re-export path is `exportFromSession` / `runBatchExport`.
-
-Rules:
-- [ADR-0008](adr/0008-never-delete-permanently.md).
-- A buffer change is a user change: set `edited` (invariant 4).
-
-### 3.2-E Shared on ⬜
-**#10:** filter by where a clip was shared.
-
-**Decided:**
-- *Shared on* is a separate field, with its own platform chips in the viewer sheet. They replace the buttons that add words to the note.
-- The Filter dialog gets *Shared on: X* and *Not shared yet*.
-- 3.2-A fills the field once from existing notes. The note text is left as it is.
-
-Where to start:
-- `SocialChip` and the viewer sheet (`Gallery.kt`);
-- `SOCIAL_PLATFORMS`, `platformsIn` and `togglePlatform` (`SessionStore.kt`);
-- the Filter dialog and `GalleryUiState`.
-
-Ask first: should a free-text search on notes be added too?
-
-### 3.2-F Import clips of single solves ⬜
-**#5:** add clips of single solves to the Gallery, with the steps that need, such as typing the solve time.
-
-**Decided:**
-- Import asks *A session* or *One solve*. A single solve (`footage.kind = 'single'`) skips Find solves and goes straight to Clips.
-- The user types the time. Penalty and puzzle are optional.
-- **Trimming is optional:**
-  - an untrimmed clip plays the original file and needs no export;
-  - a trimmed clip is exported as a copy.
-- The re-import warning from 3.1-A covers this path too.
-
-Ask first:
-- Where is the solve's stop point: the end of the file, or a point the user marks?
-- How does a single solve look in the Footage tab?
-- Can a single solve later be turned into a session?
-
-Where to start:
-- Import in `GalleryScreen` / `EditorScreen` (`OpenDocument`, `keepAccess`, `openOrCreate`);
-- `loadGallery`;
-- `computeClips`, where the trim may reuse the per-clip buffers from 3.2-D.
-
-Rules:
-- The `OpenDocument` picker is settled.
-- "Solve N" numbering is settled.
-
-### 3.2-G Backup and restore ⬜
-**#4:** a backup that survives an uninstall and reinstall, and moves the Gallery from an old phone to a new one.
-
-**Decided:**
-- **A backup file the user saves wherever they choose.** It contains no videos and needs no INTERNET permission.
-- This phase starts with a **new ADR that supersedes [ADR-0009](adr/0009-no-backup-or-transfer.md)**.
-
-Plan:
-- **Back up:** write a versioned JSON file with `CreateDocument`. It holds:
-  - every video, identified by name, size and duration;
-  - every cut and export field, including the v3.2 additions.
-- **Restore:** pick the file with `OpenDocument` and merge its contents into the database. Then reconnect videos in bulk:
-  - the user picks many videos at once with `OpenMultipleDocuments`;
-  - each one is matched by name, size and duration (`openOrCreate` step 2).
-
-Ask first:
-- After a reinstall, CubeCut no longer owns the files it exported. To relink them, either:
-  - add `READ_MEDIA_VIDEO` (on-device only, so it doesn't break the offline promise), or
-  - have the user pick the exported files.
-- Does restore merge with an existing Gallery, or replace it?
-
-Where to start:
-- [data-model § Constraints](data-model.md#constraints-for-planned-features);
-- `openOrCreate` and `relink` (`SessionStore.kt`);
-- `res/xml/data_extraction_rules.xml`;
-- `allowBackup` in the manifest;
-- [android.md](android.md).
-
-Rules:
-- The README promises that nothing leaves the phone without the user's action.
-- Stored uris are SAF grants that don't survive a reinstall.
-
-### 3.2-Z Release prep 3.2 ⬜
-Set `versionName "3.2.0"`. Test the upgrade from 3.1 on a phone with real data.
 
 ---
 
@@ -295,6 +105,8 @@ Ask first:
 
 ### 3.3-Z Release prep 3.3 ⬜
 Write the before and after numbers into [algorithms §8](algorithms.md#8-reference-measurements).
+
+Also phone-test **backup and restore** from 3.2 in the full pass. The owner moved that test here (2026-11-23). Test *Back up now*, *Restore* after a reinstall, *Reconnect videos*, *Reconnect exported clips*, and a restore on a second phone if one is available ([known issue](known-issues.md#not-verified)).
 
 ---
 

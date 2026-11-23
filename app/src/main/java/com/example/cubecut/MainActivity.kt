@@ -73,6 +73,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -83,6 +85,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -376,6 +379,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var beforePad by remember { mutableStateOf(2.5f) }           // seconds kept BEFORE the solve starts (used when the scramble is left out)
     var afterPad by remember { mutableStateOf(2.5f) }            // seconds kept AFTER the first frame that shows the final time
     var scrambleAll by remember { mutableStateOf(DEFAULT_INCLUDE_SCRAMBLE) }   // the "all clips" scramble switch (new cuts follow it)
+    // (3.2-B) the video's puzzle and type tags ("" = not tagged); every clip follows them unless it has its own (see Tags.kt)
+    var videoPuzzle by remember { mutableStateOf("") }
+    var videoCategory by remember { mutableStateOf("") }
+    var tagVideoWindow by remember { mutableStateOf(false) }     // the "Puzzle for this video" window (Setup box)
+    var askPuzzleNew by remember { mutableStateOf(false) }       // a video imported for the first time: ask its puzzle once
     var zoom by remember { mutableStateOf(1f) }
     val timelineScroll = rememberScrollState()
     val listScroll = rememberScrollState()                       // the scrolling area under the buttons (setup box + list)
@@ -519,7 +527,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             scope.launch {
                 val known = findImportedBefore(context, uri)
                 if (analyzing) return@launch            // Find solves started meanwhile: never swap the video under it (invariant 1)
-                if (known != null && known.id != footageId) reimportAsk = uri to known else videoUri = uri
+                // (3.2-F) a single solve never opens here: it lives in the Gallery's Clips tab
+                if (known != null && known.isSingle) status = "That video is a single solve. Find it in the Gallery's Clips tab."
+                else if (known != null && known.id != footageId) reimportAsk = uri to known else videoUri = uri
             }
         }
     }
@@ -543,6 +553,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         analysisStatus = ""
         scanReport = null
         scanned = false
+        videoPuzzle = ""
+        videoCategory = ""
+        askPuzzleNew = false
         zoom = 1f
         videoScale = 1f
         videoOffX = 0f
@@ -586,6 +599,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         analysisStatus = openedNote
                     }
                 }
+                videoPuzzle = opened.footage.puzzle
+                videoCategory = opened.footage.category
                 footageId = opened.footage.id       // set last: from now on every change is saved
             }
             // (3.1-D) the filter stays as it was: its list is picked from this video's solves
@@ -597,6 +612,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 buildThumbnails(context, uri, dur, THUMB_COUNT) { p -> importProgress = 0.05f + 0.95f * p }
             }
             importProgress = 1f
+            // (3.2-B) a new video: ask which puzzle it is (once the progress window has gone)
+            if (opened?.isNew == true) askPuzzleNew = true
 
             status = openedNote ?: "Ready"
 
@@ -649,6 +666,18 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     "If it moved, import it again. Your saved cuts come back."
         } finally {
             importing = false
+        }
+    }
+
+    /** (3.2-B) Tags the whole video. A video setting (like the scramble switch), so no clip is marked `edited`. */
+    fun saveVideoTags(puzzle: String, category: String) {
+        videoPuzzle = puzzle
+        videoCategory = category
+        val id = footageId ?: return
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateFootageTags(context, id, puzzle, category) } catch (e: Exception) { }
+            }
         }
     }
 
@@ -706,6 +735,21 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     fun isExported(i: Int): Boolean {
         val c = cuts.getOrNull(i) ?: return false
         return exportedAt.any { Math.abs(it - c.stopSec) < SAME_SOLVE_SEC }
+    }
+
+    // (3.2-C) a penalty renames the solve's exported file (the editor has no export controls, but the file's name follows the penalty)
+    val renamer = rememberExportRenamer { status = it }
+    /** Renames the exported file of [c] to match its penalty. A cut moved since the last save still has its record at the old spot. */
+    fun renameExportOf(c: CutItem) {
+        val id = footageId ?: return
+        val savedStop = pendingMoves.entries.firstOrNull { Math.abs(it.value - c.stopSec) < 0.0005 }?.key ?: c.stopSec
+        scope.launch {
+            val e = withContext(Dispatchers.IO) {
+                try { SessionStore.liveExportAt(context, id, savedStop) } catch (e: Exception) { null }
+            } ?: return@launch
+            val newName = penaltyRename(e, c.timeText, c.plus2Count, c.dnf) ?: return@launch
+            renamer.rename(e, newName)
+        }
     }
 
     // the clips that would be exported right now
@@ -1492,8 +1536,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                if (setupExpanded) "Setup: timer and clip buffers"
-                                else (if (engineNow != null) "Timer ready" else "Timer not set up") +
+                                if (setupExpanded) "Setup: timer, buffers and puzzle"
+                                else tagLabel(videoPuzzle, videoCategory).let { if (it.isEmpty()) "" else "$it \u00B7 " } +
+                                        (if (engineNow != null) "Timer ready" else "Timer not set up") +
                                         " \u00B7 ${"%.1f".format(beforePad)} s before \u00B7 ${"%.1f".format(afterPad)} s after",
                                 style = if (setupExpanded) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
@@ -1592,6 +1637,27 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     )
                                 }
                                 Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
+
+                                // (3.2-B) the puzzle of the whole video; odd solves are unticked on their cards below
+                                Spacer(Modifier.height(12.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("3. Puzzle for this video", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                    InfoButton(
+                                        "Puzzle for this video",
+                                        listOf(
+                                            "Every clip of this video gets this tag.",
+                                            "Mixed puzzles? Untick the odd solves below.",
+                                            "Then tag those clips in the Gallery."
+                                        )
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val videoTag = tagLabel(videoPuzzle, videoCategory)
+                                    Text(videoTag.ifEmpty { "Not tagged" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                    OutlinedButton(onClick = { tagVideoWindow = true }, enabled = footageId != null) {
+                                        Text(if (videoTag.isEmpty()) "Set puzzle" else "Change")
+                                    }
+                                }
                                 // (the scramble switch for all clips is not here: it sits under Add a missed solve, next to the check filter)
                             }
                         }
@@ -1798,8 +1864,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.padding(end = 8.dp, bottom = 2.dp)
                                                 )
+                                                // (3.2-C) with its penalty: "13.263 (+2)", "DNF(11.263)"
+                                                val shown = shownTime(item.timeText, item.plus2Count, item.dnf)
                                                 Text(
-                                                    if (item.timeText.isNotEmpty()) "${item.timeText} s" else "time unknown",
+                                                    when {
+                                                        shown.isEmpty() -> "time unknown"
+                                                        hasPenalty(item.plus2Count, item.dnf) -> shown
+                                                        else -> "$shown s"
+                                                    },
                                                     style = MaterialTheme.typography.titleMedium,
                                                     fontWeight = FontWeight.Bold,
                                                     color = if (item.timeText.isEmpty()) AppColors.check else MaterialTheme.colorScheme.onSurface
@@ -1814,7 +1886,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                                 }
                                                 isLeftover(item) -> "  \u00B7  not a clip"
                                                 else -> ""
-                                            }
+                                            } + (if (item.beforePad != null || item.afterPad != null) "  \u00B7  own buffers" else "")
                                             Text(
                                                 detail,
                                                 style = MaterialTheme.typography.bodySmall,
@@ -1845,6 +1917,40 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                             ) { leaveToGallery(index) }
                                             // not a solve: delete it at once (the Undo bar at the top brings it back); an exported one asks first
                                             DeleteButton(enabled = !analyzing) { requestDelete(index) }
+                                        }
+                                    }
+                                    // (3.2-B) "not this puzzle": ticked = the solve follows the video's tag. Unticking it leaves it not
+                                    // tagged (tag it in the Gallery). Both count as an edit, so a re-scan keeps them.
+                                    val videoTag = tagLabel(videoPuzzle, videoCategory)
+                                    val ownTag = item.puzzle != "" || item.category != ""
+                                    if (!isLeftover(item) && (videoTag.isNotEmpty() || ownTag)) {
+                                        fun toggleTag() {
+                                            if (analyzing || index !in cuts.indices) return
+                                            val c = cuts[index]
+                                            val follows = c.puzzle == "" && c.category == ""
+                                            cuts[index] = if (follows) c.copy(puzzle = NO_TAG, category = NO_TAG, edited = true)
+                                            else c.copy(puzzle = "", category = "", edited = true)
+                                        }
+                                        Row(
+                                            Modifier.clickable(enabled = !analyzing) { toggleTag() }.padding(top = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                                                Checkbox(checked = !ownTag, onCheckedChange = { toggleTag() }, enabled = !analyzing)
+                                            }
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                when {
+                                                    !ownTag -> videoTag
+                                                    item.puzzle == NO_TAG && item.category == NO_TAG ->
+                                                        if (videoTag.isEmpty()) "Not tagged" else "Not $videoTag. Tag it in the Gallery."
+                                                    else -> tagLabel(resolveTag(item.puzzle, videoPuzzle), resolveTag(item.category, videoCategory))
+                                                        .ifEmpty { "not tagged" } + " (own tag)"
+                                                },
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                                            )
                                         }
                                     }
                                     // what needs a look, under the line, full width
@@ -2168,6 +2274,26 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
 
+        // ===== (3.2-B) the video's puzzle: from the Setup box, or asked once when a video is imported for the first time =====
+        if ((tagVideoWindow || askPuzzleNew) && footageId != null && !importing) {
+            val asking = !tagVideoWindow
+            TagDialog(
+                title = if (asking) "Which puzzle is this?" else "Puzzle for this video",
+                puzzle = videoPuzzle,
+                // a new video starts on Normal, so picking only the puzzle is enough
+                category = if (asking && videoCategory.isEmpty()) NORMAL_CATEGORY else videoCategory,
+                forClip = false,
+                intro = if (asking) "One puzzle per video works best. Mixed? Untick the odd solves later." else null,
+                dismissLabel = if (asking) "Decide later" else "Cancel",
+                onDismiss = { tagVideoWindow = false; askPuzzleNew = false },
+                onDone = { choice ->
+                    tagVideoWindow = false
+                    askPuzzleNew = false
+                    saveVideoTags(choice.puzzle ?: videoPuzzle, choice.category ?: videoCategory)
+                }
+            )
+        }
+
         // ===== "Imported before": the picked video has a saved session =====
         val reimport = reimportAsk
         if (reimport != null) {
@@ -2186,6 +2312,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         if (editIndex in cuts.indices) {
             val item = cuts[editIndex]
             var text by remember(editIndex) { mutableStateOf(item.timeText) }
+            var penalty by remember(editIndex) { mutableStateOf(item.plus2Count to item.dnf) }   // (3.2-C) (+2 count, DNF)
+            var pads by remember(editIndex) { mutableStateOf(item.beforePad to item.afterPad) }   // (3.2-D) own buffers (null = follow)
             // moves the cut (not the solve time) and shows the frame it now points at
             fun nudge(delta: Double) {
                 val from = cuts[editIndex].stopSec
@@ -2229,7 +2357,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             InfoNote(
                                 kind = NoteKind.CHECK,
                                 title = "Already exported",
-                                text = "Changes here don't change the file. Export it again to update it."
+                                text = "A penalty renames its file. Other changes need a new export: tap View."
                             )
                             Spacer(Modifier.height(10.dp))
                         }
@@ -2246,6 +2374,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth()
                         )
+
+                        // ---- (3.2-C) the penalty: the time above stays what the timer showed ----
+                        Spacer(Modifier.height(6.dp))
+                        Text("Penalty", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        PenaltyPicker(penalty.first, penalty.second) { n, dnf -> penalty = n to dnf }
 
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider()
@@ -2316,6 +2449,13 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             }
                         }
                         OutlinedButton(onClick = { seekToSec(cuts[editIndex].stopSec) }) { Text("Show it in the video") }
+
+                        // ---- (3.2-D) this clip's own buffers (the Setup box sliders are the video's) ----
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(10.dp))
+                        Text("Buffers for this clip", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        PadEditor(beforePad.toDouble(), afterPad.toDouble(), pads.first, pads.second) { b, a -> pads = b to a }
                         if (item.note.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
                             Text("Note: ${item.note}", style = MaterialTheme.typography.bodySmall)
@@ -2325,7 +2465,16 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 confirmButton = {
                     Button(onClick = {
                         val newText = text.trim()
-                        if (newText != cuts[editIndex].timeText) cuts[editIndex] = cuts[editIndex].copy(timeText = newText, edited = true)
+                        val old = cuts[editIndex]
+                        val penaltyChanged = penalty.first != old.plus2Count || penalty.second != old.dnf
+                        val padsChanged = pads.first != old.beforePad || pads.second != old.afterPad
+                        if (newText != old.timeText || penaltyChanged || padsChanged) {
+                            cuts[editIndex] = old.copy(
+                                timeText = newText, plus2Count = penalty.first, dnf = penalty.second,
+                                beforePad = pads.first, afterPad = pads.second, edited = true
+                            )
+                        }
+                        if (penaltyChanged && isExported(editIndex)) renameExportOf(cuts[editIndex])
                         editIndex = -1
                     }) { Text("Save") }
                 },

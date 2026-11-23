@@ -7,10 +7,10 @@ CubeCut reads the timer display along the whole video. When a solve ends, the ti
 - Runs **offline on the phone**: no cloud, no accounts, no internet permission.
 - **No AI or machine learning.** It uses classic OpenCV image processing and counting.
 - A **review screen** lets you fix times, move cuts, delete false solves (with Undo), add missed ones and work through flagged *checks*.
-- A **Gallery** remembers every video and solve. It has a full-screen viewer, sorting, filtering, multi-select export and dark mode.
+- A **Gallery** remembers every video and solve. It has a full-screen viewer, puzzle tags, +2/DNF penalties, sorting, filtering, multi-select export and dark mode. Clips of single solves can be added too, and a backup file keeps it all across a reinstall.
 - **Lossless, fast exports** to `Movies/CubeCut`. Nothing is ever deleted permanently; deletes go to the phone's trash.
 
-Current version: **3.1.0**. See the [CHANGELOG](CHANGELOG.md). How to use it: [docs/user-guide.md](docs/user-guide.md).
+Current version: **3.2.0**. See the [CHANGELOG](CHANGELOG.md). How to use it: [docs/user-guide.md](docs/user-guide.md).
 
 > **Please read "Tested setup" before you try it.** CubeCut is a hobby project that has only been tried in a narrow setup.
 
@@ -50,7 +50,7 @@ Download the `.apk` from this repository's **Releases** page, open it on the pho
 
 ## Privacy
 
-The app has no internet permission and uploads nothing. Its saved list of sessions is left out of Android backup and phone-to-phone transfer, so nothing leaves the phone. The extra permissions added by the video player and AndroidX libraries don't allow internet access; the full list is in [docs/android.md](docs/android.md#permissions). Videos are opened with Android's file picker and only read. Clips are written to your own `Movies/CubeCut` folder.
+The app has no internet permission and uploads nothing. Its saved list of sessions is left out of Android backup and phone-to-phone transfer, so nothing leaves the phone. To keep it, save a backup file yourself (*⋮ → Backup and restore*; no videos inside) wherever you choose. The extra permissions added by the video player and AndroidX libraries don't allow internet access; the full list is in [docs/android.md](docs/android.md#permissions). Videos are opened with Android's file picker and only read. Clips are written to your own `Movies/CubeCut` folder.
 
 ## Support
 
