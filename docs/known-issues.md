@@ -6,8 +6,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 
 | Issue | Where | Notes |
 |---|---|---|
-| **Version not bumped for 3.0.1** | `app/build.gradle.kts`: `versionCode 3`, `versionName "3.0.0"` at tag `v3.0.1` | CHANGELOG and the old hand-over say 3.0.1 shipped as code 4. TODO(owner): confirm what the shared APK contained, then fix in the next code change |
-| **`lintDebug` fails** with 2 errors | `Gallery.kt:2925-2926`: `PlayerView.setShutterBackgroundColor` / `setKeepContentOnPlayerReset` are Media3 `@UnstableApi` without `@OptIn` | 55 warnings and 42 hints besides. Add `@OptIn(UnstableApi::class)` or a lint baseline |
+| **`lintDebug` fails** with 2 errors | `Gallery.kt:3165-3166`: `PlayerView.setShutterBackgroundColor` / `setKeepContentOnPlayerReset` are Media3 `@UnstableApi` without `@OptIn` | 57 warnings and 43 hints besides (checked 2026-11-23). Add `@OptIn(UnstableApi::class)` or a lint baseline |
 | **Back on the timer setup screen leaves the editor** | `TimerSetupScreen.kt` has no `BackHandler`, so Back reaches the editor's (`leaveToGallery`) | Only the on-screen Cancel cancels setup |
 | **Dead template theme** | `app/src/main/java/com/example/cubecut/ui/theme/{Color,Theme,Type}.kt` | Unused, but declares a second `CubeCutTheme`, so a wrong auto-import is possible. An earlier changelog said it had been deleted. Delete it |
 | **Template-only tests** | `ExampleUnitTest`, `ExampleInstrumentedTest` | No real coverage. See [app/README § Tests](../app/README.md#tests) |
@@ -24,6 +23,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 - **Misread digits can win the vote** on short holds. A held time read without its last digit can become a separate solve, which the *too fast* check then flags ([algorithms](algorithms.md#checks-after-a-scan)).
 - **Deleted cuts can come back** on a re-scan ([ADR-0013](adr/0013-rescan-merge-keeps-user-edits.md)).
 - **No per-frame fallback** to the saved corners when tracking fails on a frame; that frame is skipped.
+- **The Edit window's timer zoom doesn't follow the camera.** It crops around the corners saved at timer setup, with a margin of half the timer's width. If the phone moved more than that, the timer is off the picture: tap *Whole frame*.
 - **Lossless clips start on a keyframe**, up to about 1 s early. A keyframe over 64 MB can't be exported.
 - **Export has no foreground service.** Leaving the app during a long batch export could interrupt it. The screen is kept on.
 - **Swiping the app away stops Find solves.** Vendor battery savers may too ([ADR-0011](adr/0011-foreground-service-for-notification-only.md)).

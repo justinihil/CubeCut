@@ -10,7 +10,7 @@ CubeCut reads the timer display along the whole video. When a solve ends, the ti
 - A **Gallery** remembers every video and solve. It has a full-screen viewer, sorting, filtering, multi-select export and dark mode.
 - **Lossless, fast exports** to `Movies/CubeCut`. Nothing is ever deleted permanently; deletes go to the phone's trash.
 
-Current version: **3.0.1**. See the [CHANGELOG](CHANGELOG.md). How to use it: [docs/user-guide.md](docs/user-guide.md).
+Current version: **3.1.0**. See the [CHANGELOG](CHANGELOG.md). How to use it: [docs/user-guide.md](docs/user-guide.md).
 
 > **Please read "Tested setup" before you try it.** CubeCut is a hobby project that has only been tried in a narrow setup.
 

@@ -49,7 +49,7 @@ What git history and the old guide show. TODO(owner): confirm or correct.
 
 1. Finish work on a feature branch and open a PR into `dev`, then a PR from `dev` into `main`. See [CONTRIBUTING](../CONTRIBUTING.md).
 2. In `app/build.gradle.kts`, set `versionName` to the release (`"X.Y.Z"`) and raise `versionCode` by 1 for every shared release. Android refuses a lower code; an equal code still installs over the old one, but stores and update checkers can't see it as new.
-   - **Currently out of step:** v3.0.1 was tagged with `versionCode 3` / `versionName "3.0.0"`. The plan was 4 / "3.0.1". TODO(owner): was the 3.0.1 APK built from an uncommitted bump? Fix in the next code change.
+   - Commit the bump. v3.0.1 was tagged without one (`versionCode 3` / `"3.0.0"`), so 3.1.0 jumped to 5 ([CHANGELOG history notes](../CHANGELOG.md)).
 3. In `CHANGELOG.md`, rename `[Unreleased]` to `[X.Y.Z] - YYYY-MM-DD` and add a new empty `[Unreleased]`.
 4. Build the signed APK: **Build → Generate Signed App Bundle or APK → APK**, choose the keystore, then the `release` build type. The output goes to `app/release/` (git-ignored).
    - **The keystore and its passwords must be backed up outside the repo.** Updates signed with a different key force users to uninstall first.

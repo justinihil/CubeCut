@@ -21,6 +21,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
@@ -53,6 +54,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
@@ -84,6 +86,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -129,6 +132,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -150,6 +155,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -181,6 +187,21 @@ private const val VIEWER_PICTURE_HEIGHT = 900
 private const val MIN_COLUMNS = 2
 private const val MAX_COLUMNS = 6
 
+/**
+ * Viewer: a second tap on the same half of the picture within this many ms is a double-tap (skip). Longer makes a double-tap easier, but a
+ * single tap must wait this long before it shows or hides the controls, so the controls feel slower.
+ */
+private const val DOUBLE_TAP_MS = 300L
+
+/**
+ * Viewer: after a double-tap, each further tap on the same half within this many ms skips again. Longer keeps a slow rhythm going, but a
+ * tap meant to show the controls right after a skip is taken as one more skip.
+ */
+private const val SKIP_STREAK_MS = 700L
+
+/** Viewer: how long the "−5 s" hint stays after the last double-tap skip. */
+private const val SKIP_HINT_MS = 700L
+
 // tag colours on top of pictures: fixed on purpose (a picture looks the same in light and dark mode); everything on a plain
 // background takes its colours from Theme.kt instead
 private val AMBER = Color(0xFFFFB74D)
@@ -188,10 +209,13 @@ private val GREY = Color(0xFF757575)
 private val GREEN = Color(0xFF2E7D32)
 private val RED = Color(0xFFC62828)
 
-/** A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). */
-class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean) {
+/**
+ * A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). [batch] holds the exported
+ * clips ticked in the Gallery's selection (3.1-E): they all go in one trash request, so Android asks only once.
+ */
+class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean, val batch: List<ExportedClip> = emptyList()) {
     val uriString: String get() = footage?.uri ?: export?.uri ?: ""
-    val name: String get() = footage?.title ?: export?.fileName ?: ""
+    val name: String get() = footage?.title ?: export?.fileName ?: if (batch.size == 1) batch[0].fileName else "${batch.size} files"
 }
 
 /** What the Gallery should point out after loading: a video on the Footage tab, or a clip on the Clips tab. */
@@ -305,6 +329,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var detail by mutableStateOf<GalleryClip?>(null)              // the clip the viewer was opened on (null = viewer closed)
     var detailList by mutableStateOf<List<GalleryClip>>(emptyList())   // the clips the viewer can swipe through, in the order shown
     var skipSeconds by mutableStateOf(prefs.getInt("skip_seconds", 5).coerceIn(1, 60))
+    var autoReplay by mutableStateOf(prefs.getBoolean("auto_replay", false))   // clips in the viewer start again when they end
     var swipeHintSeen by mutableStateOf(prefs.getBoolean("swipe_hint_seen", false))
     var openClip by mutableStateOf<Pair<Long, Double>?>(null)     // (session id, stop time) of a clip to open as soon as the data has loaded
     var selecting by mutableStateOf(false)                        // choosing clips to export (long-press a clip, or a video's Export clips...)
@@ -348,6 +373,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("theme", themeMode.name)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
+            .putBoolean("auto_replay", autoReplay)
             .putBoolean("swipe_hint_seen", swipeHintSeen)
             .apply()
     }
@@ -535,15 +561,21 @@ private fun Badge(text: String, background: Color, textColor: Color = Color.Whit
     )
 }
 
-/** Can this clip be ticked for an export? Only solves whose original video is here and that have a clip of their own. */
-private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
+/** Can this clip be exported? Only solves whose original video is here and that have a clip of their own. */
+private fun exportable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
     !c.exportOnly && c.index >= 0 && !c.noClip && openable[c.footage.id] == true
 
+/**
+ * Can this clip be ticked? Every clip that can be exported, and (3.1-E) every clip with an exported file, so the bin can delete it.
+ * That includes *Export only* and *Solve deleted* clips: Export skips them.
+ */
+private fun selectable(c: GalleryClip, openable: Map<Long, Boolean>): Boolean =
+    exportable(c, openable) || c.exported != null
+
 private fun notSelectableReason(c: GalleryClip, openable: Map<Long, Boolean>): String = when {
-    c.solveDeleted -> "This solve was deleted in the editor, so it can't be exported again."
-    c.exportOnly || openable[c.footage.id] != true -> "This clip's original video is missing, so it can't be exported again."
     c.noClip -> "This solve is too close to the one before. Fix it in the editor first."
-    else -> "This clip can't be exported."
+    openable[c.footage.id] != true -> "This clip's original video is missing, so it can't be exported again."
+    else -> "This clip can't be ticked."
 }
 
 /** The round selection mark: an empty ring, or a filled circle with a tick. */
@@ -1047,6 +1079,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var forgetting by remember { mutableStateOf<Footage?>(null) }
     var relinkFor by remember { mutableStateOf<Footage?>(null) }        // the session whose video is being picked again
     var askExport by remember { mutableStateOf(false) }                 // the "Export N clips?" window
+    var askDelete by remember { mutableStateOf(false) }                 // (3.1-E) the "Delete N exported files?" window
     var batchDone by remember { mutableStateOf(-1) }                    // clips exported so far in a batch export (-1 = not exporting)
     var batchTotal by remember { mutableStateOf(0) }
     // ---- "you were just here": the video or clip you came back from lights up for a moment ----
@@ -1083,7 +1116,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ui.hidden = loaded.footage.map { it.id }.filter { it != id }.toSet()
         ui.exportFilter = ExportFilter.ALL
         ui.save()
-        ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && selectable(it, loaded.openable) }.map { it.listKey }.toSet()
+        ui.selected = loaded.clips.filter { it.footage.id == id && it.exported == null && exportable(it, loaded.openable) }.map { it.listKey }.toSet()
         ui.selecting = true
         message = if (ui.selected.isEmpty()) "All clips of this video are already exported. Tap clips to pick them again."
         else "${ui.selected.size} new clips selected. Tap a clip to add or remove it. The corner arrows play it. Then Export."
@@ -1121,12 +1154,23 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             ui.refresh++
         }
     }
-    /** Switches the scramble on or off for all the chosen clips at once (saved at once; the editor sees it too). */
-    fun setScrambleForSelected(on: Boolean, chosen: List<GalleryClip>) {
+    /**
+     * Switches the scramble on or off for all the chosen clips at once (saved at once; the editor sees it too). (3.1-E) A video whose
+     * exportable clips are all ticked gets the video setting, like the editor's all-clips switch, so its solves are not marked
+     * `edited` and a re-scan still updates them. A video only partly ticked is changed clip by clip, and those clips are `edited`.
+     */
+    fun setScrambleForSelected(on: Boolean, chosen: List<GalleryClip>, loaded: GalleryData) {
+        val wholeVideos = chosen.groupBy { it.footage.id }.filter { (id, group) ->
+            val keys = group.map { it.listKey }.toSet()
+            loaded.clips.filter { it.footage.id == id && exportable(it, loaded.openable) }.all { it.listKey in keys }
+        }.keys
         scope.launch {
             withContext(Dispatchers.IO) {
+                for (id in wholeVideos) {
+                    try { SessionStore.setVideoScramble(context, id, on) } catch (e: Exception) { }
+                }
                 for (c in chosen) {
-                    if (c.cut.includeScramble == on || c.index < 0) continue
+                    if (c.footage.id in wholeVideos || c.cut.includeScramble == on || c.index < 0) continue
                     try { SessionStore.updateCutScramble(context, c.footage.id, c.cut.stopSec, on) } catch (e: Exception) { }
                 }
             }
@@ -1221,15 +1265,19 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
 
-    // Import video: pick a video, then open it in the editor (a video seen before gets its saved cuts back).
+    // Import video: pick a video, then open it in the editor. (3.1) A video seen before asks first (ReimportDialog); Cancel stays here.
     // Reconnect video: the same picker, but the chosen video is attached to the session that lost its video, and you stay in the Gallery.
+    var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = relinkFor
         relinkFor = null
         if (uri != null) {
             SessionStore.keepAccess(context, uri)
             if (target == null) {
-                onOpenEditor(EditorRequest(uri, null))
+                scope.launch {
+                    val known = findImportedBefore(context, uri)
+                    if (known != null) reimportAsk = uri to known else onOpenEditor(EditorRequest(uri, null))
+                }
             } else {
                 scope.launch {
                     message = withContext(Dispatchers.IO) {
@@ -1239,6 +1287,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 }
             }
         }
+    }
+    val reimport = reimportAsk
+    if (reimport != null) {
+        ReimportDialog(
+            footage = reimport.second,
+            uri = reimport.first,
+            onOpen = {
+                reimportAsk = null
+                onOpenEditor(EditorRequest(reimport.first, null))
+            },
+            onCancel = { reimportAsk = null }
+        )
     }
 
     // ---- the phone's trash: Android asks the user to confirm, then tells us the answer ----
@@ -1253,11 +1313,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         try {
                             if (p.footage != null) SessionStore.setFootageTrashed(context, p.footage.id, stamp)
                             else if (p.export != null) SessionStore.setExportTrashed(context, p.export.id, stamp)
+                            for (e in p.batch) SessionStore.setExportTrashed(context, e.id, stamp)
                         } catch (e: Exception) {
                         }
                     }
-                    message = if (p.trashing) "Deleted \"${p.name}\". You can bring it back from Recently deleted."
-                    else "Restored \"${p.name}\"."
+                    message = when {
+                        p.batch.size > 1 -> "Deleted ${p.batch.size} files. You can bring them back from Recently deleted."
+                        p.trashing -> "Deleted \"${p.name}\". You can bring it back from Recently deleted."
+                        else -> "Restored \"${p.name}\"."
+                    }
+                    if (p.batch.isNotEmpty()) exitSelection()
                     ui.refresh++
                 }
             } else {
@@ -1275,6 +1340,22 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         try {
             val request = MediaStore.createTrashRequest(context.contentResolver, listOf(media), p.trashing)
             pendingTrash = p
+            trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        } catch (e: Exception) {
+            pendingTrash = null
+            message = "Couldn't ask Android: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+    /** (3.1-E) Moves the exported files of the ticked clips to the trash, in one request (Android asks once for all of them). */
+    fun startBatchTrash(files: List<ExportedClip>) {
+        val found = files.mapNotNull { e -> SessionStore.mediaStoreUriOf(e.uri)?.let { e to it } }
+        if (found.isEmpty()) {
+            message = "Can't delete these files from here. Delete them in your Files app instead."
+            return
+        }
+        try {
+            val request = MediaStore.createTrashRequest(context.contentResolver, found.map { it.second }, true)
+            pendingTrash = PendingTrash(null, null, true, found.map { it.first })
             trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
         } catch (e: Exception) {
             pendingTrash = null
@@ -1361,19 +1442,24 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 .systemBarsPadding()
                 .padding(horizontal = 8.dp)
         ) {
-            // ===== header (while choosing clips: how many are chosen, All / None, Export) =====
+            // ===== header (while choosing clips: how many are chosen, All / None, the bin, Export) =====
             if (ui.selecting && d != null) {
                 val pickable = shownClips.filter { selectable(it, d.openable) }.map { it.listKey }.toSet()
                 val allOn = pickable.isNotEmpty() && ui.selected.containsAll(pickable)
+                val ticked = d.clips.filter { it.listKey in ui.selected }
+                val canExport = ticked.any { exportable(it, d.openable) }
+                val hasFiles = ticked.any { it.exported != null }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { exitSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
                     Column(Modifier.weight(1f)) {
                         Text("${ui.selected.size} selected", style = MaterialTheme.typography.titleLarge)
-                        // how many of the ticked clips were exported before (they would be exported again), else how to tick
-                        val tickedBefore = d.clips.count { it.listKey in ui.selected && it.exported != null }
+                        // how many of the ticked clips were exported before (they would be exported again, or the bin deletes their
+                        // files), and how many only have a file left (Export skips them); else how to tick
+                        val tickedBefore = ticked.count { it.exported != null }
+                        val fileOnly = ticked.count { !exportable(it, d.openable) }
                         if (tickedBefore > 0) {
                             Text(
-                                "$tickedBefore already exported",
+                                "$tickedBefore already exported" + (if (fileOnly > 0) " \u00b7 $fileOnly file only" else ""),
                                 style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = AppColors.check,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
@@ -1384,10 +1470,17 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     TextButton(onClick = { ui.selected = if (allOn) ui.selected - pickable else ui.selected + pickable }) {
                         Text(if (allOn) "None" else "All")
                     }
-                    Button(onClick = { askExport = true }, enabled = ui.selected.isNotEmpty() && batchDone < 0) { Text("Export") }
+                    // (3.1-E) the red bin: deletes the exported files of the ticked clips (it warns first)
+                    IconButton(
+                        onClick = { askDelete = true }, enabled = hasFiles && batchDone < 0,
+                        modifier = Modifier.semantics { contentDescription = "Delete exported files" }
+                    ) {
+                        TrashIcon(if (hasFiles && batchDone < 0) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
+                    }
+                    Button(onClick = { askExport = true }, enabled = canExport && batchDone < 0) { Text("Export") }
                 }
                 // one switch for the scramble of every chosen clip (each one can still differ: change it in the player)
-                val chosenNow = d.clips.filter { it.listKey in ui.selected && selectable(it, d.openable) }
+                val chosenNow = ticked.filter { exportable(it, d.openable) }
                 if (chosenNow.isNotEmpty()) {
                     val onCount = chosenNow.count { it.cut.includeScramble }
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1397,7 +1490,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
-                        Switch(checked = onCount == chosenNow.size, onCheckedChange = { on -> setScrambleForSelected(on, chosenNow) })
+                        Switch(checked = onCount == chosenNow.size, onCheckedChange = { on -> setScrambleForSelected(on, chosenNow, d) })
                     }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1707,6 +1800,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 stats = statsById,
                 skipSeconds = ui.skipSeconds,
                 onSkipChange = { ui.skipSeconds = it; ui.save() },
+                autoReplay = ui.autoReplay,
+                onAutoReplayChange = { ui.autoReplay = it; ui.save() },
                 showHint = !ui.swipeHintSeen,
                 onHintSeen = {
                     if (!ui.swipeHintSeen) {
@@ -1745,8 +1840,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
 
         // ===== "Export N clips?" =====
         if (askExport && d != null) {
-            val chosen = shownClips.filter { it.listKey in ui.selected && selectable(it, d.openable) } +
-                    d.clips.filter { it.listKey in ui.selected && selectable(it, d.openable) && it !in shownClips }
+            val chosen = shownClips.filter { it.listKey in ui.selected && exportable(it, d.openable) } +
+                    d.clips.filter { it.listKey in ui.selected && exportable(it, d.openable) && it !in shownClips }
+            val skippedN = d.clips.count { it.listKey in ui.selected && !exportable(it, d.openable) }   // (3.1-E) ticked, but only a file is left
             val again = chosen.count { it.exported != null }
             val fresh = chosen.filter { it.exported == null }
             // Nothing exported before: a plain "Export N clips?". Some exported before: the title says so, a note says what exporting
@@ -1770,6 +1866,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 text = "Exporting again makes a second copy. The first files stay."
                             )
                         }
+                        if (skippedN > 0) {
+                            InfoNote(
+                                "${clipsText(skippedN, "ticked clip")} ${if (skippedN == 1) "has" else "have"} only a file left. " +
+                                        "Export skips ${if (skippedN == 1) "it" else "them"}."
+                            )
+                        }
                         Text("Saved in Movies/CubeCut.", style = MaterialTheme.typography.bodyMedium)
                     }
                 },
@@ -1790,6 +1892,46 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         TextButton(onClick = { askExport = false }) { Text("Cancel") }
                     }
                 }
+            )
+        }
+
+        // ===== (3.1-E) "Delete N exported files?": the bin in the selection header. Trash only (ADR-0008), one request for all =====
+        if (askDelete && d != null) {
+            val ticked = d.clips.filter { it.listKey in ui.selected }
+            val withFile = ticked.filter { it.exported != null }
+            val files = withFile.mapNotNull { it.exported }
+            val leavingN = withFile.count { it.exportOnly || it.solveDeleted }   // nothing but the file is left: the clip disappears
+            val noFileN = ticked.size - withFile.size
+            AlertDialog(
+                onDismissRequest = { askDelete = false },
+                title = { Text(if (files.size == 1) "Delete 1 exported file?" else "Delete ${files.size} exported files?") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        EffectLine(Effect.GOES, "${clipsText(files.size, "file")} in Movies/CubeCut ${if (files.size == 1) "goes" else "go"} to the phone's trash")
+                        if (leavingN > 0) EffectLine(Effect.GOES, "${clipsText(leavingN, "clip")} ${if (leavingN == 1) "leaves" else "leave"} the Gallery (only the file was left)")
+                        EffectLine(Effect.STAYS, "Solves, cuts and notes stay in CubeCut")
+                        EffectLine(Effect.UNDO, "Restore from Recently deleted within about 30 days")
+                        Spacer(Modifier.height(8.dp))
+                        if (noFileN > 0) {
+                            Text(
+                                "${clipsText(noFileN, "ticked clip")} ${if (noFileN == 1) "has" else "have"} no file. Nothing happens to ${if (noFileN == 1) "it" else "them"}.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            "Android asks you to confirm next.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton(if (files.size == 1) "Delete 1 file" else "Delete ${files.size} files") {
+                            askDelete = false
+                            startBatchTrash(files)
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { askDelete = false }) { Text("Cancel") } }
             )
         }
 
@@ -2502,20 +2644,49 @@ private fun OverlayIconButton(kind: IconKind, seconds: Int, big: Boolean, onClic
 }
 
 /**
- * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen in Settings or with
- * the small button above the seek bar) and a seek bar. They hide the moment the clip starts playing, a tap on the picture brings them back,
- * and they hide again 4 seconds after the last tap or skip. They only come back by themselves when the clip ends.
+ * When the viewer's player was last used by hand: an overlay control, the seek bar, or a double-tap skip on the picture. A skip or seek
+ * briefly stops and restarts playback, and [PlayerOverlay] must not take that restart for "the clip started playing" and hide its controls.
+ * [count] goes up at every use, so the overlay's 4 second hide timer starts again.
+ */
+private class PlayerUse {
+    var lastMs = 0L
+    var count by mutableStateOf(0)
+    fun mark() {
+        lastMs = System.currentTimeMillis()
+        count++
+    }
+}
+
+/** What the viewer remembers between taps on the picture, to tell a single tap from a double-tap and from taps that keep skipping. */
+private class PictureTaps {
+    var pending: Job? = null        // a single tap waiting to see whether a second one follows (it toggles the controls when it runs)
+    var pendingSide = 0
+    var streakSide = 0              // after a double-tap: the half where further quick taps skip again (0 = none)
+    var streakUntil = 0L            // SystemClock.uptimeMillis
+}
+
+/** Moves [player] by [seconds] (negative = back), staying inside the clip. Used by the skip buttons and by double-tap. */
+private fun skipBy(player: ExoPlayer, seconds: Int) {
+    val target = player.currentPosition + seconds * 1000L
+    val end = player.duration
+    player.seekTo(if (end > 0) target.coerceIn(0L, end) else max(0L, target))
+}
+
+/**
+ * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen with the small
+ * button above the seek bar), a seek bar, and the *Replay* switch. They hide the moment the clip starts playing, a tap on the picture brings
+ * them back, and they hide again 4 seconds after the last tap or skip. They only come back by themselves when the clip ends, which never
+ * happens while [autoReplay] is on (the clip starts again instead).
  */
 @Composable
 private fun PlayerOverlay(
-    player: ExoPlayer, visible: Boolean, onVisibleChange: (Boolean) -> Unit, skipSeconds: Int, onSkipChange: (Int) -> Unit
+    player: ExoPlayer, visible: Boolean, onVisibleChange: (Boolean) -> Unit, use: PlayerUse,
+    skipSeconds: Int, onSkipChange: (Int) -> Unit, autoReplay: Boolean, onAutoReplayChange: (Boolean) -> Unit
 ) {
     var playing by remember { mutableStateOf(player.isPlaying) }
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
-    var touched by remember { mutableStateOf(0) }       // goes up whenever a control is used, so the 4 second hide timer starts again
     var skipMenu by remember { mutableStateOf(false) }
-    var lastUseMs by remember { mutableStateOf(0L) }       // when a control was last used
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -2523,7 +2694,7 @@ private fun PlayerOverlay(
                 playing = isPlaying
                 // a clip that starts playing hides the controls at once; but playback also stops and starts again by itself right after a
                 // skip or a seek, and that must not hide them while you are using them
-                if (isPlaying && System.currentTimeMillis() - lastUseMs > 1500L) onVisibleChange(false)
+                if (isPlaying && System.currentTimeMillis() - use.lastMs > 1500L) onVisibleChange(false)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -2540,7 +2711,7 @@ private fun PlayerOverlay(
             delay(100)
         }
     }
-    LaunchedEffect(visible, playing, touched, skipMenu) {
+    LaunchedEffect(visible, playing, use.count, skipMenu) {
         if (visible && playing && !skipMenu) {
             delay(4000)                                   // after the last tap or skip; not right away
             onVisibleChange(false)
@@ -2555,9 +2726,8 @@ private fun PlayerOverlay(
                 horizontalArrangement = Arrangement.spacedBy(22.dp)
             ) {
                 OverlayIconButton(IconKind.BACK, skipSeconds, false) {
-                    player.seekTo(max(0L, player.currentPosition - skipSeconds * 1000L))
-                    lastUseMs = System.currentTimeMillis()
-                    touched++
+                    skipBy(player, -skipSeconds)
+                    use.mark()
                 }
                 OverlayIconButton(if (playing) IconKind.PAUSE else IconKind.PLAY, 0, true) {
                     if (player.isPlaying) {
@@ -2566,14 +2736,11 @@ private fun PlayerOverlay(
                         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
                         player.play()
                     }
-                    lastUseMs = System.currentTimeMillis()
-                    touched++
+                    use.mark()
                 }
                 OverlayIconButton(IconKind.FORWARD, skipSeconds, false) {
-                    val target = player.currentPosition + skipSeconds * 1000L
-                    player.seekTo(if (durationMs > 0) min(target, durationMs) else target)
-                    lastUseMs = System.currentTimeMillis()
-                    touched++
+                    skipBy(player, skipSeconds)
+                    use.mark()
                 }
             }
             Column(
@@ -2589,8 +2756,7 @@ private fun PlayerOverlay(
                     onValueChange = {
                         player.seekTo(it.toLong())
                         positionMs = it.toLong()
-                        lastUseMs = System.currentTimeMillis()
-                        touched++
+                        use.mark()
                     },
                     valueRange = 0f..top
                 )
@@ -2602,6 +2768,18 @@ private fun PlayerOverlay(
                         modifier = Modifier.background(Color(0x66000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                     Spacer(Modifier.weight(1f))
+                    // loop the clip, for this clip and every clip after it (remembered)
+                    Text(
+                        if (autoReplay) "\u21BB Replay: on" else "\u21BB Replay: off",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (autoReplay) Color(0xCC2E7D32) else Color(0x99000000))
+                            .clickable { onAutoReplayChange(!autoReplay); use.mark() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
                     // how far the skip buttons jump: tap to choose
                     Box {
                         Text(
@@ -2610,14 +2788,14 @@ private fun PlayerOverlay(
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
                                 .background(Color(0x99000000), RoundedCornerShape(12.dp))
-                                .clickable { skipMenu = true; lastUseMs = System.currentTimeMillis(); touched++ }
+                                .clickable { skipMenu = true; use.mark() }
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                         DropdownMenu(expanded = skipMenu, onDismissRequest = { skipMenu = false }) {
                             for (s in listOf(1, 2, 3, 5, 10, 15, 30)) {
                                 DropdownMenuItem(
                                     text = { Text(if (s == skipSeconds) "\u2713 $s seconds" else "$s seconds") },
-                                    onClick = { skipMenu = false; lastUseMs = System.currentTimeMillis(); touched++; onSkipChange(s) }
+                                    onClick = { skipMenu = false; use.mark(); onSkipChange(s) }
                                 )
                             }
                         }
@@ -2637,6 +2815,8 @@ fun ClipViewer(
     stats: Map<Long, FootageStats>,
     skipSeconds: Int,
     onSkipChange: (Int) -> Unit,
+    autoReplay: Boolean,
+    onAutoReplayChange: (Boolean) -> Unit,
     showHint: Boolean,
     onHintSeen: () -> Unit,
     onBack: (GalleryClip) -> Unit,             // told which clip was showing when the viewer closed
@@ -2673,6 +2853,11 @@ fun ClipViewer(
             .build()
     }
     DisposableEffect(Unit) { onDispose { player.release() } }
+    // Replay on: the clip (only this clip's part of the video) starts again by itself when it ends, and so does every clip after it
+    LaunchedEffect(autoReplay) {
+        player.repeatMode = if (autoReplay) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
+    val use = remember { PlayerUse() }
 
     // leaving the app (home, another app, screen off) stops the sound: pause as soon as CubeCut is no longer in front
     DisposableEffect(player) {
@@ -2781,11 +2966,65 @@ fun ClipViewer(
             player.clearMediaItems()
         }
     }
+    // ---- taps on the picture: one tap shows or hides the controls, a double-tap on the left or right half skips back or forward ----
+    val taps = remember { PictureTaps() }
+    var skipHint by remember { mutableStateOf<Pair<Int, Int>?>(null) }      // (side: -1 back / 1 forward, seconds skipped in a row)
+    var skipHintTick by remember { mutableStateOf(0) }
+    LaunchedEffect(skipHintTick) {
+        if (skipHintTick > 0) {
+            delay(SKIP_HINT_MS)
+            skipHint = null
+        }
+    }
+    fun skipFromTap(side: Int, now: Long, more: Boolean) {
+        skipBy(player, side * skipSeconds)
+        use.mark()
+        val before = skipHint
+        skipHint = side to (if (more && before != null && before.first == side) before.second + skipSeconds else skipSeconds)
+        skipHintTick++
+        taps.streakSide = side
+        taps.streakUntil = now + SKIP_STREAK_MS
+    }
+    /**
+     * A finished tap on one half of the picture ([side] -1 = left, 1 = right). A single tap only toggles the controls once [DOUBLE_TAP_MS]
+     * has passed without a second tap on the same half. Taps right after a double-tap on the same half keep skipping (and the hint counts up).
+     */
+    fun onPictureTap(side: Int) {
+        if (!playable) {
+            controlsVisible = !controlsVisible
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        if (taps.streakSide == side && now < taps.streakUntil) {
+            skipFromTap(side, now, true)
+            return
+        }
+        taps.streakSide = 0
+        val waiting = taps.pending
+        taps.pending = null
+        if (waiting != null && waiting.isActive && taps.pendingSide == side) {
+            waiting.cancel()
+            skipFromTap(side, now, false)
+            return
+        }
+        waiting?.cancel()
+        taps.pendingSide = side
+        taps.pending = scope.launch {
+            delay(DOUBLE_TAP_MS)
+            controlsVisible = !controlsVisible
+        }
+    }
+    val pictureTap by rememberUpdatedState { side: Int -> onPictureTap(side) }
+
     LaunchedEffect(current.listKey) {
         exportMessage = ""
         actionHint = ""
         confirmReexport = false
         confirmTrash = false
+        taps.pending?.cancel()           // a tap on the clip before must not toggle the controls of this one
+        taps.pending = null
+        taps.streakSide = 0
+        skipHint = null
         controlsVisible = false          // a new clip starts without the controls on top of it
     }
 
@@ -2913,7 +3152,8 @@ fun ClipViewer(
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .pointerInput(Unit) { detectTapGestures(onTap = { controlsVisible = !controlsVisible }) },
+                        // no onDoubleTap here: onPictureTap tells single, double and further taps apart itself, so taps in a row count
+                        .pointerInput(Unit) { detectTapGestures(onTap = { o -> pictureTap(if (o.x < size.width / 2f) -1 else 1) }) },
                     contentAlignment = Alignment.Center
                 ) {
                     val playing = page == activePage && playable
@@ -2937,10 +3177,13 @@ fun ClipViewer(
                     // removed and made again), so it never has to load again and there is no empty (black) frame when the swipe ends.
                     // Over the player it stays until the player has drawn its first picture, then fades out.
                     // (it is kept even when fully faded, see-through, so it is not made again when the page stops playing)
+                    // Its background is black, also over the player: a player that has never played yet doesn't know the video's shape
+                    // when it draws its first picture, so for a frame or two that picture is stretched over the whole page. The black
+                    // around the still hides the stretched top and bottom until the player has the right shape (it fades with the still).
                     Thumb(
                         stillKeyFor(c), clipPictureUri(c, openable), stillMsFor(c),
                         Modifier.fillMaxSize().alpha(if (playing) stillAlpha else 1f),
-                        ContentScale.Fit, VIEWER_PICTURE_HEIGHT, if (playing) Color.Transparent else Color.Black,
+                        ContentScale.Fit, VIEWER_PICTURE_HEIGHT, Color.Black,
                         placeholderKey = clipPictureKey(c)
                     )
                     if (page == activePage && !playable) {
@@ -2953,7 +3196,34 @@ fun ClipViewer(
                 }
             }
 
-            if (playable) PlayerOverlay(player, controlsVisible, { controlsVisible = it }, skipSeconds, onSkipChange)
+            if (playable) {
+                PlayerOverlay(
+                    player, controlsVisible, { controlsVisible = it }, use, skipSeconds, onSkipChange, autoReplay, onAutoReplayChange
+                )
+            }
+
+            // "−5 s" / "+5 s" in the middle of the half that was double-tapped (raised above the buttons while they show)
+            val hint = skipHint
+            if (hint != null) {
+                Row(Modifier.fillMaxSize()) {
+                    for (side in listOf(-1, 1)) {
+                        Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                            if (hint.first == side) {
+                                Text(
+                                    (if (side < 0) "−" else "+") + "${hint.second} s",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .offset(y = if (controlsVisible) (-90).dp else 0.dp)
+                                        .background(Color(0x99000000), RoundedCornerShape(20.dp))
+                                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             if (controlsVisible) {
                 Row(

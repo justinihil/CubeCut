@@ -140,6 +140,7 @@ This is the black-flash bug that took five rounds to fix. In `ClipViewer`:
 - `activePage` follows the pager only once scrolling has stopped.
 - `PlayerView` has a transparent shutter and `setKeepContentOnPlayerReset(true)`.
 - `ThumbCache.peek` lets the first composition draw a picture that is already in memory.
+- The still's **background is black, also on the playing page**, and it fades with the still. A player that has never played (the viewer just opened from the Gallery) doesn't know the video's size when it draws its first frame. For 1–2 frames (about 17 ms at 120 fps) the `TextureView` fills the whole page, so the picture is stretched into the top and bottom bands. A transparent background let that show as a flash at the top and bottom on about 6 of 8 opens. Swiping is not affected, because the player already knows the size. Fixed in 3.1-C (2026-11-23).
 
 **Method:** if you touch this, record the screen at 120 fps and step through every frame (ffmpeg `-fps_mode passthrough`). A single black frame is invisible when sampled at normal speed. The real cause was found only this way: the still was being re-created on the page that became active.
 
@@ -157,6 +158,7 @@ This is the black-flash bug that took five rounds to fix. In `ClipViewer`:
 | Defaults | `DEFAULT_INCLUDE_SCRAMBLE` (`MainActivity.kt`); buffer defaults 2.5 s in the schema and editor state |
 | Find-solves estimate | `estMin` = 0.3 × video length (`MainActivity.kt`); overestimates since the speed-up |
 | Editor layout | Video height `0.27f` (`MainActivity.kt`); timeline `64.dp` / film strip `38.dp`, `CROWDED_DP` / `ROOMY_DP` (`Timeline.kt`) |
+| Viewer taps | `DOUBLE_TAP_MS`, `SKIP_STREAK_MS`, `SKIP_HINT_MS` (top of `Gallery.kt`) |
 | Gallery and thumbnails | `VIEWER_PICTURE_HEIGHT`, `MIN_COLUMNS` / `MAX_COLUMNS` (`Gallery.kt`); `TARGET_HEIGHT`, `DISK_LIMIT` / `DISK_TRIM_TO` / `TRIM_EVERY`, the `Semaphore(2)` (`Thumbnails.kt`) |
 | Video identity | Duration tolerances in `openOrCreate` (1000 ms) and `relink` (1500 ms) (`SessionStore.kt`) |
 

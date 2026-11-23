@@ -56,6 +56,15 @@ object ThumbCache {
     private const val DISK_LIMIT = 100L * 1024 * 1024        // above this the folder is trimmed...
     private const val DISK_TRIM_TO = 80L * 1024 * 1024       // ...down to this, so it isn't trimmed again after every new picture
     private const val TRIM_EVERY = 25                        // the folder is measured after this many new pictures (and once per app start)
+    // the Edit window's picture zoomed onto the timer (timerFrame):
+    // the frame is read this many pixels high before cutting out the timer: higher keeps the digits sharp when blown up, but
+    // costs memory and time on each move of the cut (1080 = about 8 MB, read in a fraction of a second)
+    private const val ZOOM_SOURCE_HEIGHT = 1080
+    // room left around the timer on every side, as a share of the timer's width. The crop is fixed at the saved corners, so this
+    // is also how far the camera may move before the timer leaves the picture; bigger = safer but smaller digits (owner: bigger)
+    private const val ZOOM_MARGIN = 0.5
+    // the crop is widened to about the shape of the Edit window's picture (full width x 150 dp), so it fills it without bars
+    private const val ZOOM_ASPECT = 1.8
     private var madeSinceTrim = TRIM_EVERY                   // starts "due", so the first new picture after a start measures it
 
     // the memory part holds about 24 MB of pictures
@@ -169,6 +178,59 @@ object ThumbCache {
 
     /** One frame of the video, [height] pixels high, made fresh and not kept anywhere (the editor's Edit window uses it). */
     fun frame(context: Context, uri: Uri, timeMs: Long, height: Int): Bitmap? = grab(context, uri, timeMs, height)
+
+    /**
+     * Like [frame], but zoomed onto the timer: the box around [corners] (the 8 numbers saved at timer setup, in the pixels of the
+     * full-size frame) plus [ZOOM_MARGIN] on every side, widened to [ZOOM_ASPECT]. Made fresh and not kept anywhere.
+     * The crop doesn't follow the timer, so it assumes the camera didn't move after the setup. Null if the frame or the
+     * video's size can't be read (the caller then shows the whole frame).
+     */
+    fun timerFrame(context: Context, uri: Uri, timeMs: Long, corners: DoubleArray): Bitmap? {
+        if (corners.size != 8) return null
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            var fullW = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            var fullH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            if (fullW <= 0 || fullH <= 0) return null
+            val frame = retriever.getScaledFrameAtTime(
+                max(0L, timeMs) * 1000L, MediaMetadataRetriever.OPTION_CLOSEST, ZOOM_SOURCE_HEIGHT * 4, ZOOM_SOURCE_HEIGHT
+            ) ?: return null
+            // the frame comes upright, but the file may store the size sideways (a portrait video): follow the frame's shape
+            if ((frame.width > frame.height) != (fullW > fullH)) { val t = fullW; fullW = fullH; fullH = t }
+            val sx = frame.width.toDouble() / fullW
+            val sy = frame.height.toDouble() / fullH
+            var minX = Double.MAX_VALUE; var maxX = -Double.MAX_VALUE
+            var minY = Double.MAX_VALUE; var maxY = -Double.MAX_VALUE
+            for (i in 0 until 4) {
+                val x = corners[2 * i] * sx
+                val y = corners[2 * i + 1] * sy
+                minX = minOf(minX, x); maxX = maxOf(maxX, x)
+                minY = minOf(minY, y); maxY = maxOf(maxY, y)
+            }
+            val tw = maxX - minX
+            val th = maxY - minY
+            if (tw < 2 || th < 2) { frame.recycle(); return null }
+            val pad = maxOf(tw, th) * ZOOM_MARGIN
+            var w = tw + 2 * pad
+            var h = th + 2 * pad
+            if (w < h * ZOOM_ASPECT) w = h * ZOOM_ASPECT else h = w / ZOOM_ASPECT
+            w = minOf(w, frame.width.toDouble())
+            h = minOf(h, frame.height.toDouble())
+            // centred on the timer, then pushed back inside the frame (a timer near the edge stays near the edge)
+            val left = ((minX + maxX) / 2 - w / 2).coerceIn(0.0, frame.width - w)
+            val top = ((minY + maxY) / 2 - h / 2).coerceIn(0.0, frame.height - h)
+            val cw = max(1, minOf(w.toInt(), frame.width - left.toInt()))
+            val ch = max(1, minOf(h.toInt(), frame.height - top.toInt()))
+            val out = Bitmap.createBitmap(frame, left.toInt(), top.toInt(), cw, ch)
+            if (out !== frame) frame.recycle()
+            out
+        } catch (e: Exception) {
+            null
+        } finally {
+            retriever.release()
+        }
+    }
 
     private fun grab(context: Context, uri: Uri, timeMs: Long, targetHeight: Int): Bitmap? {
         val retriever = MediaMetadataRetriever()
