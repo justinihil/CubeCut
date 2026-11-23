@@ -36,7 +36,8 @@ If the timer can't be read, nothing is blocked. You can always add solves by han
 - **Scramble for many clips:** while ticking, the switch under the header turns the scramble on or off for every ticked clip. *All* ticks every clip shown. With every clip of a video ticked, it works like the editor's *Scramble in all clips*.
 - If you delete a raw video, its exported clips stay in the Gallery (*Export only*). Clips that were never exported disappear, but their solves stay saved, and importing the video again brings them back.
 - **Watching clips:** tap the picture for the controls. Double-tap the left or right half to skip back or forward; keep tapping to skip further. **Replay** (next to *Skip*) loops every clip until you switch it off.
-- **An exported clip is a copy.** Moving its cut or fixing its time later doesn't change the file; export it again.
+- **Penalty (+2 / DNF):** set it in the editor's *Edit* window or in the viewer's details. Tap *+2* again for each extra +2; *No penalty* clears it. Times show as `13.263 (+2)` or `DNF(11.263)`, and sorting and *best* count the penalty (a DNF sorts last). The solve-only clip still starts from the time on the timer.
+- **An exported clip is a copy.** Moving its cut or fixing its time later doesn't change the file; export it again. A **penalty renames** the file to match (`…_13.263s_plus2.mp4`, `…_DNF_11.263s.mp4`). After a reinstall, Android asks first.
 - **Typing times:** in the Edit window, use a colon for a minute or more (`1:02.34`). A plain `102.34` there means 102.34 s. Only the timer-setup box reads `102.34` as 1:02.34.
 - **CubeCut's saved list is not backed up** and doesn't move to a new phone. Uninstalling clears the Gallery, though exported files in `Movies/CubeCut` stay.
 - Swiping CubeCut out of recent apps stops Find solves. Some phones' battery savers stop it too: set CubeCut's battery use to *Unrestricted*.

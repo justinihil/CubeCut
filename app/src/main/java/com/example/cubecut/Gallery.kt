@@ -307,7 +307,7 @@ class FootageStats(val bestText: String, val best: Double?, val solves: Int, val
 fun statsOf(clips: List<GalleryClip>): FootageStats {
     val on = clips.filter { it.cut.included && !it.solveDeleted }        // (a file whose solve was deleted is not a solve any more)
     val best = on.filter { it.seconds != null }.minByOrNull { it.seconds ?: Double.MAX_VALUE }
-    return FootageStats(best?.cut?.timeText ?: "", best?.seconds, on.size, clips.count { it.needsCheck })
+    return FootageStats(best?.shownTime ?: "", best?.seconds, on.size, clips.count { it.needsCheck })
 }
 
 fun sortFootage(list: List<Footage>, sort: FootageSort, stats: Map<Long, FootageStats>): List<Footage> = when (sort) {
@@ -662,7 +662,8 @@ private fun exportFromSession(context: Context, f: Footage, indices: Set<Int>, o
     return BatchResult(result.done, indices.size - clips.size, result.failed)
 }
 
-private fun timeBadgeText(clip: GalleryClip): String = if (clip.cut.timeText.isBlank()) "?" else clip.cut.timeText
+/** (3.2-C) The time on a card, with its penalty ("13.263 (+2)", "DNF(11.263)"); "?" when unknown. */
+private fun timeBadgeText(clip: GalleryClip): String = clip.shownTime.ifEmpty { "?" }
 
 /** Where the picture of a clip comes from: the exported file when the video is gone, else the video (null = nothing to take it from). */
 private fun clipPictureUri(clip: GalleryClip, openable: Map<Long, Boolean>): Uri? = when {
@@ -3018,6 +3019,7 @@ fun ClipViewer(
     val noteSaved = remember { mutableStateMapOf<String, String>() }
     val checkedNow = remember { mutableStateMapOf<String, Boolean>() }      // clips marked as checked here (saved at once)
     val tagOv = remember { mutableStateMapOf<String, Pair<String, String>>() }   // (3.2-B) clips tagged here: their own (puzzle, type)
+    val penaltyOv = remember { mutableStateMapOf<String, Pair<Int, Boolean>>() } // (3.2-C) clips given a penalty here: (+2 count, DNF)
     var tagWindow by remember { mutableStateOf(false) }          // (3.2-B) the "Puzzle for this clip" window
     var noteVersion by remember { mutableStateOf(0) }
     var overrideVersion by remember { mutableStateOf(0) }
@@ -3039,6 +3041,8 @@ fun ClipViewer(
         return tagLabel(resolveTag(p, c.footage.puzzle), resolveTag(k, c.footage.category))
     }
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
+    /** (3.2-C) The clip's penalty (+2 count, DNF), with a change made here. */
+    fun penaltyOf(c: GalleryClip): Pair<Int, Boolean> = penaltyOv[c.listKey] ?: (c.cut.plus2Count to c.cut.dnf)
     /**
      * All cuts of one session as they are right now (the editor's list, with the scramble choices made here). The cut of [clip] itself is
      * counted as switched on even if it is off in the editor: asking for this clip here is an explicit request for it.
@@ -3263,6 +3267,29 @@ fun ClipViewer(
         }
     }
 
+    // (3.2-C) a penalty renames the clip's exported file (Android may ask first); the message says how it went
+    val renamer = rememberExportRenamer { exportMessage = it }
+
+    /**
+     * (3.2-C) Sets one clip's penalty (saved at once, marked `edited`). Its exported file, if any, is renamed to match; the export keeps
+     * its link (`stop_sec`).
+     */
+    fun setPenalty(c: GalleryClip, plus2Count: Int, dnf: Boolean) {
+        if (penaltyOf(c) == (plus2Count to dnf)) return
+        penaltyOv[c.listKey] = plus2Count to dnf
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutPenalty(context, c.footage.id, c.cut.stopSec, plus2Count, dnf) } catch (e: Exception) { }
+            }
+        }
+        val e = exportedFor(c) ?: return
+        if (e.trashedMs != 0L) return
+        val newName = penaltyRename(e, c.cut.timeText, plus2Count, dnf) ?: return
+        renamer.rename(e, newName) { name ->
+            exportedNow[c.listKey] = ExportedClip(e.id, e.footageId, e.stopSec, e.timeText, e.uri, name, e.offsetSec, e.exportedMs, e.trashedMs)
+        }
+    }
+
     // ---- export this one clip (the same maths and rules as the batch export) ----
     fun doExport() {
         if (exporting) return
@@ -3274,7 +3301,9 @@ fun ClipViewer(
             exportMessage = "This solve is too close to the one before to make a clip."
             return
         }
-        val cut = cuts.getOrNull(c.index) ?: return
+        val (p2, dnf) = penaltyOf(c)
+        val cut = cuts.getOrNull(c.index)?.copy(plus2Count = p2, dnf = dnf) ?: return
+        val named = Clip(clip.number, clip.startSec, clip.endSec, clip.timeText, clip.cutIndex, clip.withScramble, clip.solveStartSec, clip.noTime, p2, dnf)
         exporting = true
         exportMessage = "Exporting..."
         scope.launch {
@@ -3283,7 +3312,7 @@ fun ClipViewer(
             val done: Pair<ExportResult, ExportedClip?>? = withContext(Dispatchers.IO) {
                 try {
                     val tag = tagTextOf(c)
-                    val result = ClipExporter.export(context, Uri.parse(f.uri), listOf(clip), f.title, { tag }) { _, _ -> }
+                    val result = ClipExporter.export(context, Uri.parse(f.uri), listOf(named), f.title, { tag }) { _, _ -> }
                     val now = System.currentTimeMillis()
                     val records = result.files.map { ef ->
                         ExportedClip(0L, f.id, cut.stopSec, cut.timeText, ef.uri, ef.fileName, max(0.0, cut.stopSec - ef.startSec), now)
@@ -3494,9 +3523,16 @@ fun ClipViewer(
                         .padding(bottom = 28.dp)
                 ) {
                     val exportedFile = exportedFor(current)
+                    val (plus2Now, dnfNow) = penaltyOf(current)
                     Row(verticalAlignment = Alignment.Bottom) {
+                        // (3.2-C) with its penalty: "13.263 (+2)", "DNF(11.263)"
+                        val shown = shownTime(current.cut.timeText, plus2Now, dnfNow)
                         Text(
-                            if (current.cut.timeText.isBlank()) "time unknown" else "${current.cut.timeText} s",
+                            when {
+                                shown.isEmpty() -> "time unknown"
+                                hasPenalty(plus2Now, dnfNow) -> shown
+                                else -> "$shown s"
+                            },
                             style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.width(12.dp))
@@ -3614,6 +3650,13 @@ fun ClipViewer(
                                 if (follows && shownTag.isNotEmpty()) Text("From the video", style = MaterialTheme.typography.labelSmall)
                             }
                             TextButton(onClick = { tagWindow = true }) { Text("Change") }
+                        }
+                        // ===== (3.2-C) penalty: renames the exported file too =====
+                        Spacer(Modifier.height(8.dp))
+                        Text("Penalty", style = MaterialTheme.typography.labelLarge)
+                        PenaltyPicker(plus2Now, dnfNow) { n, dnf -> setPenalty(current, n, dnf) }
+                        if (exportedFile != null && exportedFile.trashedMs == 0L) {
+                            Text("A penalty renames the exported file to match.", style = MaterialTheme.typography.labelSmall)
                         }
                     }
 

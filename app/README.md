@@ -17,6 +17,7 @@ Rough sizes are given to warn you what you are opening.
 | `TimerSetupScreen.kt` | Full-screen tap / drag-corners / type-number setup | `TimerSetupScreen(frame, busy, message, onCancel, onSave(corners, typed))` | Has **no `BackHandler`** ([known issue](../docs/known-issues.md)). Typing `102.34` means 1:02.34 here only |
 | `Reimport.kt` | The *Imported before* warning on import | `findImportedBefore(context, uri)`, `ReimportDialog(footage, uri, onOpen, onCancel)` | Used by both *Import video* buttons (editor and Gallery). Opening a session from the Gallery doesn't ask. The video already open in the editor doesn't ask |
 | `TagPicker.kt` | (3.2-B) The puzzle and type window, for a video or for clips | `TagDialog(title, puzzle, category, forClip, …, onDone(TagChoice))`, `TagChoice` | Starts from stored values (`null` = mixed: nothing chosen, *leave as it is*). For clips it adds *As the video* (`''`) and its *Not tagged* stores `NO_TAG`; for a video *Not tagged* stores `''` |
+| `ClipSettings.kt` | (3.2-C on) Controls for one clip, shared by the Edit window and the viewer sheet | `ChoiceChip`, `PenaltyPicker`, `rememberExportRenamer` / `ExportRenamer.rename`, `penaltyRename` | The renamer asks Android (`createWriteRequest`) when CubeCut no longer owns the file, and records the new name in the same IO block |
 | `Notes.kt` | Shared message style | `InfoNote`, `InfoButton`, `BulletLines`, `LeadAndBullets`, `NoteKind`, `kindOfMessage` | Use these instead of grey paragraphs |
 | `Theme.kt` | Colours and dark mode | `CubeCutTheme(mode)`, `ThemeMode`, `AppColors` (`check`, `keep`, `danger`), `LogoBlue` | The **only** theme. `ui/theme/*` is dead template code; don't import it |
 
@@ -26,7 +27,8 @@ Rough sizes are given to warn you what you are opening.
 | `SolveAnalyzer.kt` | Find solves: coarse scan, vote, first-frame search | `SolveAnalyzer.analyze(context, uri, dur, engine, onProgress, isCancelled)`, `scan`, `FoundSolve`, `ScanResult`, `ScanCancelled`, `LEFTOVER_NOTE_START` | Tuning constants at the top. The comment at the top predates the binary search ([algorithms §1](../docs/algorithms.md#1-finding-solves) is current) |
 | `RescanMerge.kt` | Pure functions over `CutItem` lists | `mergeRescan` (carries user-only fields with `withUserFieldsOf`), `RescanResult`, `checkCuts`, `CutChecks`, `isLeftover`, `normalizeIncluded`, `solveAtPlayhead`, `solveOverlappedBy`, `NOT_FOUND_AGAIN_NOTE` | The easiest place to add unit tests |
 | `Tags.kt` | (3.2-B) Puzzle and type tags | `PUZZLES`, `CATEGORIES`, `NORMAL_CATEGORY`, `NO_TAG`, `resolveTag`, `cleanTag`, `tagLabel`, `orderTags`, `tagMatches`, `applyTagChoice` / `videoTagFor` / `resetOwnTag` (selection rules) | A typed *Other* name is stored as typed, so a new puzzle needs no schema change. `tagLabel` leaves *Normal* out |
-| `ClipExporter.kt` | The cut model, clip maths and lossless export | `CutItem`, `Clip`, `computeClips`, `parseTimeSeconds`, `SAME_SOLVE_SEC`, `ADDED_BY_YOU_NOTE`, `CutItem.noteNeedsCheck()`, `ClipExporter.export` / `fileName` / `safeTitle` | Data model and exporter share a file. `fileName` puts the clip's tag after the title (`export(…, tagOf)`). Records the `DISPLAY_NAME` that Android actually used |
+| `Penalty.kt` | (3.2-C) +2 / DNF: how a time is shown, sorted and named | `shownTime`, `titleTime`, `penalisedSeconds`, `addSeconds` / `formatSeconds`, `fileTimePart`, `renamedExportName`, `hasPenalty` | Never changes `timeText`: the solve-only start stays on the raw time |
+| `ClipExporter.kt` | The cut model, clip maths and lossless export | `CutItem`, `Clip`, `computeClips`, `parseTimeSeconds`, `SAME_SOLVE_SEC`, `ADDED_BY_YOU_NOTE`, `CutItem.noteNeedsCheck()`, `ClipExporter.export` / `fileName` / `safeTitle` / `renameFile` | Data model and exporter share a file. `fileName` puts the clip's tag after the title (`export(…, tagOf)`) and the penalty in the time part (`Clip.plus2Count` / `dnf`). Records the `DISPLAY_NAME` that Android actually used |
 
 ### Vision (OpenCV)
 | File | Responsibility | Main entry points | Gotchas |
@@ -56,6 +58,7 @@ Rough sizes are given to warn you what you are opening.
 - `ComputeClipsTest`: `parseTimeSeconds` and `computeClips`, including per-clip buffers;
 - `RescanMergeTest`: `mergeRescan` and `checkCuts`;
 - `CutFieldsTest`: *Shared on* storage, the v7 fill from notes, and tag fallback;
-- `TagsTest`: tag resolving, labels, filter, selection rules and tagged file names.
+- `TagsTest`: tag resolving, labels, filter, selection rules and tagged file names;
+- `PenaltyTest`: penalty display, file-name part, renaming an exported name, and that a penalty never moves a clip.
 
 The tests written before 3.2-A lock the 3.1 behaviour: if one fails, a clip or a merge moved. `src/androidTest` is still the template (`ExampleInstrumentedTest`). Next target: `SolveAnalyzer.scan` with a fake `read(t)`.

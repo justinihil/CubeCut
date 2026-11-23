@@ -582,6 +582,22 @@ object SessionStore {
         }
     }
 
+    /** (3.2-C) Remembers the new name of an exported file after CubeCut renamed it (a penalty changed). The link stays `stop_sec`. */
+    fun setExportFileName(context: Context, exportId: Long, fileName: String) {
+        val v = ContentValues()
+        v.put("file_name", fileName)
+        db(context).update("exports", v, "id = ?", arrayOf(exportId.toString()))
+    }
+
+    /**
+     * The exported file of one solve that the Gallery would show: the newest one at [stopSec] that is not in the trash and still
+     * opens, or null. Used by the editor's Edit window to rename it after a penalty change.
+     */
+    fun liveExportAt(context: Context, footageId: Long, stopSec: Double): ExportedClip? =
+        loadExports(context, footageId)
+            .filter { Math.abs(it.stopSec - stopSec) < SAME_SOLVE_SEC && it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }
+            .maxByOrNull { it.exportedMs }
+
     /**
      * Saves your note for one cut (found by its stop time).
      * Until 3.2-E gives *Shared on* its own chips, the platform buttons still write into the note, so *Shared on* is refreshed from
@@ -839,12 +855,15 @@ class GalleryClip(
 ) {
     val key: String get() = cutKey(footage.id, cut.stopSec)
     val listKey: String get() = if (exportOnly && exported != null) "x${exported.id}" else "${footage.id}:$index"
-    val seconds: Double? get() = parseTimeSeconds(cut.timeText)
+    /** (3.2-C) The result in seconds with its penalty: +2s added, null for a DNF or an unknown time (sorts last, never "best"). */
+    val seconds: Double? get() = penalisedSeconds(cut.timeText, cut.plus2Count, cut.dnf)
+    /** (3.2-C) The time as cards show it, with its penalty: "11.263", "13.263 (+2)", "DNF(11.263)" ("" = unknown, no penalty). */
+    val shownTime: String get() = shownTime(cut.timeText, cut.plus2Count, cut.dnf)
     private val noteNeedsCheck: Boolean get() = cut.noteNeedsCheck()
     val needsCheck: Boolean get() = noteNeedsCheck || warning.isNotEmpty()
     /** Everything to check about this clip, in one line ("" = nothing). */
     val checkText: String get() = listOf(if (noteNeedsCheck) cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
-    val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
+    val title: String get() = clipTitle(footage.title, index + 1, cut.timeText, cut.plus2Count, cut.dnf)
     val sharedList: List<String> get() = platformsIn(cut.userNote)   // 3.2-E switches this to cut.sharedOn
     /** The puzzle this clip counts as: its own tag, else its video's ("" = not tagged; NO_TAG on the clip also gives ""). */
     val puzzle: String get() = resolveTag(cut.puzzle, footage.puzzle)
@@ -860,9 +879,12 @@ class GalleryClip(
  */
 fun cutKey(footageId: Long, stopSec: Double): String = "${footageId}_${Math.round(stopSec * 1000.0)}"
 
-/** "Sunday practice \u00B7 Solve 03 \u00B7 11.263s" ([number] 0 or less = the solve's place in the session is unknown) */
-fun clipTitle(footageTitle: String, number: Int, timeText: String): String {
-    val time = if (timeText.isBlank()) "time unknown" else "${timeText}s"
+/**
+ * "Sunday practice \u00B7 Solve 03 \u00B7 11.263s" ([number] 0 or less = the solve's place in the session is unknown).
+ * (3.2-C) With a penalty: "... \u00B7 13.263s (+2)", "... \u00B7 DNF(11.263s)" (see titleTime).
+ */
+fun clipTitle(footageTitle: String, number: Int, timeText: String, plus2Count: Int = 0, dnf: Boolean = false): String {
+    val time = titleTime(timeText, plus2Count, dnf)
     return if (number > 0) "$footageTitle \u00B7 Solve ${"%02d".format(number)} \u00B7 $time" else "$footageTitle \u00B7 $time"
 }
 

@@ -74,7 +74,9 @@ class Clip(
     val cutIndex: Int,          // which CutItem it came from (index in the original list)
     val withScramble: Boolean,  // true = starts where the previous clip ended
     val solveStartSec: Double,  // where the solve part starts (the time before the stop, minus the "before" buffer); equals startSec when the scramble is left out
-    val noTime: Boolean         // "solve only" was wanted but the time is unknown, so the full clip is used instead
+    val noTime: Boolean,        // "solve only" was wanted but the time is unknown, so the full clip is used instead
+    val plus2Count: Int = 0,    // (3.2-C) the cut's penalty, for the file name only (the start above always uses the raw time)
+    val dnf: Boolean = false
 )
 
 /** "12.112" -> 12.112, "1:02.345" -> 62.345, "" or nonsense -> null. */
@@ -140,7 +142,7 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
             noTime = true
         }
         number++
-        clips.add(Clip(number, start, end, item.timeText, i, item.includeScramble || noTime, soloStart ?: start, noTime))
+        clips.add(Clip(number, start, end, item.timeText, i, item.includeScramble || noTime, soloStart ?: start, noTime, item.plus2Count, item.dnf))
         previousEnd = end
     }
     return clips
@@ -178,15 +180,26 @@ object ClipExporter {
     /**
      * "Sunday practice_Solve_03_11.263s.mp4" ([prefix] = the session's title), or "..._Solve_03_unknown.mp4" when the time is not known.
      * (3.2-B) A tagged clip has its tag after the title: "Sunday practice_3x3 OH_Solve_03_11.263s.mp4" ([tag] = tagLabel, "" = not tagged).
+     * (3.2-C) A penalty changes the time part: "..._Solve_03_13.263s_plus2.mp4", "..._Solve_03_DNF_11.263s.mp4" (see fileTimePart).
      * Numbered like the Gallery ("Solve 3 of 20"), so clips from different videos never get the same name. Without a prefix (never
      * the case now, every export passes the title) it is just "Solve_03_11.263s.mp4", with the same numbering.
      * The digits are always plain 0-9, whatever language the phone is set to (Locale.ROOT).
      */
     fun fileName(c: Clip, prefix: String = "", tag: String = ""): String {
-        val t = safeTime(c.timeText)
-        val tail = if (t == "unknown") t else t + "s"
-        val solve = "Solve_%02d_%s.mp4".format(Locale.ROOT, c.cutIndex + 1, tail)
+        val solve = "Solve_%02d_%s.mp4".format(Locale.ROOT, c.cutIndex + 1, fileTimePart(c.timeText, c.plus2Count, c.dnf))
         return (listOf(safeTitle(prefix), safeTitle(tag)).filter { it.isNotEmpty() } + solve).joinToString("_")
+    }
+
+    /**
+     * (3.2-C) Renames an exported file in the phone's gallery to [newName] and returns the name Android really gave it. Works while
+     * CubeCut owns the file (it made it); after a reinstall Android throws a SecurityException, and the caller asks the user with
+     * MediaStore.createWriteRequest first. The file itself (its picture and sound) is not touched.
+     */
+    fun renameFile(context: Context, uri: Uri, newName: String): String {
+        val values = ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, newName) }
+        val n = context.contentResolver.update(uri, values, null, null)
+        if (n <= 0) throw IOException("the file was not found")
+        return savedName(context, uri) ?: newName
     }
 
     /**

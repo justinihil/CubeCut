@@ -735,6 +735,21 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         return exportedAt.any { Math.abs(it - c.stopSec) < SAME_SOLVE_SEC }
     }
 
+    // (3.2-C) a penalty renames the solve's exported file (the editor has no export controls, but the file's name follows the penalty)
+    val renamer = rememberExportRenamer { status = it }
+    /** Renames the exported file of [c] to match its penalty. A cut moved since the last save still has its record at the old spot. */
+    fun renameExportOf(c: CutItem) {
+        val id = footageId ?: return
+        val savedStop = pendingMoves.entries.firstOrNull { Math.abs(it.value - c.stopSec) < 0.0005 }?.key ?: c.stopSec
+        scope.launch {
+            val e = withContext(Dispatchers.IO) {
+                try { SessionStore.liveExportAt(context, id, savedStop) } catch (e: Exception) { null }
+            } ?: return@launch
+            val newName = penaltyRename(e, c.timeText, c.plus2Count, c.dnf) ?: return@launch
+            renamer.rename(e, newName)
+        }
+    }
+
     // the clips that would be exported right now
     // (remembered: the clips only change when the cuts or buffers do, not every time the screen is redrawn)
     val clips = remember(cuts.toList(), beforePad, afterPad, durationMs) {
@@ -1847,8 +1862,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.padding(end = 8.dp, bottom = 2.dp)
                                                 )
+                                                // (3.2-C) with its penalty: "13.263 (+2)", "DNF(11.263)"
+                                                val shown = shownTime(item.timeText, item.plus2Count, item.dnf)
                                                 Text(
-                                                    if (item.timeText.isNotEmpty()) "${item.timeText} s" else "time unknown",
+                                                    when {
+                                                        shown.isEmpty() -> "time unknown"
+                                                        hasPenalty(item.plus2Count, item.dnf) -> shown
+                                                        else -> "$shown s"
+                                                    },
                                                     style = MaterialTheme.typography.titleMedium,
                                                     fontWeight = FontWeight.Bold,
                                                     color = if (item.timeText.isEmpty()) AppColors.check else MaterialTheme.colorScheme.onSurface
@@ -2289,6 +2310,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         if (editIndex in cuts.indices) {
             val item = cuts[editIndex]
             var text by remember(editIndex) { mutableStateOf(item.timeText) }
+            var penalty by remember(editIndex) { mutableStateOf(item.plus2Count to item.dnf) }   // (3.2-C) (+2 count, DNF)
             // moves the cut (not the solve time) and shows the frame it now points at
             fun nudge(delta: Double) {
                 val from = cuts[editIndex].stopSec
@@ -2332,7 +2354,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             InfoNote(
                                 kind = NoteKind.CHECK,
                                 title = "Already exported",
-                                text = "Changes here don't change the file. Export it again to update it."
+                                text = "A penalty renames its file. Other changes need a new export: tap View."
                             )
                             Spacer(Modifier.height(10.dp))
                         }
@@ -2349,6 +2371,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth()
                         )
+
+                        // ---- (3.2-C) the penalty: the time above stays what the timer showed ----
+                        Spacer(Modifier.height(6.dp))
+                        Text("Penalty", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        PenaltyPicker(penalty.first, penalty.second) { n, dnf -> penalty = n to dnf }
 
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider()
@@ -2428,7 +2455,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 confirmButton = {
                     Button(onClick = {
                         val newText = text.trim()
-                        if (newText != cuts[editIndex].timeText) cuts[editIndex] = cuts[editIndex].copy(timeText = newText, edited = true)
+                        val old = cuts[editIndex]
+                        val penaltyChanged = penalty.first != old.plus2Count || penalty.second != old.dnf
+                        if (newText != old.timeText || penaltyChanged) {
+                            cuts[editIndex] = old.copy(timeText = newText, plus2Count = penalty.first, dnf = penalty.second, edited = true)
+                        }
+                        if (penaltyChanged && isExported(editIndex)) renameExportOf(cuts[editIndex])
                         editIndex = -1
                     }) { Text("Save") }
                 },

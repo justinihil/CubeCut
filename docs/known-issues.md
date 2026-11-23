@@ -43,6 +43,7 @@ Only the Samsung Galaxy S25 Ultra has been used. These have not been checked:
 - Android 15's 6-hour background limit (`onTimeout`);
 - HDR or 10-bit footage, 4K, frame rates other than 30 and 60 fps, the frame-source fallback actually triggering;
 - a timer showing 2 decimals (supported in code, never tried);
+- renaming an exported file CubeCut no longer owns (after a reinstall: `createWriteRequest`), 3.2-C;
 - large galleries;
 - whether the export buffer grows as intended on a keyframe over 4 MB (it relies on `readSampleData` throwing `IllegalArgumentException`);
 - a signed release build on a second phone;

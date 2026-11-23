@@ -134,7 +134,7 @@ Phone test: install over 3.1 and check that existing solves, notes and exports s
 
 Where to start, Gallery filter and sort: `ClipKey`, `ExportFilter`, the Filter dialog and `GalleryUiState` (`Gallery.kt`).
 
-### 3.2-C Penalty (+2 / DNF) ⬜
+### 3.2-C Penalty (+2 / DNF) 🔶
 **#7:**
 - A DNF shows as the time in brackets, for example `DNF(12.34)`.
 - +2 can be added several times, and the time shown includes them.
@@ -163,6 +163,11 @@ Rules:
   - After a reinstall, the app no longer owns the file and needs `MediaStore.createWriteRequest`.
   - Store the new name in `exports.file_name`.
 - Penalty marks on the timer display itself are a reader limitation; see 3.3-E.
+
+**Decided** at the start of the phase (2026-11-23):
+- Format: title `13.263 (+2)`, `15.263 (+2×2)`, `DNF(11.263)`; file `…_Solve_03_13.263s_plus2.mp4`, `…_15.263s_plus2x2.mp4`, `…_DNF_11.263s.mp4`.
+- The solve-only clip start uses the raw time on the timer.
+- Built without asking (flag for the owner): DNF and +2 exclude each other in the picker; sorting by time and *best* use the penalised time (DNF sorts last); the rename replaces only the time part of the existing name, so a file renamed by hand is left alone; changing only the time does not rename.
 
 ### 3.2-D Per-clip buffers ⬜
 **#11:** adjust the before and after buffers of one clip, in the editor and in the Gallery, instead of only one slider for the whole video.
