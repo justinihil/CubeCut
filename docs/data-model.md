@@ -93,7 +93,7 @@ Added in 3.2-A with no UI; the later 3.2 phases build the screens. Every default
 | Field | Meaning | Set by |
 |---|---|---|
 | `footage.puzzle`, `footage.category` | The video's tags. `''` = not tagged | `updateFootageTags` (a video setting, so no `user_edited`) |
-| `cuts.puzzle`, `cuts.category` | The clip's own tags. `''` = follows the video. `GalleryClip.puzzle` / `.category` resolve this | `updateCutTags` |
+| `cuts.puzzle`, `cuts.category` | The clip's own tags. `''` = follows the video; `'-'` (`NO_TAG`) = not tagged even if the video is (the editor's *not this puzzle* untick, 3.2-B). A typed *Other* name is stored as typed (`cleanTag`). `resolveTag` / `GalleryClip.puzzle` / `.category` resolve this | `updateCutTags`; the editor's untick goes through `saveSession` with `edited` set |
 | `cuts.plus2_count`, `cuts.dnf` | The penalty. `time_text` keeps what the timer showed, so the solve-only start and the export link don't move | `updateCutPenalty` |
 | `cuts.before_pad`, `cuts.after_pad` | The clip's own buffers in seconds. NULL = follows the video's slider. `computeClips` uses them for that clip only; its `after_pad` also moves where the next scramble starts | `updateCutPads` |
 | `cuts.shared_on` | Where the clip was shared: names from `SOCIAL_PLATFORMS`, comma separated (`encodeSharedOn` / `decodeSharedOn`) | `updateCutSharedOn`. Until 3.2-E, `updateCutNote` also refreshes it from the note, because the platform buttons still write into the note |

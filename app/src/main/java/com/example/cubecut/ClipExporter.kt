@@ -177,20 +177,26 @@ object ClipExporter {
 
     /**
      * "Sunday practice_Solve_03_11.263s.mp4" ([prefix] = the session's title), or "..._Solve_03_unknown.mp4" when the time is not known.
+     * (3.2-B) A tagged clip has its tag after the title: "Sunday practice_3x3 OH_Solve_03_11.263s.mp4" ([tag] = tagLabel, "" = not tagged).
      * Numbered like the Gallery ("Solve 3 of 20"), so clips from different videos never get the same name. Without a prefix (never
      * the case now, every export passes the title) it is just "Solve_03_11.263s.mp4", with the same numbering.
      * The digits are always plain 0-9, whatever language the phone is set to (Locale.ROOT).
      */
-    fun fileName(c: Clip, prefix: String = ""): String {
+    fun fileName(c: Clip, prefix: String = "", tag: String = ""): String {
         val t = safeTime(c.timeText)
         val tail = if (t == "unknown") t else t + "s"
-        val p = safeTitle(prefix)
         val solve = "Solve_%02d_%s.mp4".format(Locale.ROOT, c.cutIndex + 1, tail)
-        return if (p.isEmpty()) solve else "${p}_$solve"
+        return (listOf(safeTitle(prefix), safeTitle(tag)).filter { it.isNotEmpty() } + solve).joinToString("_")
     }
 
-    /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. [prefix]: see fileName. */
-    fun export(context: Context, source: Uri, clips: List<Clip>, prefix: String = "", onProgress: (Int, Int) -> Unit): ExportResult {
+    /**
+     * Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. [prefix] and [tagOf] (each clip's
+     * tag, "" = none): see fileName.
+     */
+    fun export(
+        context: Context, source: Uri, clips: List<Clip>, prefix: String = "", tagOf: (Clip) -> String = { "" },
+        onProgress: (Int, Int) -> Unit
+    ): ExportResult {
         val failed = mutableListOf<String>()
         val files = mutableListOf<ExportedFile>()
         var done = 0
@@ -198,16 +204,16 @@ object ClipExporter {
         for ((i, clip) in clips.withIndex()) {
             onProgress(i, clips.size)
             val made = Made()
-            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix), made, buffer)
+            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix, tagOf(clip)), made, buffer)
                 ?: made.failure                        // the copy worked, but the file couldn't be finished in the gallery
             if (error == null) {
                 done++
                 val uri = made.uri
                 // the name Android really gave the file (it adds " (1)" when the name is taken, e.g. after exporting again)
-                val savedName = made.fileName ?: fileName(clip, prefix)
+                val savedName = made.fileName ?: fileName(clip, prefix, tagOf(clip))
                 if (uri != null) files.add(ExportedFile(clip, uri, savedName, if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
             } else {
-                failed.add("${fileName(clip, prefix)}: $error")
+                failed.add("${fileName(clip, prefix, tagOf(clip))}: $error")
             }
         }
         onProgress(clips.size, clips.size)

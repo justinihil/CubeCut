@@ -100,7 +100,7 @@ Docs: [data-model.md](data-model.md), the [glossary](glossary.md) and the CHANGE
 
 Phone test: install over 3.1 and check that existing solves, notes and exports survive the upgrade.
 
-### 3.2-B Puzzle and category tags ⬜
+### 3.2-B Puzzle and category tags 🔶
 **#3**, the owner's requirements:
 - The **WCA puzzles**, including FTO and Clock.
 - **Other**, with free text.
@@ -122,11 +122,15 @@ Phone test: install over 3.1 and check that existing solves, notes and exports s
   - *Type*: Normal, OH, BLD, Relay, PLL attack, Other.
 - Places to set them: an import dialog ("one puzzle per video works best", with *Decide later*), the Setup box, the Edit window, the Gallery selection, the viewer sheet and the Footage menu.
 
-Ask first:
-- The final puzzle and category lists.
-- One list or two?
-- Does the puzzle go into file names?
-- Grouping or sorting by puzzle in the Gallery?
+**Decided** at the start of the phase (2026-11-23):
+- Lists: the earlier note's puzzles (WCA + FTO) and types, each with *Other* (typed name) and *Not tagged*.
+- Two tags: *Puzzle* and *Type*.
+- The tag goes into exported file names after the title (*Normal* left out; untagged clips keep today's name).
+- Gallery: filter only (Puzzle and Type, with *Not tagged*); no new sort, no grouping. Cards show the tag.
+- The editor's untick makes the clip *not tagged* (`NO_TAG`, puzzle and type both). Re-ticking follows the video again.
+- Import asks *Which puzzle is this?* once for a new video, with *Decide later*.
+- The Footage menu also gets *Set puzzle for this video…*.
+- Built without asking (flag for the owner): a Gallery selection that covers every clip of a video tags the video instead of each clip, like the scramble switch, so those solves are not marked `edited`. The import question starts on *Normal*.
 
 Where to start, Gallery filter and sort: `ClipKey`, `ExportFilter`, the Filter dialog and `GalleryUiState` (`Gallery.kt`).
 

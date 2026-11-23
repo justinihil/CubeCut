@@ -608,7 +608,7 @@ object SessionStore {
         if (pad == null) v.putNull(column) else v.put(column, pad)
     }
 
-    /** Sets one clip's own puzzle and category tags ("" = follows its video's tag). */
+    /** Sets one clip's own puzzle and category tags ("" = follows its video's tag, NO_TAG = not tagged even if the video is). */
     fun updateCutTags(context: Context, footageId: Long, stopSec: Double, puzzle: String, category: String) {
         val v = ContentValues()
         v.put("puzzle", puzzle)
@@ -846,10 +846,12 @@ class GalleryClip(
     val checkText: String get() = listOf(if (noteNeedsCheck) cut.note else "", warning).filter { it.isNotEmpty() }.joinToString("; ")
     val title: String get() = clipTitle(footage.title, index + 1, cut.timeText)
     val sharedList: List<String> get() = platformsIn(cut.userNote)   // 3.2-E switches this to cut.sharedOn
-    /** The puzzle this clip counts as: its own tag, else its video's ("" = not tagged). */
-    val puzzle: String get() = cut.puzzle.ifEmpty { footage.puzzle }
-    /** The category this clip counts as: its own tag, else its video's ("" = not tagged). */
-    val category: String get() = cut.category.ifEmpty { footage.category }
+    /** The puzzle this clip counts as: its own tag, else its video's ("" = not tagged; NO_TAG on the clip also gives ""). */
+    val puzzle: String get() = resolveTag(cut.puzzle, footage.puzzle)
+    /** The category this clip counts as: its own tag, else its video's ("" = not tagged; NO_TAG on the clip also gives ""). */
+    val category: String get() = resolveTag(cut.category, footage.category)
+    /** "3x3 OH", "Megaminx", "" (not tagged): what the cards show and what goes into an exported file's name. */
+    val tagText: String get() = tagLabel(puzzle, category)
 }
 
 /**

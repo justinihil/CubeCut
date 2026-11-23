@@ -73,6 +73,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -83,6 +85,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -376,6 +379,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var beforePad by remember { mutableStateOf(2.5f) }           // seconds kept BEFORE the solve starts (used when the scramble is left out)
     var afterPad by remember { mutableStateOf(2.5f) }            // seconds kept AFTER the first frame that shows the final time
     var scrambleAll by remember { mutableStateOf(DEFAULT_INCLUDE_SCRAMBLE) }   // the "all clips" scramble switch (new cuts follow it)
+    // (3.2-B) the video's puzzle and type tags ("" = not tagged); every clip follows them unless it has its own (see Tags.kt)
+    var videoPuzzle by remember { mutableStateOf("") }
+    var videoCategory by remember { mutableStateOf("") }
+    var tagVideoWindow by remember { mutableStateOf(false) }     // the "Puzzle for this video" window (Setup box)
+    var askPuzzleNew by remember { mutableStateOf(false) }       // a video imported for the first time: ask its puzzle once
     var zoom by remember { mutableStateOf(1f) }
     val timelineScroll = rememberScrollState()
     val listScroll = rememberScrollState()                       // the scrolling area under the buttons (setup box + list)
@@ -543,6 +551,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         analysisStatus = ""
         scanReport = null
         scanned = false
+        videoPuzzle = ""
+        videoCategory = ""
+        askPuzzleNew = false
         zoom = 1f
         videoScale = 1f
         videoOffX = 0f
@@ -586,6 +597,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         analysisStatus = openedNote
                     }
                 }
+                videoPuzzle = opened.footage.puzzle
+                videoCategory = opened.footage.category
                 footageId = opened.footage.id       // set last: from now on every change is saved
             }
             // (3.1-D) the filter stays as it was: its list is picked from this video's solves
@@ -597,6 +610,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 buildThumbnails(context, uri, dur, THUMB_COUNT) { p -> importProgress = 0.05f + 0.95f * p }
             }
             importProgress = 1f
+            // (3.2-B) a new video: ask which puzzle it is (once the progress window has gone)
+            if (opened?.isNew == true) askPuzzleNew = true
 
             status = openedNote ?: "Ready"
 
@@ -649,6 +664,18 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     "If it moved, import it again. Your saved cuts come back."
         } finally {
             importing = false
+        }
+    }
+
+    /** (3.2-B) Tags the whole video. A video setting (like the scramble switch), so no clip is marked `edited`. */
+    fun saveVideoTags(puzzle: String, category: String) {
+        videoPuzzle = puzzle
+        videoCategory = category
+        val id = footageId ?: return
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateFootageTags(context, id, puzzle, category) } catch (e: Exception) { }
+            }
         }
     }
 
@@ -1492,8 +1519,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                if (setupExpanded) "Setup: timer and clip buffers"
-                                else (if (engineNow != null) "Timer ready" else "Timer not set up") +
+                                if (setupExpanded) "Setup: timer, buffers and puzzle"
+                                else tagLabel(videoPuzzle, videoCategory).let { if (it.isEmpty()) "" else "$it \u00B7 " } +
+                                        (if (engineNow != null) "Timer ready" else "Timer not set up") +
                                         " \u00B7 ${"%.1f".format(beforePad)} s before \u00B7 ${"%.1f".format(afterPad)} s after",
                                 style = if (setupExpanded) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
@@ -1592,6 +1620,27 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     )
                                 }
                                 Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
+
+                                // (3.2-B) the puzzle of the whole video; odd solves are unticked on their cards below
+                                Spacer(Modifier.height(12.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("3. Puzzle for this video", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                    InfoButton(
+                                        "Puzzle for this video",
+                                        listOf(
+                                            "Every clip of this video gets this tag.",
+                                            "Mixed puzzles? Untick the odd solves below.",
+                                            "Then tag those clips in the Gallery."
+                                        )
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val videoTag = tagLabel(videoPuzzle, videoCategory)
+                                    Text(videoTag.ifEmpty { "Not tagged" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                    OutlinedButton(onClick = { tagVideoWindow = true }, enabled = footageId != null) {
+                                        Text(if (videoTag.isEmpty()) "Set puzzle" else "Change")
+                                    }
+                                }
                                 // (the scramble switch for all clips is not here: it sits under Add a missed solve, next to the check filter)
                             }
                         }
@@ -1845,6 +1894,40 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                             ) { leaveToGallery(index) }
                                             // not a solve: delete it at once (the Undo bar at the top brings it back); an exported one asks first
                                             DeleteButton(enabled = !analyzing) { requestDelete(index) }
+                                        }
+                                    }
+                                    // (3.2-B) "not this puzzle": ticked = the solve follows the video's tag. Unticking it leaves it not
+                                    // tagged (tag it in the Gallery). Both count as an edit, so a re-scan keeps them.
+                                    val videoTag = tagLabel(videoPuzzle, videoCategory)
+                                    val ownTag = item.puzzle != "" || item.category != ""
+                                    if (!isLeftover(item) && (videoTag.isNotEmpty() || ownTag)) {
+                                        fun toggleTag() {
+                                            if (analyzing || index !in cuts.indices) return
+                                            val c = cuts[index]
+                                            val follows = c.puzzle == "" && c.category == ""
+                                            cuts[index] = if (follows) c.copy(puzzle = NO_TAG, category = NO_TAG, edited = true)
+                                            else c.copy(puzzle = "", category = "", edited = true)
+                                        }
+                                        Row(
+                                            Modifier.clickable(enabled = !analyzing) { toggleTag() }.padding(top = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                                                Checkbox(checked = !ownTag, onCheckedChange = { toggleTag() }, enabled = !analyzing)
+                                            }
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                when {
+                                                    !ownTag -> videoTag
+                                                    item.puzzle == NO_TAG && item.category == NO_TAG ->
+                                                        if (videoTag.isEmpty()) "Not tagged" else "Not $videoTag. Tag it in the Gallery."
+                                                    else -> tagLabel(resolveTag(item.puzzle, videoPuzzle), resolveTag(item.category, videoCategory))
+                                                        .ifEmpty { "not tagged" } + " (own tag)"
+                                                },
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                                            )
                                         }
                                     }
                                     // what needs a look, under the line, full width
@@ -2165,6 +2248,26 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     }
                 },
                 confirmButton = { TextButton(onClick = { deleteAsk = null }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (3.2-B) the video's puzzle: from the Setup box, or asked once when a video is imported for the first time =====
+        if ((tagVideoWindow || askPuzzleNew) && footageId != null && !importing) {
+            val asking = !tagVideoWindow
+            TagDialog(
+                title = if (asking) "Which puzzle is this?" else "Puzzle for this video",
+                puzzle = videoPuzzle,
+                // a new video starts on Normal, so picking only the puzzle is enough
+                category = if (asking && videoCategory.isEmpty()) NORMAL_CATEGORY else videoCategory,
+                forClip = false,
+                intro = if (asking) "One puzzle per video works best. Mixed? Untick the odd solves later." else null,
+                dismissLabel = if (asking) "Decide later" else "Cancel",
+                onDismiss = { tagVideoWindow = false; askPuzzleNew = false },
+                onDone = { choice ->
+                    tagVideoWindow = false
+                    askPuzzleNew = false
+                    saveVideoTags(choice.puzzle ?: videoPuzzle, choice.category ?: videoCategory)
+                }
             )
         }
 

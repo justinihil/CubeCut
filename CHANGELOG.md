@@ -12,6 +12,14 @@ Notes on history:
 
 ## [Unreleased]
 
+### Added
+- **Puzzle tags.** A video gets a puzzle (3x3 to 7x7, Megaminx, Pyraminx, Skewb, Square-1, Clock, FTO, or *Other* with your own name) and a type (Normal, OH, BLD, Relay, PLL attack, or *Other*). Its clips follow it.
+- A new video asks **Which puzzle is this?** at import (*Decide later* skips it). Change it in the editor's Setup box or in a video's ⋮ menu.
+- Mixed footage: each solve card in the editor has a tick for the video's puzzle. Untick a solve that is a different puzzle; it is then not tagged.
+- Tag clips in the Gallery: **Set puzzle…** while ticking clips, and **Change** next to *Puzzle* in the viewer's details.
+- **Filter** by puzzle and by type, including *Not tagged*. Clip and video cards show the tag.
+- Exported files of a tagged clip carry the tag after the title: `Sunday practice_3x3 OH_Solve_03_11.263s.mp4`.
+
 ### Changed
 - The saved data is upgraded to database v7, ready for 3.2's tags, penalties, per-clip buffers and *Shared on*. Nothing looks different yet: solves, notes, exports and clips stay exactly as they were. *Shared on* starts from the platform names already in each note.
 
