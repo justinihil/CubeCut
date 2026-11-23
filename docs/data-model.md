@@ -82,7 +82,7 @@ There is no `onDowngrade`, so installing an older APK over a newer database cras
 2. same `display_name` + `size_bytes` + `duration_ms`;
 3. same `size_bytes` + `duration_ms` (skipped if the size is unknown), so a renamed file is still recognised.
 
-On a match it refreshes the stored uri, name and size, and returns `isNew = false`. The editor then silently reopens the saved session; nothing warns the user (see [roadmap](roadmap.md) item 10). `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
+On a match it refreshes the stored uri, name and size, and returns `isNew = false`. The editor then silently reopens the saved session; nothing warns the user (a warning is planned: [roadmap](roadmap.md) phase 3.1-A). `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
 
 ## How exports link to cuts
 
@@ -109,6 +109,6 @@ Single-field writes from the Gallery or viewer (`updateCutScramble`, `markCutRev
 
 ## Constraints for planned features
 
-- **Backup and transfer** ([roadmap](roadmap.md) item 5): stored `uri`s are SAF grants that don't survive a reinstall. A restore must re-identify videos by name+size+duration (step 2 above), or reconnect them in bulk. `allowBackup="false"` and `data_extraction_rules.xml` currently exclude everything.
+- **Backup and transfer** ([roadmap](roadmap.md) phase 3.2-G; decided: a backup file the user saves, restored with bulk reconnect, superseding ADR-0009): stored `uri`s are SAF grants that don't survive a reinstall. A restore must re-identify videos by name+size+duration (step 2 above), or reconnect them in bulk. `allowBackup="false"` and `data_extraction_rules.xml` currently exclude everything.
 - **A new per-cut field** must go through `saveSession`'s insert and through `mergeRescan`. Follow the recipe in [ARCHITECTURE](../ARCHITECTURE.md#new-per-video-or-per-clip-field-for-example-a-tag-or-a-penalty).
 - **Changing `time_text`** (for example a +2 penalty) changes the clip's solve-only start and file name, but not the export link, because the link uses `stop_sec`.

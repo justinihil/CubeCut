@@ -1,6 +1,6 @@
 # ADR-0009: No Google backup or device transfer
 
-- **Status:** Accepted (documented retroactively). Open to revisit ([roadmap](../roadmap.md) item 5).
+- **Status:** Accepted (documented retroactively). To be superseded: the owner chose a user-saved backup file ([roadmap](../roadmap.md) phase 3.2-G).
 - **Date:** 3.0.0 review fixes (2026-11-09)
 
 ## Context
