@@ -100,7 +100,7 @@ Docs: [data-model.md](data-model.md), the [glossary](glossary.md) and the CHANGE
 
 Phone test: install over 3.1 and check that existing solves, notes and exports survive the upgrade.
 
-### 3.2-B Puzzle and category tags 🔶
+### 3.2-B Puzzle and category tags ✅
 **#3**, the owner's requirements:
 - The **WCA puzzles**, including FTO and Clock.
 - **Other**, with free text.
