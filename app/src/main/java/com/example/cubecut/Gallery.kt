@@ -1385,7 +1385,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     withContext(Dispatchers.IO) {
                         try {
                             if (p.footage != null) SessionStore.setFootageTrashed(context, p.footage.id, stamp)
-                            else if (p.export != null) SessionStore.setExportTrashed(context, p.export.id, stamp)
+                            else if (p.export != null) SessionStore.setExportTrashed(context, p.export, stamp)
                             for (e in p.batch) SessionStore.setExportTrashed(context, e.id, stamp)
                         } catch (e: Exception) {
                         }
@@ -3020,6 +3020,9 @@ fun ClipViewer(
     val checkedNow = remember { mutableStateMapOf<String, Boolean>() }      // clips marked as checked here (saved at once)
     val tagOv = remember { mutableStateMapOf<String, Pair<String, String>>() }   // (3.2-B) clips tagged here: their own (puzzle, type)
     val penaltyOv = remember { mutableStateMapOf<String, Pair<Int, Boolean>>() } // (3.2-C) clips given a penalty here: (+2 count, DNF)
+    val padOv = remember { mutableStateMapOf<String, Pair<Double?, Double?>>() }  // (3.2-D) clips given their own buffers here (null = follow)
+    var reexportAsk by remember { mutableStateOf("") }           // (3.2-D) the clip whose buffers changed after its export: "Re-export now?"
+    var replaceOld by remember { mutableStateOf<ExportedClip?>(null) }   // (3.2-D) after that re-export: move the old file to the trash?
     var tagWindow by remember { mutableStateOf(false) }          // (3.2-B) the "Puzzle for this clip" window
     var noteVersion by remember { mutableStateOf(0) }
     var overrideVersion by remember { mutableStateOf(0) }
@@ -3041,6 +3044,8 @@ fun ClipViewer(
         return tagLabel(resolveTag(p, c.footage.puzzle), resolveTag(k, c.footage.category))
     }
     fun exportedFor(c: GalleryClip): ExportedClip? = exportedNow[c.listKey] ?: c.exported
+    /** (3.2-D) The clip's own buffers (before, after; null = follows the video), with a change made here. */
+    fun padsOf(c: GalleryClip): Pair<Double?, Double?> = padOv[c.listKey] ?: (c.cut.beforePad to c.cut.afterPad)
     /** (3.2-C) The clip's penalty (+2 count, DNF), with a change made here. */
     fun penaltyOf(c: GalleryClip): Pair<Int, Boolean> = penaltyOv[c.listKey] ?: (c.cut.plus2Count to c.cut.dnf)
     /**
@@ -3050,7 +3055,10 @@ fun ClipViewer(
     fun cutsFor(clip: GalleryClip): List<CutItem> =
         allClips.filter { it.footage.id == clip.footage.id && !it.exportOnly && it.index >= 0 }
             .sortedBy { it.index }
-            .map { c -> c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c)) }
+            .map { c ->
+                val (before, after) = padsOf(c)
+                c.cut.copy(included = c.cut.included || c.index == clip.index, includeScramble = withScramble(c), beforePad = before, afterPad = after)
+            }
 
     /** The moment of the video a clip starts at (what the player shows first), so the still and the first frame are the same picture. */
     fun stillMsFor(c: GalleryClip): Long =
@@ -3175,6 +3183,7 @@ fun ClipViewer(
         exportMessage = ""
         actionHint = ""
         confirmReexport = false
+        reexportAsk = ""
         confirmTrash = false
         tagWindow = false
         taps.pending?.cancel()           // a tap on the clip before must not toggle the controls of this one
@@ -3290,8 +3299,26 @@ fun ClipViewer(
         }
     }
 
+    /**
+     * (3.2-D) Sets one clip's own buffers (saved at once, marked `edited`). Its clip changes at once; an exported clip asks
+     * "Re-export now?", because the file still has the old buffers.
+     */
+    fun setPads(c: GalleryClip, before: Double?, after: Double?) {
+        if (padsOf(c) == (before to after)) return
+        padOv[c.listKey] = before to after
+        overrideVersion++
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try { SessionStore.updateCutPads(context, c.footage.id, c.cut.stopSec, before, after) } catch (e: Exception) { }
+            }
+        }
+        val e = exportedFor(c)
+        if (e != null && e.trashedMs == 0L) reexportAsk = c.listKey
+    }
+
     // ---- export this one clip (the same maths and rules as the batch export) ----
-    fun doExport() {
+    // [replacing]: (3.2-D) the file this export replaces; once the new one is saved, the old one is offered to the trash
+    fun doExport(replacing: ExportedClip? = null) {
         if (exporting) return
         val c = current
         val f = c.footage
@@ -3330,7 +3357,10 @@ fun ClipViewer(
             } else {
                 exportMessage = done.first.message
                 val record = done.second
-                if (record != null) exportedNow[c.listKey] = record
+                if (record != null) {
+                    exportedNow[c.listKey] = record
+                    if (replacing != null && replacing.uri != record.uri) replaceOld = replacing
+                }
             }
             exporting = false
         }
@@ -3637,6 +3667,11 @@ fun ClipViewer(
                                 style = MaterialTheme.typography.labelSmall
                             )
                         }
+                        // ===== (3.2-D) this clip's own buffers =====
+                        Spacer(Modifier.height(8.dp))
+                        Text("Buffers", style = MaterialTheme.typography.labelLarge)
+                        val (ownBefore, ownAfter) = padsOf(current)
+                        PadEditor(footage.beforePad.toDouble(), footage.afterPad.toDouble(), ownBefore, ownAfter) { b, a -> setPads(current, b, a) }
                     }
 
                     // ===== (3.2-B) puzzle tag: its own, or its video's =====
@@ -3774,6 +3809,52 @@ fun ClipViewer(
                 },
                 confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Delete") } },
                 dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (3.2-D) buffers changed on an exported clip: make the file again? =====
+        val reexportFile = exportedFor(current)
+        if (reexportAsk == current.listKey && reexportFile != null && editable) {
+            AlertDialog(
+                onDismissRequest = { reexportAsk = "" },
+                title = { Text("Re-export now?") },
+                text = {
+                    BulletLines(
+                        listOf(
+                            "The exported file still has the old buffers.",
+                            "Re-export makes a new file. Then you choose what happens to the old one."
+                        )
+                    )
+                },
+                confirmButton = { Button(onClick = { reexportAsk = ""; doExport(replacing = reexportFile) }) { Text("Re-export") } },
+                dismissButton = { TextButton(onClick = { reexportAsk = "" }) { Text("Later") } }
+            )
+        }
+
+        // ===== (3.2-D) after that re-export: the old file goes to the trash (ADR-0008), after this warning =====
+        val oldFile = replaceOld
+        if (oldFile != null) {
+            AlertDialog(
+                onDismissRequest = { replaceOld = null },
+                title = { Text("Move the old file to the trash?") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text(oldFile.fileName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(10.dp))
+                        EffectLine(Effect.STAYS, "The new file with the new buffers stays")
+                        EffectLine(Effect.GOES, "The old file goes to the phone's trash")
+                        EffectLine(Effect.UNDO, "Restore it from Recently deleted within about 30 days")
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Android asks you to confirm next.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton("Move old file to trash") { replaceOld = null; onTrashExport(oldFile) }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { replaceOld = null }) { Text("Keep both") } }
             )
         }
 

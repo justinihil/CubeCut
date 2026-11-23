@@ -784,6 +784,26 @@ object SessionStore {
         db(context).update("exports", v, "id = ?", arrayOf(exportId.toString()))
     }
 
+    /**
+     * (3.2-D) Like setExportTrashed, for a file whose record a re-export may already have replaced (recordExports keeps one live
+     * record per solve). A record that is gone is written back with [trashedMs], so the old file still shows in Recently deleted and
+     * can be restored.
+     */
+    fun setExportTrashed(context: Context, e: ExportedClip, trashedMs: Long) {
+        val d = db(context)
+        val v = ContentValues()
+        v.put("trashed_ms", trashedMs)
+        if (d.update("exports", v, "id = ?", arrayOf(e.id.toString())) > 0 || trashedMs == 0L) return
+        v.put("footage_id", e.footageId)
+        v.put("stop_sec", e.stopSec)
+        v.put("time_text", e.timeText)
+        v.put("uri", e.uri)
+        v.put("file_name", e.fileName)
+        v.put("offset_sec", e.offsetSec)
+        v.put("exported_ms", e.exportedMs)
+        d.insert("exports", null, v)
+    }
+
     /** Everything CubeCut moved to the trash: raw videos and exported clips. */
     fun loadTrash(context: Context): TrashData {
         val d = db(context)

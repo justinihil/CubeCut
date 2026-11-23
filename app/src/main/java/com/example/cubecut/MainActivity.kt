@@ -1884,7 +1884,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                                 }
                                                 isLeftover(item) -> "  \u00B7  not a clip"
                                                 else -> ""
-                                            }
+                                            } + (if (item.beforePad != null || item.afterPad != null) "  \u00B7  own buffers" else "")
                                             Text(
                                                 detail,
                                                 style = MaterialTheme.typography.bodySmall,
@@ -2311,6 +2311,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             val item = cuts[editIndex]
             var text by remember(editIndex) { mutableStateOf(item.timeText) }
             var penalty by remember(editIndex) { mutableStateOf(item.plus2Count to item.dnf) }   // (3.2-C) (+2 count, DNF)
+            var pads by remember(editIndex) { mutableStateOf(item.beforePad to item.afterPad) }   // (3.2-D) own buffers (null = follow)
             // moves the cut (not the solve time) and shows the frame it now points at
             fun nudge(delta: Double) {
                 val from = cuts[editIndex].stopSec
@@ -2446,6 +2447,13 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             }
                         }
                         OutlinedButton(onClick = { seekToSec(cuts[editIndex].stopSec) }) { Text("Show it in the video") }
+
+                        // ---- (3.2-D) this clip's own buffers (the Setup box sliders are the video's) ----
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(10.dp))
+                        Text("Buffers for this clip", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        PadEditor(beforePad.toDouble(), afterPad.toDouble(), pads.first, pads.second) { b, a -> pads = b to a }
                         if (item.note.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
                             Text("Note: ${item.note}", style = MaterialTheme.typography.bodySmall)
@@ -2457,8 +2465,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         val newText = text.trim()
                         val old = cuts[editIndex]
                         val penaltyChanged = penalty.first != old.plus2Count || penalty.second != old.dnf
-                        if (newText != old.timeText || penaltyChanged) {
-                            cuts[editIndex] = old.copy(timeText = newText, plus2Count = penalty.first, dnf = penalty.second, edited = true)
+                        val padsChanged = pads.first != old.beforePad || pads.second != old.afterPad
+                        if (newText != old.timeText || penaltyChanged || padsChanged) {
+                            cuts[editIndex] = old.copy(
+                                timeText = newText, plus2Count = penalty.first, dnf = penalty.second,
+                                beforePad = pads.first, afterPad = pads.second, edited = true
+                            )
                         }
                         if (penaltyChanged && isExported(editIndex)) renameExportOf(cuts[editIndex])
                         editIndex = -1

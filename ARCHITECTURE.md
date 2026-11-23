@@ -144,7 +144,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | How digits are read; supported fonts | `TimerVision` in `TimerReader.kt`; `DisplayReaders.kt` (add a reader here) |
 | Timer setup screen and learning | `TimerSetupScreen.kt` (UI); `TimerVision.createSetup` (learning); `SessionStore.saveTimerSetup` / `timerCornersOf` (persistence) |
 | Where frames come from, decoder speed | `FrameSource.kt` (`openFrameSource`, `calibrate`) |
-| Clip start/end, scramble, buffers | `computeClips` and `parseTimeSeconds` in `ClipExporter.kt` |
+| Clip start/end, scramble, buffers | `computeClips` and `parseTimeSeconds` in `ClipExporter.kt`; one clip's own buffers: `PadEditor` (`ClipSettings.kt`) in the Edit window and the viewer sheet (`ClipViewer.setPads`, then *Re-export now?* and the old file's trash warning) |
 | Export file names and where files are written | `ClipExporter.fileName` / `safeTitle` / `openOutput`; the tag comes from `tagOf` in `exportFromSession` and `ClipViewer.doExport`; the penalty part from `fileTimePart` (`Penalty.kt`) |
 | Penalty (+2 / DNF), renaming an exported file | `Penalty.kt`; `PenaltyPicker` / `rememberExportRenamer` (`ClipSettings.kt`); the Edit window (`renameExportOf` in `EditorScreen`) and the viewer sheet (`ClipViewer.setPenalty`) |
 | Re-scan merge, timing checks ("too close", "overlap", "too fast") | `mergeRescan`, `checkCuts` in `RescanMerge.kt` |

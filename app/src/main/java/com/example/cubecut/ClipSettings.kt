@@ -30,10 +30,13 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +50,7 @@ import kotlinx.coroutines.withContext
 // ---------------------------------------------------------------------------------------
 // Controls for one clip that both the editor's Edit window and the Gallery viewer's sheet show (3.2-C on):
 //   PenaltyPicker        - No penalty / +2 (tap again for another) / DNF
+//   PadEditor            - (3.2-D) this clip's buffers: Follow video, or Custom with two sliders
 //   rememberExportRenamer - renames an exported file after its penalty changed, asking Android first when CubeCut no longer owns it
 // ---------------------------------------------------------------------------------------
 
@@ -89,6 +93,46 @@ fun PenaltyPicker(plus2Count: Int, dnf: Boolean, enabled: Boolean = true, onChan
         }
         if (plus2Count > 0) {
             Text("Tap +2 again for another. No penalty clears them.", style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+/** The buffer sliders' range and step, the same as the editor's Setup box (0 to 8 s in 0.5 s steps). */
+private const val PAD_MAX = 8f
+private const val PAD_STEPS = 15
+
+/**
+ * (3.2-D) One clip's own buffers. *Follow video* = null (the clip uses the video's sliders, [videoBefore] / [videoAfter]); *Custom*
+ * starts from the video's values. [onChange] gets (before, after) when a choice is made or a slider is let go, not while it moves.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun PadEditor(videoBefore: Double, videoAfter: Double, before: Double?, after: Double?, enabled: Boolean = true, onChange: (Double?, Double?) -> Unit) {
+    val custom = before != null || after != null
+    var b by remember(before, videoBefore) { mutableStateOf((before ?: videoBefore).toFloat()) }
+    var a by remember(after, videoAfter) { mutableStateOf((after ?: videoAfter).toFloat()) }
+    Column {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ChoiceChip("Follow video", !custom, enabled) { onChange(null, null) }
+            ChoiceChip("Custom", custom, enabled) { if (!custom) onChange(videoBefore, videoAfter) }
+        }
+        if (!custom) {
+            Text(
+                "${"%.1f".format(videoBefore)} s before · ${"%.1f".format(videoAfter)} s after, from the video",
+                style = MaterialTheme.typography.labelSmall
+            )
+        } else {
+            Text("Before the solve: ${"%.1f".format(b)} s", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = b, onValueChange = { b = it }, onValueChangeFinished = { onChange(b.toDouble(), a.toDouble()) },
+                valueRange = 0f..PAD_MAX, steps = PAD_STEPS, enabled = enabled
+            )
+            Text("After the solve: ${"%.1f".format(a)} s", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = a, onValueChange = { a = it }, onValueChangeFinished = { onChange(b.toDouble(), a.toDouble()) },
+                valueRange = 0f..PAD_MAX, steps = PAD_STEPS, enabled = enabled
+            )
+            Text("Before counts only when the scramble is left out.", style = MaterialTheme.typography.labelSmall)
         }
     }
 }

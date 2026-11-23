@@ -169,7 +169,7 @@ Rules:
 - The solve-only clip start uses the raw time on the timer.
 - Built without asking (flag for the owner): DNF and +2 exclude each other in the picker; sorting by time and *best* use the penalised time (DNF sorts last); the rename replaces only the time part of the existing name, so a file renamed by hand is left alone; changing only the time does not rename.
 
-### 3.2-D Per-clip buffers ⬜
+### 3.2-D Per-clip buffers 🔶
 **#11:** adjust the before and after buffers of one clip, in the editor and in the Gallery, instead of only one slider for the whole video.
 
 **Decided:**
@@ -184,6 +184,11 @@ Where to start:
 Rules:
 - [ADR-0008](adr/0008-never-delete-permanently.md).
 - A buffer change is a user change: set `edited` (invariant 4).
+
+Built (2026-11-23), flag for the owner:
+- The editor has no export controls (settled), so its Edit window only says *Other changes need a new export: tap View*. *Re-export now?* is in the viewer.
+- After the re-export, the old file's warning offers *Move old file to trash* or *Keep both*. Moving it closes the viewer, like *Delete file*.
+- The before buffer only counts for solve-only clips; the window says so.
 
 ### 3.2-E Shared on ⬜
 **#10:** filter by where a clip was shared.

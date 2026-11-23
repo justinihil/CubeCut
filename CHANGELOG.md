@@ -21,6 +21,8 @@ Notes on history:
 - Exported files of a tagged clip carry the tag after the title: `Sunday practice_3x3 OH_Solve_03_11.263s.mp4`.
 - **Penalties (+2 / DNF)** in the editor's *Edit* window and in the viewer's details. Tap *+2* again for another +2. Times show as `13.263 (+2)`, `15.263 (+2×2)` or `DNF(11.263)`. The solve-only clip still starts from the time on the timer.
 - Sorting by solve time and a video's *best* count the penalty; a DNF sorts last and is never *best*.
+- **Buffers for one clip:** *Follow video* or *Custom* (own before / after sliders), in the editor's *Edit* window and in the viewer's details. Its card says *own buffers*.
+- Changing an exported clip's buffers in the viewer asks **Re-export now?** After the new file is saved, the old one can go to the phone's trash (after a warning) or stay.
 - A penalty on an exported clip **renames its file** (`…_Solve_03_13.263s_plus2.mp4`, `…_Solve_03_DNF_11.263s.mp4`). The clip stays linked to it. After a reinstall Android asks first.
 
 ### Changed
