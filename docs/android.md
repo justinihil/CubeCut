@@ -36,7 +36,7 @@ These are the 7 permissions in the merged debug manifest (`processDebugManifest`
 
 ## Manifest choices
 
-- **`allowBackup="false"` + `res/xml/data_extraction_rules.xml`** exclude every domain from cloud backup **and** device transfer. On 12+, `allowBackup` alone does not stop device transfer. See [ADR-0009](adr/0009-no-backup-or-transfer.md).
+- **`allowBackup="false"` + `res/xml/data_extraction_rules.xml`** exclude every domain from cloud backup **and** device transfer. On 12+, `allowBackup` alone does not stop device transfer. The Gallery has its own backup file instead (*⋮ → Backup and restore*, `CreateDocument` / `OpenDocument` / `OpenMultipleDocuments`, no permission). See [ADR-0015](adr/0015-user-saved-backup-file.md), which supersedes [ADR-0009](adr/0009-no-backup-or-transfer.md).
 - **`screenOrientation="portrait"` + a long `configChanges` list** mean the activity is never recreated for rotation, dark-mode switches, font scale, density, locale or split screen. The app has no `rememberSaveable` or ViewModel, so a recreation would close the editor and kill a running scan or export. See [ADR-0010](adr/0010-portrait-lock-config-changes.md).
 - **`AnalysisService`** is `exported="false"` with `foregroundServiceType="dataSync|mediaProcessing"`. It picks the type at runtime by SDK level, returns `START_NOT_STICKY`, and stops itself in `onTimeout`. Android 15+ allows about 6 h per day. See [ADR-0011](adr/0011-foreground-service-for-notification-only.md).
 - **`windowSoftInputMode="adjustResize"`.**

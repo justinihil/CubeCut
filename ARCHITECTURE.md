@@ -144,15 +144,19 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | How digits are read; supported fonts | `TimerVision` in `TimerReader.kt`; `DisplayReaders.kt` (add a reader here) |
 | Timer setup screen and learning | `TimerSetupScreen.kt` (UI); `TimerVision.createSetup` (learning); `SessionStore.saveTimerSetup` / `timerCornersOf` (persistence) |
 | Where frames come from, decoder speed | `FrameSource.kt` (`openFrameSource`, `calibrate`) |
-| Clip start/end, scramble, buffers | `computeClips` and `parseTimeSeconds` in `ClipExporter.kt` |
-| Export file names and where files are written | `ClipExporter.fileName` / `safeTitle` / `openOutput` |
+| Clip start/end, scramble, buffers | `computeClips` and `parseTimeSeconds` in `ClipExporter.kt`; one clip's own buffers: `PadEditor` (`ClipSettings.kt`) in the Edit window and the viewer sheet (`ClipViewer.setPads`, then *Re-export now?* and the old file's trash warning) |
+| Export file names and where files are written | `ClipExporter.fileName` / `safeTitle` / `openOutput`; the tag comes from `tagOf` in `exportFromSession` and `ClipViewer.doExport`; the penalty part from `fileTimePart` (`Penalty.kt`) |
+| Penalty (+2 / DNF), renaming an exported file | `Penalty.kt`; `PenaltyPicker` / `rememberExportRenamer` (`ClipSettings.kt`); the Edit window (`renameExportOf` in `EditorScreen`) and the viewer sheet (`ClipViewer.setPenalty`) |
 | Re-scan merge, timing checks ("too close", "overlap", "too fast") | `mergeRescan`, `checkCuts` in `RescanMerge.kt` |
 | Adding a missed solve | `startManualCut` (`MainActivity.kt`); `solveAtPlayhead` / `solveOverlappedBy` (`RescanMerge.kt`) |
-| Importing a video, re-import of a known video | An `OpenDocument` launcher (`picker` in `GalleryScreen`, which also handles relink, or in `EditorScreen`) → `keepAccess` → `findImportedBefore` (`Reimport.kt`; a known video shows `ReimportDialog` first) → the editor's "when a video is chosen" effect on `videoUri` → `SessionStore.openOrCreate` (returns `isNew`) |
+| Importing a video, re-import of a known video | An `OpenDocument` launcher (`picker` in `GalleryScreen`, which also handles relink, or in `EditorScreen`) → `keepAccess` → `findImportedBefore` (`Reimport.kt`; a known video shows `ReimportDialog` first) → the editor's "when a video is chosen" effect on `videoUri` → `SessionStore.openOrCreate` (returns `isNew`). (3.2-F) The Gallery asks `ImportKindDialog` first for a new video; a known single solve shows `KnownSingleDialog`; the editor's picker refuses a single solve |
+| Single solves | `SingleSolve.kt`; `clipsFor` / `singleRange` (`ClipExporter.kt`); `createSingle` / `updateSingle`, the missing-single case in `loadGallery`; in `Gallery.kt`: `exportable` (untrimmed = no export), the Footage tab and Filter list leave them out, the viewer's time bar (`ClipViewer.setTime`) and *Edit* (`singleEdit`), *Delete video* / *Forget this solve* |
 | Check filter, stepping through checks, *It's fine* | `stepCut`, `checkCut`, the *Only show solves to check* filter (frozen list: `frozen`, `inList`, `freezeList`) and `needsCheck` in `EditorScreen`; `checkCuts` (`RescanMerge.kt`); `CutItem.noteNeedsCheck()` |
 | Database tables, migrations, video identity | `SessionStore.kt` (`Helper.onCreate` / `onUpgrade`, `openOrCreate`); [data-model](docs/data-model.md) |
 | What the Gallery shows, tags, "Solve deleted" | `SessionStore.loadGallery`, `GalleryClip` |
-| Gallery sort / filter / persisted UI settings | `ClipKey`, `FootageSort`, `ExportFilter`, `sortClips`, `GalleryUiState` (`Gallery.kt`) |
+| Puzzle and type tags | `Tags.kt` (lists, `resolveTag`, `tagLabel`), `TagDialog` (`TagPicker.kt`); editor: Setup box section 3, the card untick and the import question in `EditorScreen`; Gallery: `TagFilterSection`, `setTagsForSelected` (whole video → `updateFootageTags`, like the scramble switch), the Footage menu and the viewer sheet (`ClipViewer.setTags`) |
+| Gallery sort / filter / persisted UI settings | `ClipKey`, `FootageSort`, `ExportFilter`, `sortClips`, `GalleryUiState` (`Gallery.kt`; tag and *Shared on* filters: `puzzleFilter`, `categoryFilter`, `sharedFilter`) |
+| *Shared on* | The viewer sheet's chips (`ClipViewer.toggleSharedOn`, `SocialChip`); `toggleShared`, `sharedMatches`, `SOCIAL_PLATFORMS` (`SessionStore.kt`); the Filter dialog |
 | Multi-select, batch export and batch delete | `dragToSelect`, `selectable` / `exportable`, `runBatchExport`, `exportFromSession`, `setScrambleForSelected` (whole video → `SessionStore.setVideoScramble`), `startBatchTrash` and the `askDelete` dialog (`Gallery.kt`) |
 | Full-screen viewer, its player, its flicker | `ClipViewer`, `PlayerOverlay` (`Gallery.kt`); read [algorithms §6](docs/algorithms.md#6-viewer-still-to-video-handover) first |
 | Editor layout, solve cards, Edit window, delete/Undo | `EditorScreen` (`MainActivity.kt`): `deleteCut`, `requestDelete`, `pendingMoves`, `stepCut`, `pickSolveAt` |
@@ -164,6 +168,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf`; many exported files at once: `startBatchTrash` and `PendingTrash.batch` (one request) |
 | Destructive-action warnings | `DangerButton`, `EffectLine`, `FootageHeader` (`Gallery.kt`) |
 | Permissions, SDK, backup, signing | [docs/android.md](docs/android.md) |
+| Backup file, restore, reconnect many videos / exports | `Backup.kt` (`Backup.write` / `restore`, `BackupDialog`); `SessionStore.restoreVideo` / `reconnectVideos` / `reconnectExports`, `matchVideo` / `matchExport`; format in [data-model](docs/data-model.md#backup-file-32-g) |
 | Tuning numbers | [algorithms § Tuning map](docs/algorithms.md#7-tuning-map) |
 
 ## Recipes
@@ -187,11 +192,12 @@ Use a boolean or a nullable "target" (`var confirmX by remember { mutableStateOf
 
 ### New per-video or per-clip field (for example a tag or a penalty)
 1. **Schema:** add a column in `Helper.onCreate`, bump `DB_VERSION` and add an `if (oldVersion < N) ALTER TABLE … ADD COLUMN …` step (invariant 9).
-2. **Model:** add the field to `Footage` (`SessionStore.kt`) or `CutItem` (`ClipExporter.kt`) with a default value. Read it in `readFootage` / `loadCuts`.
+2. **Model:** add the field to `Footage` (`SessionStore.kt`) or `CutItem` (`ClipExporter.kt`) with a default value. Read it in `readFootage` (and `FOOTAGE_SELECT`) / `loadCuts`. Add a unit test next to the ones in `app/src/test`.
 3. **Writes:** `saveSession` deletes and reinserts every cut, so add the column to that insert. A single-field update from the Gallery needs its own `update…` function shaped like `updateCutScramble`, which also sets `user_edited = 1`.
-4. **Re-scan:** decide whether `mergeRescan` keeps or replaces the field. A user-set value must mark the cut `edited` (invariant 4).
+4. **Re-scan:** a field only the user sets goes into `withUserFieldsOf` (`RescanMerge.kt`), so a re-scan carries it over. A user-set value must also mark the cut `edited` (invariant 4); Gallery writes do that through `updateCut`.
 5. **Gallery:** expose it on `GalleryClip`, then wire sort and filter (`ClipKey`, `ExportFilter`, the Filter dialog, `GalleryUiState` persistence).
-6. Update [data-model.md](docs/data-model.md) and the CHANGELOG in the same commit.
+6. **Backup:** write it in `Backup.write` and read it with a default in `Backup.restore` (3.2-G).
+7. Update [data-model.md](docs/data-model.md) and the CHANGELOG in the same commit.
 
 ### New display reader (another font)
 Implement `DisplayReader` (`id`, `available`, `learn`, `read`, optionally `learnUnverified`) in `DisplayReaders.kt` and add it to `DisplayReaders.all`, cheapest first. The winning reader's `id` is stored in `DigitLayout.readerId`. `readerData` is free for the new reader's own data. Return `null` when unsure. Steps 1–3 of the pipeline (find, straighten, binarise) are shared. See [ADR-0014](docs/adr/0014-display-reader-seam.md).

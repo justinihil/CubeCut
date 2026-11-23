@@ -16,6 +16,10 @@ Rough sizes are given to warn you what you are opening.
 | `Timeline.kt` | The editor's film strip, clip bars, markers and playhead | `Timeline(…, position: () -> Long, onSeek, onPick)`, `ClipBar` | A deliberately dark panel in both themes (fixed colours at the top of the file). Reads the playhead only while drawing. Callbacks go through `rememberUpdatedState` |
 | `TimerSetupScreen.kt` | Full-screen tap / drag-corners / type-number setup | `TimerSetupScreen(frame, busy, message, onCancel, onSave(corners, typed))` | Has **no `BackHandler`** ([known issue](../docs/known-issues.md)). Typing `102.34` means 1:02.34 here only |
 | `Reimport.kt` | The *Imported before* warning on import | `findImportedBefore(context, uri)`, `ReimportDialog(footage, uri, onOpen, onCancel)` | Used by both *Import video* buttons (editor and Gallery). Opening a session from the Gallery doesn't ask. The video already open in the editor doesn't ask |
+| `TagPicker.kt` | (3.2-B) The puzzle and type window, for a video or for clips | `TagDialog(title, puzzle, category, forClip, …, onDone(TagChoice))`, `TagChoice` | Starts from stored values (`null` = mixed: nothing chosen, *leave as it is*). For clips it adds *As the video* (`''`) and its *Not tagged* stores `NO_TAG`; for a video *Not tagged* stores `''` |
+| `ClipSettings.kt` | (3.2-C on) Controls for one clip, shared by the Edit window and the viewer sheet | `ChoiceChip`, `PenaltyPicker`, `PadEditor` (3.2-D, *Follow video* / *Custom*), `rememberExportRenamer` / `ExportRenamer.rename`, `penaltyRename` | The renamer asks Android (`createWriteRequest`) when CubeCut no longer owns the file, and records the new name in the same IO block |
+| `SingleSolve.kt` | (3.2-F) Import and edit of single solves | `ImportKindDialog` (*A session* / *One solve*), `SingleSolveDialog` (time and trim with `RangeSlider` and two frame pictures; it can also ask penalty and puzzle, unused since the phone test), `KnownSingleDialog`, `SingleSolveInput` | Used by the Gallery only. *One solve* saves at once (`createSingle` with no time); the viewer asks the time over the video (`ClipViewer.setTime` → `updateCutTime`). The viewer's *Edit* reopens the viewer on the moved stop |
+| `Backup.kt` | (3.2-G) Backup file, restore, bulk reconnect | `Backup.write` / `restore` / `suggestedName`, `BackupDialog`, `RestoreResult`, `BackupFormatException` | Uses `org.json` (Android's own), so it has no JVM unit test; the matching rules it relies on (`matchVideo`, `matchExport`) do. A new saved field must be added here too |
 | `Notes.kt` | Shared message style | `InfoNote`, `InfoButton`, `BulletLines`, `LeadAndBullets`, `NoteKind`, `kindOfMessage` | Use these instead of grey paragraphs |
 | `Theme.kt` | Colours and dark mode | `CubeCutTheme(mode)`, `ThemeMode`, `AppColors` (`check`, `keep`, `danger`), `LogoBlue` | The **only** theme. `ui/theme/*` is dead template code; don't import it |
 
@@ -23,8 +27,10 @@ Rough sizes are given to warn you what you are opening.
 | File | Responsibility | Main entry points | Gotchas |
 |---|---|---|---|
 | `SolveAnalyzer.kt` | Find solves: coarse scan, vote, first-frame search | `SolveAnalyzer.analyze(context, uri, dur, engine, onProgress, isCancelled)`, `scan`, `FoundSolve`, `ScanResult`, `ScanCancelled`, `LEFTOVER_NOTE_START` | Tuning constants at the top. The comment at the top predates the binary search ([algorithms §1](../docs/algorithms.md#1-finding-solves) is current) |
-| `RescanMerge.kt` | Pure functions over `CutItem` lists | `mergeRescan`, `RescanResult`, `checkCuts`, `CutChecks`, `isLeftover`, `normalizeIncluded`, `solveAtPlayhead`, `solveOverlappedBy`, `NOT_FOUND_AGAIN_NOTE` | The easiest place to add unit tests |
-| `ClipExporter.kt` | The cut model, clip maths and lossless export | `CutItem`, `Clip`, `computeClips`, `parseTimeSeconds`, `SAME_SOLVE_SEC`, `ADDED_BY_YOU_NOTE`, `CutItem.noteNeedsCheck()`, `ClipExporter.export` / `fileName` / `safeTitle` | Data model and exporter share a file. Records the `DISPLAY_NAME` that Android actually used |
+| `RescanMerge.kt` | Pure functions over `CutItem` lists | `mergeRescan` (carries user-only fields with `withUserFieldsOf`), `RescanResult`, `checkCuts`, `CutChecks`, `isLeftover`, `normalizeIncluded`, `solveAtPlayhead`, `solveOverlappedBy`, `NOT_FOUND_AGAIN_NOTE` | The easiest place to add unit tests |
+| `Tags.kt` | (3.2-B) Puzzle and type tags | `PUZZLES`, `CATEGORIES`, `NORMAL_CATEGORY`, `NO_TAG`, `resolveTag`, `cleanTag`, `tagLabel`, `orderTags`, `tagMatches`, `applyTagChoice` / `videoTagFor` / `resetOwnTag` (selection rules) | A typed *Other* name is stored as typed, so a new puzzle needs no schema change. `tagLabel` leaves *Normal* out |
+| `Penalty.kt` | (3.2-C) +2 / DNF: how a time is shown, sorted and named | `shownTime`, `titleTime`, `penalisedSeconds`, `addSeconds` / `formatSeconds`, `fileTimePart`, `renamedExportName`, `hasPenalty` | Never changes `timeText`: the solve-only start stays on the raw time |
+| `ClipExporter.kt` | The cut model, clip maths and lossless export | `CutItem`, `Clip`, `computeClips`, `clipsFor` / `singleRange` (3.2-F), `parseTimeSeconds`, `SAME_SOLVE_SEC`, `ADDED_BY_YOU_NOTE`, `CutItem.noteNeedsCheck()`, `ClipExporter.export` / `fileName` / `safeTitle` / `renameFile` | Data model and exporter share a file. `fileName` puts the clip's tag after the title (`export(…, tagOf)`) and the penalty in the time part (`Clip.plus2Count` / `dnf`). Records the `DISPLAY_NAME` that Android actually used |
 
 ### Vision (OpenCV)
 | File | Responsibility | Main entry points | Gotchas |
@@ -36,7 +42,7 @@ Rough sizes are given to warn you what you are opening.
 ### Storage and platform
 | File | Responsibility | Main entry points | Gotchas |
 |---|---|---|---|
-| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, trash helpers, `delete`; `Footage`, `GalleryClip`, `ExportedClip`, `cutKey`, social-note helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The header comment's "Version 3" is the app version; the DB is v6 |
+| `SessionStore.kt` | SQLite persistence and Gallery data assembly | `openOrCreate`, `findKnown` (same identity rules, changes nothing), `createSingle` / `updateSingle` (3.2-F), `restoreVideo` / `reconnectVideos` / `reconnectExports` / `loadAllExports` (3.2-G), `loadCuts`, `saveSession`, `loadGallery`, `recordExports`, `loadExports`, `relink`, `renameFootage`, `saveTimerSetup` / `timerCornersOf`, `updateCutScramble` / `updateCutNote` / `markCutReviewed`, v7 `updateCutTags` / `updateCutPenalty` / `updateCutPads` / `updateCutSharedOn` (all through private `updateCut`, which sets `user_edited`), `updateFootageTags`, trash helpers, `delete`; `Footage` (`KIND_SESSION` / `KIND_SINGLE`), `GalleryClip`, `ExportedClip`, `cutKey`, social-note and `encodeSharedOn` / `decodeSharedOn` helpers | Schema and rules in [data-model.md](../docs/data-model.md). Call it from `Dispatchers.IO`. The DB is v7. *Shared on* has its own field and chips (3.2-E): `toggleShared`, `sharedMatches`; `updateCutNote` writes only the note |
 | `Thumbnails.kt` | On-demand picture cache | `ThumbCache.get` / `peek` / `frame` / `timerFrame` / `forgetFootage`, `Thumb` composable | At most 2 pictures made at once. Disk capped at 100 MB. `timerFrame` crops around the saved timer corners (full-size frame pixels) with `ZOOM_MARGIN`; it doesn't follow a camera that moved |
 | `MediaTools.kt` | Small media helpers | `readDurationMs`, `buildThumbnails` (film strip), `grabFrame`, `formatTime` | — |
 | `AnalysisService.kt` | Foreground notification during Find solves | `AnalysisService.start` / `update` / `stop` / `notifyDone` | Does no work itself ([ADR-0011](../docs/adr/0011-foreground-service-for-notification-only.md)) |
@@ -44,10 +50,17 @@ Rough sizes are given to warn you what you are opening.
 ### Resources
 - `res/layout/video_player_view.xml`: the TextureView `PlayerView`, required for editor pinch zoom and for the viewer.
 - `res/values(-night)/themes.xml` and `colors.xml`: window background only (`window_background`). The `black` and `white` colours are template leftovers.
-- `res/xml/data_extraction_rules.xml`: excludes everything from backup and transfer.
+- `res/xml/data_extraction_rules.xml`: excludes everything from Google backup and transfer (the app has its own backup file, `Backup.kt`).
 - `res/drawable/cubecut_logo.png`: the header logo. `mipmap-*`: the launcher icon.
 - `strings.xml` holds only `app_name`. **UI text is written directly in Kotlin** (see [CLAUDE.md conventions](../CLAUDE.md#conventions)).
 
 ## Tests
 
-`src/test` (`ExampleUnitTest`) and `src/androidTest` (`ExampleInstrumentedTest`) are the untouched Android Studio templates. There is no real coverage yet. Good first targets are the pure functions: `computeClips`, `parseTimeSeconds`, `mergeRescan`, `checkCuts`, and `SolveAnalyzer.scan` with a fake `read(t)`.
+`src/test` holds plain JUnit tests of the pure functions (no Android needed):
+- `ComputeClipsTest`: `parseTimeSeconds` and `computeClips`, including per-clip buffers;
+- `RescanMergeTest`: `mergeRescan` and `checkCuts`;
+- `CutFieldsTest`: *Shared on* storage, toggling and filter, the v7 fill from notes, tag fallback, single-solve clips (`clipsFor`), and restore matching (`matchVideo`, `matchExport`);
+- `TagsTest`: tag resolving, labels, filter, selection rules and tagged file names;
+- `PenaltyTest`: penalty display, file-name part, renaming an exported name, and that a penalty never moves a clip.
+
+The tests written before 3.2-A lock the 3.1 behaviour: if one fails, a clip or a merge moved. `src/androidTest` is still the template (`ExampleInstrumentedTest`). Next target: `SolveAnalyzer.scan` with a fake `read(t)`.

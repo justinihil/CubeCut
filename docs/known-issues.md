@@ -6,11 +6,11 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 
 | Issue | Where | Notes |
 |---|---|---|
-| **`lintDebug` fails** with 2 errors | `Gallery.kt:3165-3166`: `PlayerView.setShutterBackgroundColor` / `setKeepContentOnPlayerReset` are Media3 `@UnstableApi` without `@OptIn` | 57 warnings and 43 hints besides (checked 2026-11-23). Add `@OptIn(UnstableApi::class)` or a lint baseline |
+| **`lintDebug` fails** with 2 errors | `Gallery.kt:3586-3587`: `PlayerView.setShutterBackgroundColor` / `setKeepContentOnPlayerReset` are Media3 `@UnstableApi` without `@OptIn` | 65 warnings and 46 hints besides (checked 2026-11-23, 3.2.0). Add `@OptIn(UnstableApi::class)` or a lint baseline |
 | **Back on the timer setup screen leaves the editor** | `TimerSetupScreen.kt` has no `BackHandler`, so Back reaches the editor's (`leaveToGallery`) | Only the on-screen Cancel cancels setup |
 | **Dead template theme** | `app/src/main/java/com/example/cubecut/ui/theme/{Color,Theme,Type}.kt` | Unused, but declares a second `CubeCutTheme`, so a wrong auto-import is possible. An earlier changelog said it had been deleted. Delete it |
-| **Template-only tests** | `ExampleUnitTest`, `ExampleInstrumentedTest` | No real coverage. See [app/README § Tests](../app/README.md#tests) |
-| **Stale code comments** | `SessionStore.kt:37` ("Version 3" is the app version; the DB is v6); `SessionStore.kt:52` (`takePersistableUriPermission` is in `SessionStore.keepAccess`, not MainActivity); `SolveAnalyzer.kt:53-57` (describes walk-back only, but the code bisects first; mentions a prototype test that isn't in the repo) | Fix when touching those files |
+| **Thin tests** | `app/src/test`, `ExampleInstrumentedTest` | Unit tests cover only the pure functions (`computeClips`, `parseTimeSeconds`, `mergeRescan`, `checkCuts`, the v7 field helpers). The SQL, including the v7 upgrade, the scan and the UI are checked only on the phone. See [app/README § Tests](../app/README.md#tests) |
+| **Stale code comments** | `SolveAnalyzer.kt:53-57` (describes walk-back only, but the code bisects first; mentions a prototype test that isn't in the repo) | Fix when touching those files |
 | **`TimerStore.clear` shim** | `TimerReader.kt`, called at start-up | Deletes 1.x files. Can go once nobody runs 1.x |
 | **Find solves estimate is too high** | `estMin` = 0.3 × video length (`MainActivity.kt`) | Dates from before the 4× speed-up |
 | **Two meanings of `102.34`** | Setup box: 1:02.34. `parseTimeSeconds` (Edit window): 102.34 s | Documented to users. Unifying would be a behaviour change |
@@ -28,7 +28,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 - **Export has no foreground service.** Leaving the app during a long batch export could interrupt it. The screen is kept on.
 - **Swiping the app away stops Find solves.** Vendor battery savers may too ([ADR-0011](adr/0011-foreground-service-for-notification-only.md)).
 - **Portrait only**, with no landscape layout ([ADR-0010](adr/0010-portrait-lock-config-changes.md)).
-- **No backup or transfer** ([ADR-0009](adr/0009-no-backup-or-transfer.md)).
+- **The backup holds no videos** ([ADR-0015](adr/0015-user-saved-backup-file.md)). After a restore, videos and exported clips must be reconnected by picking them. Restore never overwrites a video this phone already has. An exported file renamed by hand can't be matched.
 - **Trash needs a MediaStore uri.** Videos picked from a folder view can't be trashed from CubeCut. Persisted grants are capped at 512.
 - **A video that changes size or length** (re-encoded by another app) is treated as a new video ([ADR-0005](adr/0005-video-identity-heuristics.md)).
 - **The timeline shows at most 12 film-strip pictures** (`THUMB_COUNT`), so long videos look coarse at high zoom.
@@ -43,6 +43,8 @@ Only the Samsung Galaxy S25 Ultra has been used. These have not been checked:
 - Android 15's 6-hour background limit (`onTimeout`);
 - HDR or 10-bit footage, 4K, frame rates other than 30 and 60 fps, the frame-source fallback actually triggering;
 - a timer showing 2 decimals (supported in code, never tried);
+- renaming an exported file CubeCut no longer owns (after a reinstall: `createWriteRequest`), 3.2-C;
+- **backup and restore (3.2-G) has not been tried on a phone at all**: the backup file, a restore after a reinstall or on a second phone, both *Reconnect* buttons, and large backups. The owner moved this test to the 3.3 test pass;
 - large galleries;
 - whether the export buffer grows as intended on a keyframe over 4 MB (it relies on `readSampleData` throwing `IllegalArgumentException`);
 - a signed release build on a second phone;

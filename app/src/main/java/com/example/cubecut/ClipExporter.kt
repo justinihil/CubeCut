@@ -42,8 +42,15 @@ data class CutItem(
     val note: String,                     // why it needs a look, or ADDED_BY_YOU_NOTE
     val includeScramble: Boolean = true,  // true = clip runs from the end of the previous clip (scramble included); false = the solve only
     val userNote: String = "",            // your own note about this solve, written in the Gallery (the social media buttons add the platform's name to it)
-    val edited: Boolean = false,          // true once you changed this cut yourself (its scramble, time, position, note or check) or added it: Find solves then leaves it alone
-    val reviewed: Boolean = false         // you marked its "check" as looked at: its scan note and timing warnings stop flagging it (a solve with no clip stays flagged)
+    val edited: Boolean = false,          // true once you changed this cut yourself (its scramble, time, position, note, check, tags, penalty, buffers or Shared on) or added it: Find solves then leaves it alone
+    val reviewed: Boolean = false,        // you marked its "check" as looked at: its scan note and timing warnings stop flagging it (a solve with no clip stays flagged)
+    val puzzle: String = "",              // the puzzle tag set on this clip itself ("" = follows its video's tag)
+    val category: String = "",            // the category tag set on this clip itself ("" = follows its video's tag)
+    val plus2Count: Int = 0,              // how many +2 penalties (0 = none); the time shown on the timer stays in timeText
+    val dnf: Boolean = false,             // the solve counts as DNF; timeText still holds what the timer showed
+    val beforePad: Double? = null,        // this clip's own "before" buffer in seconds (null = follows the video's slider)
+    val afterPad: Double? = null,         // this clip's own "after" buffer in seconds (null = follows the video's slider)
+    val sharedOn: List<String> = emptyList()   // where you shared it, as names from SOCIAL_PLATFORMS
 )
 
 /** The note on a cut added by hand (Add a missed solve). It is not a reason to check the cut. */
@@ -67,7 +74,9 @@ class Clip(
     val cutIndex: Int,          // which CutItem it came from (index in the original list)
     val withScramble: Boolean,  // true = starts where the previous clip ended
     val solveStartSec: Double,  // where the solve part starts (the time before the stop, minus the "before" buffer); equals startSec when the scramble is left out
-    val noTime: Boolean         // "solve only" was wanted but the time is unknown, so the full clip is used instead
+    val noTime: Boolean,        // "solve only" was wanted but the time is unknown, so the full clip is used instead
+    val plus2Count: Int = 0,    // (3.2-C) the cut's penalty, for the file name only (the start above always uses the raw time)
+    val dnf: Boolean = false
 )
 
 /** "12.112" -> 12.112, "1:02.345" -> 62.345, "" or nonsense -> null. */
@@ -88,6 +97,9 @@ fun parseTimeSeconds(text: String): Double? {
 /**
  * Turns the cuts into clips.
  *
+ * [beforePad] and [afterPad] are the video's buffers. A cut with its own buffer (CutItem.beforePad / afterPad not null) uses that
+ * instead, for its own clip only; a cut without one gets exactly the clip it got before per-clip buffers existed.
+ *
  * Every clip ends [afterPad] seconds after the first frame that shows the time (the stop).
  *  - With the scramble (includeScramble = true): it starts where the PREVIOUS CUT ended (the first one at 0:00), whether or not
  *    that previous cut is switched on. So a solve you left out is never dragged into the next clip; its scramble is not
@@ -107,14 +119,16 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
     for (i in order) {
         val item = items[i]
         if (!item.included && item.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START)) continue   // same as deleted
-        val end = if (durationSec > 0) min(item.stopSec + afterPad, durationSec) else item.stopSec + afterPad
+        val before = item.beforePad ?: beforePad
+        val after = item.afterPad ?: afterPad
+        val end = if (durationSec > 0) min(item.stopSec + after, durationSec) else item.stopSec + after
         if (end - previousEnd < 1.0) continue          // two cuts too close together: skip the second one
         if (!item.included) {
             previousEnd = end                          // not exported, but the next scramble still starts after it
             continue
         }
         val solveSec = parseTimeSeconds(item.timeText)
-        val soloStart: Double? = if (solveSec != null) max(0.0, item.stopSec - solveSec - beforePad) else null
+        val soloStart: Double? = if (solveSec != null) max(0.0, item.stopSec - solveSec - before) else null
         val start: Double
         val noTime: Boolean
         if (item.includeScramble) {
@@ -128,10 +142,35 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
             noTime = true
         }
         number++
-        clips.add(Clip(number, start, end, item.timeText, i, item.includeScramble || noTime, soloStart ?: start, noTime))
+        clips.add(Clip(number, start, end, item.timeText, i, item.includeScramble || noTime, soloStart ?: start, noTime, item.plus2Count, item.dnf))
         previousEnd = end
     }
     return clips
+}
+
+/** (3.2-F) The shortest trimmed single solve, in seconds: shorter is almost surely a slip of the trim handles. */
+const val MIN_SINGLE_SEC = 1.0
+
+/**
+ * (3.2-F) The part of a single-solve video that is its clip, in seconds of the file: the trim, or the whole file when untrimmed
+ * (a missing end = the end of the file). The clip ends where the solve stops, so its stop is the end of this range.
+ */
+fun singleRange(f: Footage): Pair<Double, Double> {
+    val dur = f.durationMs / 1000.0
+    val start = (f.trimStartSec ?: 0.0).coerceIn(0.0, max(0.0, dur))
+    val end = (f.trimEndSec ?: dur).coerceIn(start, max(start, dur))
+    return Pair(start, end)
+}
+
+/**
+ * The clips of a saved video. A session: computeClips with the video's buffers. (3.2-F) A single solve: its one clip is
+ * [singleRange], whatever its buffers or scramble say; it has no number in a session, but is "Solve 1" in a file name.
+ */
+fun clipsFor(f: Footage, cuts: List<CutItem>): List<Clip> {
+    if (!f.isSingle) return computeClips(cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), f.durationMs / 1000.0)
+    val cut = cuts.firstOrNull() ?: return emptyList()
+    val (start, end) = singleRange(f)
+    return listOf(Clip(1, start, end, cut.timeText, 0, true, start, false, cut.plus2Count, cut.dnf))
 }
 
 /** One exported file: the clip it came from, where the file is, and where in that file the final time first shows. */
@@ -165,20 +204,37 @@ object ClipExporter {
 
     /**
      * "Sunday practice_Solve_03_11.263s.mp4" ([prefix] = the session's title), or "..._Solve_03_unknown.mp4" when the time is not known.
+     * (3.2-B) A tagged clip has its tag after the title: "Sunday practice_3x3 OH_Solve_03_11.263s.mp4" ([tag] = tagLabel, "" = not tagged).
+     * (3.2-C) A penalty changes the time part: "..._Solve_03_13.263s_plus2.mp4", "..._Solve_03_DNF_11.263s.mp4" (see fileTimePart).
      * Numbered like the Gallery ("Solve 3 of 20"), so clips from different videos never get the same name. Without a prefix (never
      * the case now, every export passes the title) it is just "Solve_03_11.263s.mp4", with the same numbering.
      * The digits are always plain 0-9, whatever language the phone is set to (Locale.ROOT).
      */
-    fun fileName(c: Clip, prefix: String = ""): String {
-        val t = safeTime(c.timeText)
-        val tail = if (t == "unknown") t else t + "s"
-        val p = safeTitle(prefix)
-        val solve = "Solve_%02d_%s.mp4".format(Locale.ROOT, c.cutIndex + 1, tail)
-        return if (p.isEmpty()) solve else "${p}_$solve"
+    fun fileName(c: Clip, prefix: String = "", tag: String = ""): String {
+        val solve = "Solve_%02d_%s.mp4".format(Locale.ROOT, c.cutIndex + 1, fileTimePart(c.timeText, c.plus2Count, c.dnf))
+        return (listOf(safeTitle(prefix), safeTitle(tag)).filter { it.isNotEmpty() } + solve).joinToString("_")
     }
 
-    /** Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. [prefix]: see fileName. */
-    fun export(context: Context, source: Uri, clips: List<Clip>, prefix: String = "", onProgress: (Int, Int) -> Unit): ExportResult {
+    /**
+     * (3.2-C) Renames an exported file in the phone's gallery to [newName] and returns the name Android really gave it. Works while
+     * CubeCut owns the file (it made it); after a reinstall Android throws a SecurityException, and the caller asks the user with
+     * MediaStore.createWriteRequest first. The file itself (its picture and sound) is not touched.
+     */
+    fun renameFile(context: Context, uri: Uri, newName: String): String {
+        val values = ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, newName) }
+        val n = context.contentResolver.update(uri, values, null, null)
+        if (n <= 0) throw IOException("the file was not found")
+        return savedName(context, uri) ?: newName
+    }
+
+    /**
+     * Saves every clip to Movies/CubeCut (it shows up in the gallery). Runs one clip at a time. [prefix] and [tagOf] (each clip's
+     * tag, "" = none): see fileName.
+     */
+    fun export(
+        context: Context, source: Uri, clips: List<Clip>, prefix: String = "", tagOf: (Clip) -> String = { "" },
+        onProgress: (Int, Int) -> Unit
+    ): ExportResult {
         val failed = mutableListOf<String>()
         val files = mutableListOf<ExportedFile>()
         var done = 0
@@ -186,16 +242,16 @@ object ClipExporter {
         for ((i, clip) in clips.withIndex()) {
             onProgress(i, clips.size)
             val made = Made()
-            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix), made, buffer)
+            val error = exportOne(context, source, (clip.startSec * 1_000_000).toLong(), (clip.endSec * 1_000_000).toLong(), fileName(clip, prefix, tagOf(clip)), made, buffer)
                 ?: made.failure                        // the copy worked, but the file couldn't be finished in the gallery
             if (error == null) {
                 done++
                 val uri = made.uri
                 // the name Android really gave the file (it adds " (1)" when the name is taken, e.g. after exporting again)
-                val savedName = made.fileName ?: fileName(clip, prefix)
+                val savedName = made.fileName ?: fileName(clip, prefix, tagOf(clip))
                 if (uri != null) files.add(ExportedFile(clip, uri, savedName, if (made.startUs >= 0) made.startUs / 1_000_000.0 else clip.startSec))
             } else {
-                failed.add("${fileName(clip, prefix)}: $error")
+                failed.add("${fileName(clip, prefix, tagOf(clip))}: $error")
             }
         }
         onProgress(clips.size, clips.size)

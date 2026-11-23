@@ -22,8 +22,9 @@ package com.example.cubecut
 // The new scan does not replace the saved list. Each solve it finds is matched to a saved cut when their SOLVE parts
 // (timer start to stop, worked out from the time shown) overlap; the scramble and inspection are not used for matching,
 // because a missed solve can sit inside the next solve's scramble.
-//  - A saved cut you changed (scramble, time, position, note, marked as checked, added by hand) or exported stays exactly as it is.
-//  - A saved cut you never touched takes the new scan's values.
+//  - A saved cut you changed (scramble, time, position, note, marked as checked, added by hand, tags, penalty, buffers, Shared on)
+//    or exported stays exactly as it is.
+//  - A saved cut you never touched takes the new scan's values (only what the scan reads; fields only you set are carried over).
 //  - A new solve that matches no saved cut is added.
 //  - A saved cut the new scan did not find again is kept; an untouched one gets a note so it can be checked.
 // ---------------------------------------------------------------------------------------
@@ -69,6 +70,16 @@ private fun sameSolve(a: CutItem, b: CutItem): Boolean {
 }
 
 /**
+ * [this] solve from a new scan, with every field that only the user sets copied from the saved cut [old]: the note, the tags, the
+ * penalty, the buffers and *Shared on*. Setting any of these marks a cut `edited`, which keeps it as it is anyway; this is the safety
+ * net for a field that is ever set without that mark, so a re-scan can only change what the scan itself reads.
+ */
+private fun CutItem.withUserFieldsOf(old: CutItem): CutItem = copy(
+    userNote = old.userNote, puzzle = old.puzzle, category = old.category, plus2Count = old.plus2Count, dnf = old.dnf,
+    beforePad = old.beforePad, afterPad = old.afterPad, sharedOn = old.sharedOn
+)
+
+/**
  * Combines the [saved] cuts with the solves a new scan [found]. [exportedStops] are the stop times of every clip exported from this
  * video (an exported cut is kept as it is, so its link to the exported file is never lost).
  */
@@ -93,7 +104,7 @@ fun mergeRescan(saved: List<CutItem>, found: List<CutItem>, exportedStops: List<
         if (keepAsIs(old)) {
             out.add(old)
         } else {
-            out.add(n)
+            out.add(n.withUserFieldsOf(old))
             val changed = Math.abs(n.stopSec - old.stopSec) > 0.0005 || n.timeText != old.timeText ||
                     n.included != old.included || n.note != old.note
             if (changed) updated++

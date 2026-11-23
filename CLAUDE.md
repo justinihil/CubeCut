@@ -14,7 +14,7 @@ These run from the repo root. In PowerShell or cmd use `.\gradlew.bat`. The JDK 
 | Task | Command | Status (2026-11-12) |
 |---|---|---|
 | Build debug APK | `./gradlew assembleDebug` | ✅ passes |
-| Unit tests | `./gradlew testDebugUnitTest` | ✅ passes (template test only) |
+| Unit tests | `./gradlew testDebugUnitTest` | ✅ passes (pure-function tests, see app/README § Tests) |
 | Lint | `./gradlew lintDebug` | ❌ fails on 2 existing errors (see known-issues). Report → `app/build/reports/lint-results-debug.html` |
 | Merged manifest | `./gradlew processDebugManifest` | ✅ |
 | Install on phone | `./gradlew installDebug` | Needs a connected device |
