@@ -94,10 +94,18 @@ Rules:
 - Invariant 1: disable the new actions while `analyzing`.
 - The pinned layout (`app/README.md`) is an owner decision. Say so if the change moves anything.
 
-### 3.1-B Viewer: auto-replay and double-tap skip ⬜
+### 3.1-B Viewer: auto-replay and double-tap skip 🔶
 Items:
 - **#12 Auto-replay toggle.** Clips loop when it is on. The choice applies to every clip viewed from then on.
 - **#13 Double-tap to skip.** Double-tap the left or right side to skip back or forward.
+
+**Decided** (2026-11-23):
+- The toggle is only on the overlay: a *Replay: on/off* chip next to *Skip 5s ▾*. Not in Settings.
+- A single tap may wait about 0.3 s (`DOUBLE_TAP_MS`). A double-tap doesn't show or hide the controls.
+- Left and right halves of the picture.
+- Further quick taps on the same half keep skipping (`SKIP_STREAK_MS`), and the hint counts up.
+
+Built (2026-11-23), waiting for the phone test: `PictureTaps` / `onPictureTap` and `PlayerUse` in `Gallery.kt`; `ui.autoReplay` (pref `auto_replay`).
 
 Where to start:
 - `ClipViewer` and `PlayerOverlay` (`Gallery.kt`).

@@ -28,6 +28,7 @@ If the timer can't be read, nothing is blocked. You can always add solves by han
 - **Re-running Find solves keeps your edits.** Solves you changed or exported stay as they are, untouched ones update, and new ones are added. A solve you deleted can come back if the scan finds it again.
 - **Delete** moves a video or clip to the phone's trash after a warning. You can restore it for about 30 days from *Recently deleted*. CubeCut never deletes anything permanently. Only videos picked from the picker's Videos or Images lists can be trashed from CubeCut.
 - If you delete a raw video, its exported clips stay in the Gallery (*Export only*). Clips that were never exported disappear, but their solves stay saved, and importing the video again brings them back.
+- **Watching clips:** tap the picture for the controls. Double-tap the left or right half to skip back or forward; keep tapping to skip further. **Replay** (next to *Skip*) loops every clip until you switch it off.
 - **An exported clip is a copy.** Moving its cut or fixing its time later doesn't change the file; export it again.
 - **Typing times:** in the Edit window, use a colon for a minute or more (`1:02.34`). A plain `102.34` there means 102.34 s. Only the timer-setup box reads `102.34` as 1:02.34.
 - **CubeCut's saved list is not backed up** and doesn't move to a new phone. Uninstalling clears the Gallery, though exported files in `Movies/CubeCut` stay.

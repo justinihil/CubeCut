@@ -15,6 +15,8 @@ Notes on history:
 ### Added
 - **Add a missed solve at the playhead** shows as soon as a video is loaded, so solves can be added by hand before Find solves or without a timer setup. The two switches still wait until there are solves.
 - A solve added by hand is selected, the list scrolls to its card, and the card blinks a few times. If *Only solves to check* would hide it, the filter turns off.
+- **Replay** in the clip viewer (next to *Skip*): clips loop while it is on. The choice is remembered.
+- **Double-tap to skip** in the clip viewer: the left half skips back, the right half forward, by the *Skip* length. Further quick taps keep skipping, and a hint shows the total (−5 s, −10 s…). A single tap now shows or hides the controls about 0.3 s later.
 
 ### Fixed
 - *Find solves* no longer says *again* (and the result no longer says *Re-scan*) when only solves added by hand exist and it has never run on the video.

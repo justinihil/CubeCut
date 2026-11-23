@@ -33,6 +33,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Reconnect video** | Attach a new file link to a saved session | `SessionStore.relink` |
 | **Gallery: Clips / Footage tabs** | The two tabs of the start screen | `GalleryScreen`, `GalleryUiState.tab` (0 = Clips, 1 = Footage) |
 | **Viewer** | The full-screen clip player with the swipe-up sheet | `ClipViewer`, `ui.detail` |
+| **Replay** | The viewer's auto-replay switch: clips loop while it is on | `GalleryUiState.autoReplay`, `REPEAT_MODE_ONE` |
 | **Editor** | The per-video screen for finding and fixing solves | `EditorScreen`, `EditorRequest` |
 | **Where you were** | The brief blue highlight after returning to the Gallery | `flashClip`, `flashFootage`, `FlashTarget` |
 

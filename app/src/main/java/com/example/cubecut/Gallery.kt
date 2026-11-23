@@ -21,6 +21,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.LayoutInflater
 import androidx.activity.ComponentActivity
@@ -53,6 +54,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
@@ -150,6 +152,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -180,6 +183,21 @@ private const val VIEWER_PICTURE_HEIGHT = 900
 
 private const val MIN_COLUMNS = 2
 private const val MAX_COLUMNS = 6
+
+/**
+ * Viewer: a second tap on the same half of the picture within this many ms is a double-tap (skip). Longer makes a double-tap easier, but a
+ * single tap must wait this long before it shows or hides the controls, so the controls feel slower.
+ */
+private const val DOUBLE_TAP_MS = 300L
+
+/**
+ * Viewer: after a double-tap, each further tap on the same half within this many ms skips again. Longer keeps a slow rhythm going, but a
+ * tap meant to show the controls right after a skip is taken as one more skip.
+ */
+private const val SKIP_STREAK_MS = 700L
+
+/** Viewer: how long the "−5 s" hint stays after the last double-tap skip. */
+private const val SKIP_HINT_MS = 700L
 
 // tag colours on top of pictures: fixed on purpose (a picture looks the same in light and dark mode); everything on a plain
 // background takes its colours from Theme.kt instead
@@ -305,6 +323,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var detail by mutableStateOf<GalleryClip?>(null)              // the clip the viewer was opened on (null = viewer closed)
     var detailList by mutableStateOf<List<GalleryClip>>(emptyList())   // the clips the viewer can swipe through, in the order shown
     var skipSeconds by mutableStateOf(prefs.getInt("skip_seconds", 5).coerceIn(1, 60))
+    var autoReplay by mutableStateOf(prefs.getBoolean("auto_replay", false))   // clips in the viewer start again when they end
     var swipeHintSeen by mutableStateOf(prefs.getBoolean("swipe_hint_seen", false))
     var openClip by mutableStateOf<Pair<Long, Double>?>(null)     // (session id, stop time) of a clip to open as soon as the data has loaded
     var selecting by mutableStateOf(false)                        // choosing clips to export (long-press a clip, or a video's Export clips...)
@@ -348,6 +367,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("theme", themeMode.name)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
+            .putBoolean("auto_replay", autoReplay)
             .putBoolean("swipe_hint_seen", swipeHintSeen)
             .apply()
     }
@@ -1723,6 +1743,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 stats = statsById,
                 skipSeconds = ui.skipSeconds,
                 onSkipChange = { ui.skipSeconds = it; ui.save() },
+                autoReplay = ui.autoReplay,
+                onAutoReplayChange = { ui.autoReplay = it; ui.save() },
                 showHint = !ui.swipeHintSeen,
                 onHintSeen = {
                     if (!ui.swipeHintSeen) {
@@ -2518,20 +2540,49 @@ private fun OverlayIconButton(kind: IconKind, seconds: Int, big: Boolean, onClic
 }
 
 /**
- * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen in Settings or with
- * the small button above the seek bar) and a seek bar. They hide the moment the clip starts playing, a tap on the picture brings them back,
- * and they hide again 4 seconds after the last tap or skip. They only come back by themselves when the clip ends.
+ * When the viewer's player was last used by hand: an overlay control, the seek bar, or a double-tap skip on the picture. A skip or seek
+ * briefly stops and restarts playback, and [PlayerOverlay] must not take that restart for "the clip started playing" and hide its controls.
+ * [count] goes up at every use, so the overlay's 4 second hide timer starts again.
+ */
+private class PlayerUse {
+    var lastMs = 0L
+    var count by mutableStateOf(0)
+    fun mark() {
+        lastMs = System.currentTimeMillis()
+        count++
+    }
+}
+
+/** What the viewer remembers between taps on the picture, to tell a single tap from a double-tap and from taps that keep skipping. */
+private class PictureTaps {
+    var pending: Job? = null        // a single tap waiting to see whether a second one follows (it toggles the controls when it runs)
+    var pendingSide = 0
+    var streakSide = 0              // after a double-tap: the half where further quick taps skip again (0 = none)
+    var streakUntil = 0L            // SystemClock.uptimeMillis
+}
+
+/** Moves [player] by [seconds] (negative = back), staying inside the clip. Used by the skip buttons and by double-tap. */
+private fun skipBy(player: ExoPlayer, seconds: Int) {
+    val target = player.currentPosition + seconds * 1000L
+    val end = player.duration
+    player.seekTo(if (end > 0) target.coerceIn(0L, end) else max(0L, target))
+}
+
+/**
+ * The player controls drawn over the picture: skip back, play or pause, skip forward (by the number of seconds chosen with the small
+ * button above the seek bar), a seek bar, and the *Replay* switch. They hide the moment the clip starts playing, a tap on the picture brings
+ * them back, and they hide again 4 seconds after the last tap or skip. They only come back by themselves when the clip ends, which never
+ * happens while [autoReplay] is on (the clip starts again instead).
  */
 @Composable
 private fun PlayerOverlay(
-    player: ExoPlayer, visible: Boolean, onVisibleChange: (Boolean) -> Unit, skipSeconds: Int, onSkipChange: (Int) -> Unit
+    player: ExoPlayer, visible: Boolean, onVisibleChange: (Boolean) -> Unit, use: PlayerUse,
+    skipSeconds: Int, onSkipChange: (Int) -> Unit, autoReplay: Boolean, onAutoReplayChange: (Boolean) -> Unit
 ) {
     var playing by remember { mutableStateOf(player.isPlaying) }
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
-    var touched by remember { mutableStateOf(0) }       // goes up whenever a control is used, so the 4 second hide timer starts again
     var skipMenu by remember { mutableStateOf(false) }
-    var lastUseMs by remember { mutableStateOf(0L) }       // when a control was last used
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -2539,7 +2590,7 @@ private fun PlayerOverlay(
                 playing = isPlaying
                 // a clip that starts playing hides the controls at once; but playback also stops and starts again by itself right after a
                 // skip or a seek, and that must not hide them while you are using them
-                if (isPlaying && System.currentTimeMillis() - lastUseMs > 1500L) onVisibleChange(false)
+                if (isPlaying && System.currentTimeMillis() - use.lastMs > 1500L) onVisibleChange(false)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -2556,7 +2607,7 @@ private fun PlayerOverlay(
             delay(100)
         }
     }
-    LaunchedEffect(visible, playing, touched, skipMenu) {
+    LaunchedEffect(visible, playing, use.count, skipMenu) {
         if (visible && playing && !skipMenu) {
             delay(4000)                                   // after the last tap or skip; not right away
             onVisibleChange(false)
@@ -2571,9 +2622,8 @@ private fun PlayerOverlay(
                 horizontalArrangement = Arrangement.spacedBy(22.dp)
             ) {
                 OverlayIconButton(IconKind.BACK, skipSeconds, false) {
-                    player.seekTo(max(0L, player.currentPosition - skipSeconds * 1000L))
-                    lastUseMs = System.currentTimeMillis()
-                    touched++
+                    skipBy(player, -skipSeconds)
+                    use.mark()
                 }
                 OverlayIconButton(if (playing) IconKind.PAUSE else IconKind.PLAY, 0, true) {
                     if (player.isPlaying) {
@@ -2582,14 +2632,11 @@ private fun PlayerOverlay(
                         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
                         player.play()
                     }
-                    lastUseMs = System.currentTimeMillis()
-                    touched++
+                    use.mark()
                 }
                 OverlayIconButton(IconKind.FORWARD, skipSeconds, false) {
-                    val target = player.currentPosition + skipSeconds * 1000L
-                    player.seekTo(if (durationMs > 0) min(target, durationMs) else target)
-                    lastUseMs = System.currentTimeMillis()
-                    touched++
+                    skipBy(player, skipSeconds)
+                    use.mark()
                 }
             }
             Column(
@@ -2605,8 +2652,7 @@ private fun PlayerOverlay(
                     onValueChange = {
                         player.seekTo(it.toLong())
                         positionMs = it.toLong()
-                        lastUseMs = System.currentTimeMillis()
-                        touched++
+                        use.mark()
                     },
                     valueRange = 0f..top
                 )
@@ -2618,6 +2664,18 @@ private fun PlayerOverlay(
                         modifier = Modifier.background(Color(0x66000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                     Spacer(Modifier.weight(1f))
+                    // loop the clip, for this clip and every clip after it (remembered)
+                    Text(
+                        if (autoReplay) "\u21BB Replay: on" else "\u21BB Replay: off",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (autoReplay) Color(0xCC2E7D32) else Color(0x99000000))
+                            .clickable { onAutoReplayChange(!autoReplay); use.mark() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
                     // how far the skip buttons jump: tap to choose
                     Box {
                         Text(
@@ -2626,14 +2684,14 @@ private fun PlayerOverlay(
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
                                 .background(Color(0x99000000), RoundedCornerShape(12.dp))
-                                .clickable { skipMenu = true; lastUseMs = System.currentTimeMillis(); touched++ }
+                                .clickable { skipMenu = true; use.mark() }
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                         DropdownMenu(expanded = skipMenu, onDismissRequest = { skipMenu = false }) {
                             for (s in listOf(1, 2, 3, 5, 10, 15, 30)) {
                                 DropdownMenuItem(
                                     text = { Text(if (s == skipSeconds) "\u2713 $s seconds" else "$s seconds") },
-                                    onClick = { skipMenu = false; lastUseMs = System.currentTimeMillis(); touched++; onSkipChange(s) }
+                                    onClick = { skipMenu = false; use.mark(); onSkipChange(s) }
                                 )
                             }
                         }
@@ -2653,6 +2711,8 @@ fun ClipViewer(
     stats: Map<Long, FootageStats>,
     skipSeconds: Int,
     onSkipChange: (Int) -> Unit,
+    autoReplay: Boolean,
+    onAutoReplayChange: (Boolean) -> Unit,
     showHint: Boolean,
     onHintSeen: () -> Unit,
     onBack: (GalleryClip) -> Unit,             // told which clip was showing when the viewer closed
@@ -2689,6 +2749,11 @@ fun ClipViewer(
             .build()
     }
     DisposableEffect(Unit) { onDispose { player.release() } }
+    // Replay on: the clip (only this clip's part of the video) starts again by itself when it ends, and so does every clip after it
+    LaunchedEffect(autoReplay) {
+        player.repeatMode = if (autoReplay) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
+    val use = remember { PlayerUse() }
 
     // leaving the app (home, another app, screen off) stops the sound: pause as soon as CubeCut is no longer in front
     DisposableEffect(player) {
@@ -2797,11 +2862,65 @@ fun ClipViewer(
             player.clearMediaItems()
         }
     }
+    // ---- taps on the picture: one tap shows or hides the controls, a double-tap on the left or right half skips back or forward ----
+    val taps = remember { PictureTaps() }
+    var skipHint by remember { mutableStateOf<Pair<Int, Int>?>(null) }      // (side: -1 back / 1 forward, seconds skipped in a row)
+    var skipHintTick by remember { mutableStateOf(0) }
+    LaunchedEffect(skipHintTick) {
+        if (skipHintTick > 0) {
+            delay(SKIP_HINT_MS)
+            skipHint = null
+        }
+    }
+    fun skipFromTap(side: Int, now: Long, more: Boolean) {
+        skipBy(player, side * skipSeconds)
+        use.mark()
+        val before = skipHint
+        skipHint = side to (if (more && before != null && before.first == side) before.second + skipSeconds else skipSeconds)
+        skipHintTick++
+        taps.streakSide = side
+        taps.streakUntil = now + SKIP_STREAK_MS
+    }
+    /**
+     * A finished tap on one half of the picture ([side] -1 = left, 1 = right). A single tap only toggles the controls once [DOUBLE_TAP_MS]
+     * has passed without a second tap on the same half. Taps right after a double-tap on the same half keep skipping (and the hint counts up).
+     */
+    fun onPictureTap(side: Int) {
+        if (!playable) {
+            controlsVisible = !controlsVisible
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        if (taps.streakSide == side && now < taps.streakUntil) {
+            skipFromTap(side, now, true)
+            return
+        }
+        taps.streakSide = 0
+        val waiting = taps.pending
+        taps.pending = null
+        if (waiting != null && waiting.isActive && taps.pendingSide == side) {
+            waiting.cancel()
+            skipFromTap(side, now, false)
+            return
+        }
+        waiting?.cancel()
+        taps.pendingSide = side
+        taps.pending = scope.launch {
+            delay(DOUBLE_TAP_MS)
+            controlsVisible = !controlsVisible
+        }
+    }
+    val pictureTap by rememberUpdatedState { side: Int -> onPictureTap(side) }
+
     LaunchedEffect(current.listKey) {
         exportMessage = ""
         actionHint = ""
         confirmReexport = false
         confirmTrash = false
+        taps.pending?.cancel()           // a tap on the clip before must not toggle the controls of this one
+        taps.pending = null
+        taps.streakSide = 0
+        skipHint = null
         controlsVisible = false          // a new clip starts without the controls on top of it
     }
 
@@ -2929,7 +3048,8 @@ fun ClipViewer(
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .pointerInput(Unit) { detectTapGestures(onTap = { controlsVisible = !controlsVisible }) },
+                        // no onDoubleTap here: onPictureTap tells single, double and further taps apart itself, so taps in a row count
+                        .pointerInput(Unit) { detectTapGestures(onTap = { o -> pictureTap(if (o.x < size.width / 2f) -1 else 1) }) },
                     contentAlignment = Alignment.Center
                 ) {
                     val playing = page == activePage && playable
@@ -2969,7 +3089,34 @@ fun ClipViewer(
                 }
             }
 
-            if (playable) PlayerOverlay(player, controlsVisible, { controlsVisible = it }, skipSeconds, onSkipChange)
+            if (playable) {
+                PlayerOverlay(
+                    player, controlsVisible, { controlsVisible = it }, use, skipSeconds, onSkipChange, autoReplay, onAutoReplayChange
+                )
+            }
+
+            // "−5 s" / "+5 s" in the middle of the half that was double-tapped (raised above the buttons while they show)
+            val hint = skipHint
+            if (hint != null) {
+                Row(Modifier.fillMaxSize()) {
+                    for (side in listOf(-1, 1)) {
+                        Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                            if (hint.first == side) {
+                                Text(
+                                    (if (side < 0) "−" else "+") + "${hint.second} s",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .offset(y = if (controlsVisible) (-90).dp else 0.dp)
+                                        .background(Color(0x99000000), RoundedCornerShape(20.dp))
+                                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             if (controlsVisible) {
                 Row(

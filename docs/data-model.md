@@ -7,7 +7,7 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 | What | Where | Survives |
 |---|---|---|
 | Videos, cuts, export records, timer setup per video | SQLite `cubecut_sessions.db` (`SessionStore`) | Restarts. **Not** uninstall, backup or device transfer ([ADR-0009](adr/0009-no-backup-or-transfer.md)) |
-| App UI settings: grid/list, columns, sort keys, filters, hidden footage, theme mode, skip seconds, swipe hint | SharedPreferences `cubecut_ui` (`GalleryUiState`) | Restarts |
+| App UI settings: grid/list, columns, sort keys, filters, hidden footage, theme mode, skip seconds, auto-replay, swipe hint | SharedPreferences `cubecut_ui` (`GalleryUiState`) | Restarts |
 | Thumbnails and viewer stills | `cacheDir/thumbs` (`ThumbCache`); capped at 100 MB, trimmed to 80 MB | Until Android clears the cache; rebuilt on demand |
 | Editor working state: selection, zoom, dialogs, the timer engine | `remember` in `EditorScreen` | Nothing. A process death returns to the Gallery, and cuts survive only through the 400 ms autosave |
 | Exported clips | MediaStore `Movies/CubeCut` (user files) | Uninstall, because they are the user's files |
