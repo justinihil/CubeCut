@@ -178,7 +178,7 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 - Ask about ML ([ADR-0001](adr/0001-offline-classic-cv-no-ml.md)) only if this fails on the reference videos. New digit shapes go behind the [`DisplayReader` seam](adr/0014-display-reader-seam.md).
 - Digit templates come from bundled open-licence fonts ([ADR-0016](adr/0016-find-the-timer-without-ml.md)). With 10 of them (without csTimer's look-alike) and 12 learned shapes per digit, the prototype gave 25 of 25 on all three videos, the same as with the Windows fonts.
 - No reference video may get worse, including the ones measured with a manual setup.
-- **Decided (owner, 2026-11-24):** a solve the clock doesn't confirm is kept and flagged for checking, never left out. Solves already found the old way stay as they are. `TimerSetupScreen`'s missing `BackHandler` ([known issue](known-issues.md)) is fixed in this phase, in its own commit.
+- **Decided (owner, 2026-11-24):** a solve the clock doesn't confirm is kept and flagged for checking, never left out. Solves already found the old way stay as they are. `TimerSetupScreen`'s missing `BackHandler` is fixed in this phase, in its own commit.
 - **Decided (owner, 2026-11-24):** the app asks which number is the timer, with a picture, only when it isn't sure. Re-scanning an old video works as today.
 
 **Build steps**, each with its own commit and a phone test:
