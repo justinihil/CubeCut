@@ -75,7 +75,7 @@ The owner rule "change the reader only when asked" is lifted for this version. E
   - csTimer on a PC;
   - phone timer apps;
   - Stackmat, GAN and QiYi physical timers.
-- The videos stay on the phone, with a copy in `C:\CubeCutRef` on the PC (outside the repo, decided 2026-11-24). They are **never committed**.
+- The videos stay on the phone, with a copy in `D:\CubeCutRef` on the PC (outside the repo, decided 2026-11-24; moved from drive C the same day). They are **never committed**.
 - The repo gets:
   - expected-solve files (JSON);
   - unit tests for `SolveAnalyzer.scan` with a fake `read(t)`;
@@ -92,7 +92,13 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 
 **Built:** `FakeDisplay` + `SolveAnalyzerScanTest` (the simulated baseline), `GroundTruth.kt` + `GroundTruthTest`, the debug *Scan report* in the editor (`ScanReport.kt`), and 1-frame buttons in the *Edit* window, so a hand-made answer key is frame-exact.
 
-**Waiting on the owner (2026-11-24):** record reference videos ([algorithms § 8](algorithms.md#ground-truth-harness-33-a)). One csTimer video with its list of times is enough to start 3.3-C. The QiYi baseline can follow, but is needed before 3.3-C changes anything for seven-segment timers.
+**csTimer set (2026-11-24):** three old csTimer sessions (`ref_cstimer_old_01` to `03`, 25 solves each) with a list of times, read from the video in two passes and checked against csTimer's ao5 / ao12. Their baseline is in [algorithms § 8](algorithms.md#ground-truth-harness-33-a). The videos, lists and places are in `D:\CubeCutRef`.
+
+**Still missing to close 3.3-A:**
+- the phone test of the scan report (build 89c9a3d), so the report itself is proven on a phone;
+- the QiYi baseline (easy and hard, with the manual setup). It must exist before 3.3-C changes anything for seven-segment timers;
+- csTimer videos of another setup: other font or light theme, camera further away, hands over some stops. The three above share one desk, font and theme;
+- phone timer apps, Stackmat and GAN (sets 3 to 5) can follow later; they don't hold up csTimer.
 
 **Reworked (2026-11-24):** the report first needed a working timer setup, so it couldn't test the videos that fail there. It now grades finding the timer, reading and scanning separately, always runs, and also takes a plain list of times.
 
@@ -117,7 +123,7 @@ A timer that is hidden or shows no decimals while running weakens steps 2 and 5.
 
 **What is shared and what isn't.** Steps 1, 2, 4 and 5, the scan and the answer keys are meant for every timer. Only the digit shapes differ: solid digits (csTimer, phone apps) and seven-segment digits (QiYi, Stackmat, GAN), whose strokes are separate pieces. Seven-segment digits should go through the existing `SegmentReader` once the place is known.
 
-**Measured with a PC prototype (2026-11-24)**, on one screenshot of csTimer's default font at a steep angle (only the digits 1, 2 and 5). It thresholds the picture, groups digit-like blobs into rows, levels them, and compares them with digits from 17 fonts. No ML:
+**First prototype (2026-11-24)**, on one screenshot of csTimer's default font at a steep angle (only the digits 1, 2 and 5). It thresholds the picture, groups digit-like blobs into rows, levels them, and compares them with digits from 17 fonts. No ML:
 
 | Test | Result |
 |---|---|
@@ -127,13 +133,53 @@ A timer that is hidden or shows no decimals while running weakens steps 2 and 5.
 | Single digits in a font left out of the 17 | 3966 / 4080 (97.2 %); worst Courier New, 180 / 240 |
 | Drawn seven-segment digits | Without gaps, 4 of 6 right; **with gaps between the segments, 0 of 18** (nothing, or a wrong `8.98`) |
 
-Steps 2 to 5 and the speed on a phone are untested. The scripts are in `C:\CubeCutRef\prototype`.
+**Second prototype (2026-11-24): all five steps, on the three csTimer videos.** Still no ML, and nothing from the answer key, no corner and no typed number. Developed on video 01, checked on 02, then frozen; 03 was run once after that. The fonts that look like csTimer's (Arial, Microsoft Sans Serif) were **left out**.
+
+| Video | Timer | Found | Missed | False | Wrong time | Cut on the frame | Confirmed by the clock |
+|---|---|---|---|---|---|---|---|
+| 01 (developed on) | csTimer | 25 / 25 | 0 | 0 | 0 | 25 | 25 |
+| 02 (checked on; changed the method) | csTimer | 25 / 25 | 0 | 0 | 0 | 24 (worst 0.067 s) | 25 |
+| **03 (untouched)** | csTimer | **25 / 25** | 0 | 0 | 0 | 25 | 25 |
+
+On 03 it also found the `0.34` test tap the owner left out of the key. The clock didn't confirm it, so it's listed here and not counted. The QiYi that shows the same times in the corner was never picked: its gapped digits weren't read. With both readable, the bigger number would win, which is untested.
+
+**Altered copies of 01 and 02** (25 solves each; the same for both unless noted):
+
+| Copy | 01 | 02 |
+|---|---|---|
+| Darker (25 %), washed out, inverted (light theme), noise 15, blur 3 px, quarter size (24 px digits), turned ±15° on top of the real tilt (about 15° by eye), steeper angle; on 01 only also half and third size (an earlier version of the method) | 25 | 25 |
+| Last digit covered 3 s in every 10 | 25 (24 cuts within 0.1 s) | 25 |
+| Camera moved far during the session | 25 | 24: the solve running while it moved is lost |
+| Nearly black (12 %) | 25 | 23, 4 wrong times, **none confirmed by the clock** |
+| Blur 6 px | 24 | 21 |
+| Horizontal motion blur 15 px | 19 | 16 |
+| 18 px digits | 24 | 21 |
+| Turned +25° on top of the real tilt | timer not found | 22 |
+| csTimer painted over, or no timer at all | not found (correct) | not found (correct) |
+
+What each step taught:
+- **Search** reads 4 frames at places spread over the video: 15 to 19 of them on the real videos, up to 109 on the altered copies. Only a number that rises with the clock counts; no other running number was ever found.
+- **Learning must be complete.** A first version learned from three runs that held no `3` and then read `3` as `8`: 5 wrong times on 02. Digits are now learned at 12 frames a second, where the tenths go through 0 to 9. **The clock names the digit**, not the font, and learning isn't used unless all ten digits were seen. With learning off, hard angles give 5 to 8 wrong times.
+- **One lean per row**: all digits of a row lean the same way, which fixed the tilted copies.
+- **Frame-by-frame cut:** a PC port of the app's 5-read halving put 14 of 25 cuts on the frame on 01, because phone video blends two numbers in one frame. Reading every frame of the last half second gave 25 of 25.
+- **A time that reappears is the same hold** unless the timer ran in between (17 times on 01, after the scramble PDF).
+- **Start to stop:** on the real videos every solve agreed with the clock within 0.12 s (0.2 s in the blurred copies; more when the stop itself was covered). It exposes wrong whole numbers and tenths, not a wrong hundredth, and gives the stop when the first frame was covered (worst 0.14 s off).
+
+**Not tested:** other fonts and themes in real footage, phone timer apps, times over a minute (no colon), timers without decimals while running, +2 / DNF marks, seven-segment digits, two readable timers, a hand over the digits in real footage.
+
+**Special to these videos:** none of the rules are, but the numbers were tuned on one desk, one font and one person. A stopped time with two decimals and a running one with one is learned, not assumed. Only `0.00` counts as a reset.
+
+**Speed (PC, one thread, Python):** 112 ms to search a full frame, 10 ms to read the known area. For video 03 that was about 1500 area reads at 0.5 s and 950 frame by frame; search 6 s, learning 13 s, scan 52 s, mostly starting ffmpeg per read. **The phone is not measured.** Video length × 0.07 s ([algorithms § 8](algorithms.md#8-reference-measurements)) suggests about 80 s to decode this 19-minute video, a guess.
+
+The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version measured).
 
 **Rules:**
+- **Good enough (owner, 2026-11-24):** it doesn't have to work in every scenario. It has to be reliable in a reasonable setting, and the user is responsible for keeping the timer reasonably visible for most of the footage. The extreme copies above are limits to document, not bugs to fix.
 - Ask about ML ([ADR-0001](adr/0001-offline-classic-cv-no-ml.md)) only if this fails on the reference videos. New digit shapes go behind the [`DisplayReader` seam](adr/0014-display-reader-seam.md).
 - Digit templates must come from fonts we may bundle (the prototype used Windows fonts).
 - No reference video may get worse, including the ones measured with a manual setup.
-- Decide with the owner what the app shows when it isn't sure which number is the timer, and whether to fix `TimerSetupScreen`'s missing `BackHandler` here ([known issue](known-issues.md)).
+- **Decided (owner, 2026-11-24):** a solve the clock doesn't confirm is kept and flagged for checking, never left out. Solves already found the old way stay as they are. `TimerSetupScreen`'s missing `BackHandler` ([known issue](known-issues.md)) is fixed in this phase, in its own commit.
+- **Still open:** what the app shows when it isn't sure which number is the timer, and where the digit templates come from (the phone's fonts or bundled ones).
 - The per-video timer columns stay for the fallback.
 
 ### 3.3-E Penalty marks and long times on the display ⬜

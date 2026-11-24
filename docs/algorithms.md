@@ -198,10 +198,13 @@ The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or 
 
 So the late cuts come from unreadable frames, and misreads add none. The few early ones also happen without noise: a running frame shortly before the stop can differ from the final time by one 1↔4 or 1↔7, which `similar` accepts. Part of the late error can't be avoided when the first frame itself is unreadable. (An earlier version of this page blamed misreads for all of them. That was never measured and was wrong.)
 
-**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. TODO(owner): no reference videos recorded yet (2026-11-24). One row per video, from its report; a timer that isn't found counts as 0 found:
+**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. One row per video, from its report; a timer that isn't found counts as 0 found. The csTimer rows are **not phone runs**: today's app can't search for a timer, and csTimer's font can't be set up by hand, so the result is known without running it. TODO(owner): QiYi baseline (not recorded yet, 2026-11-24).
 
 | Video (timer) | Timer found | Reading: right / wrong / unreadable | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| `ref_cstimer_old_01.mp4` (csTimer; 21:10, dim room, scramble PDF shown over it) | no | – | 25 | 0 | 25 | 0 | 0 | – | – | – | 89c9a3d, not run |
+| `ref_cstimer_old_02.mp4` (csTimer; 19:12, brighter) | no | – | 25 | 0 | 25 | 0 | 0 | – | – | – | 89c9a3d, not run |
+| `ref_cstimer_old_03.mp4` (csTimer; 18:45, brighter) | no | – | 25 | 0 | 25 | 0 | 0 | – | – | – | 89c9a3d, not run |
 
 **How it works.** An answer key says what a video should give, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
 1. **Timer:** was it found? Until 3.3-C the app can't search by itself, so this is the manual setup, tried again from scratch. None, or a refused one, is *NOT FOUND*, and the report still runs.
@@ -223,9 +226,10 @@ A list of times has no places, so it is lined up in order. A missed solve right 
 - 1080p at 60 fps, with the phone on a stand for most videos;
 - raw and unedited, 10–15 solves (5–10 min), with normal pauses, scrambles and fumbles;
 - for csTimer: start a new session first, so its list holds only the filmed solves;
+- **old footage is fine too**, as long as there is a list of times (from csTimer, or read from the video and checked by a second reading);
 - what's special about it in the file name, e.g. `ref_cstimer_default_dim_01.mp4`.
 
-**Where the videos live.** On the phone (don't delete them: every change is re-measured there), plus a copy in a PC folder outside the repo, `C:\CubeCutRef`, with the lists of times. **Never committed.**
+**Where the videos live.** On the phone (don't delete them: every change is re-measured there), plus a copy in a PC folder outside the repo, `D:\CubeCutRef`, with the lists of times. **Never committed.**
 
 | Set | Videos | For |
 |---|---|---|
@@ -237,7 +241,7 @@ A list of times has no places, so it is lined up in order. A missed solve right 
 
 **Timer that can't be set up by hand (csTimer):** nothing to do in the app.
 1. Export the list: csTimer's session manager → `...` on the session → *Export CSV*. The whole session is exported.
-2. Copy the video and the CSV to `C:\CubeCutRef`, with the same name. Its "before" row is *not found*, 0 found.
+2. Copy the video and the CSV to `D:\CubeCutRef`, with the same name. Its "before" row is *not found*, 0 found.
 
 **Timer that can be set up by hand (QiYi, Stackmat):** debug build (run from Android Studio, or `./gradlew installDebug`).
 1. Import the video as *A session*, set up the timer with the four dots as usual, and run *Find solves*.
