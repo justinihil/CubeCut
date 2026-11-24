@@ -19,72 +19,161 @@ package com.example.cubecut
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.io.BufferedInputStream
+import java.io.DataInputStream
+import java.io.EOFException
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 /**
- * (3.3-C) The app's own finder on the whole reference videos, on the PC that has them (docs/algorithms.md § 8). It gets the video and
+ * (3.3-C) The app's own finder and scan on the whole reference videos, on the PC that has them (docs/algorithms.md § 8). It gets the video and
  * its length, nothing else. Slow (ffmpeg starts once per picture), so it only runs when asked: set CUBECUT_REF_VIDEOS=1. Else skipped.
  */
 class ReferenceVideoTest {
 
     private val dir = File(System.getenv("CUBECUT_REF") ?: "D:/CubeCutRef")
 
-    @Test
-    fun findsAndLearnsTheTimer() {
+    /** The fonts, without the one that looks like csTimer's. */
+    private fun fonts(): DigitShapes = DrawnTime.without("arimo")
+
+    private fun videos(): List<File> {
         assumeTrue("set CUBECUT_REF_VIDEOS=1 to run", System.getenv("CUBECUT_REF_VIDEOS") == "1")
-        val videos = dir.listFiles { f -> f.name.startsWith("ref_") && f.name.endsWith(".mp4") }.orEmpty().sortedBy { it.name }
+        val videos = dir.listFiles { f -> f.name.startsWith("ref_cstimer") && f.name.endsWith(".mp4") }.orEmpty().sortedBy { it.name }
         assumeTrue("no reference videos on this PC", videos.isNotEmpty())
-        // the font that looks like csTimer's is left out
-        val styles = File("src/main/assets/digit_shapes.bin").inputStream().use { readDigitStyles(it) }
-        val fonts = DigitShapes.from(styles.filter { !it.name.startsWith("arimo ") })
+        return videos
+    }
+
+    @Test
+    fun findsLearnsAndScansWithoutBeingToldAnything() {
         val problems = ArrayList<String>()
-        for (v in videos) {
-            val duration = run("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", v.path).toString(Charsets.UTF_8).trim().toDouble()
-            var inPictures = 0L
+        for (v in videos()) {
+            val video = FfmpegVideo(v)
             val started = System.nanoTime()
-            val r = findTimer({ t ->
-                val s = System.nanoTime()
-                picture(v, t).also { inPictures += System.nanoTime() - s }
-            }, duration, fonts)
-            val total = (System.nanoTime() - started) / 1e9
-            println("FINDER ${v.name}: ${if (r.timer != null) "FOUND" else "NOT FOUND"}; ${r.places} places, ${r.wholeFrames} whole frames, ${r.areaReads} area reads; ${"%.1f".format(total - inPictures / 1e9)} s without getting pictures")
+            val r = findTimer({ video.at(it) }, video.duration, fonts())
+            val finding = (System.nanoTime() - started - video.nanos) / 1e9
+            println("FINDER ${v.name}: ${if (r.timer != null) "FOUND" else "NOT FOUND"}; ${r.places} places, ${r.wholeFrames} whole frames, ${r.areaReads} area reads; ${"%.1f".format(finding)} s without getting pictures")
             for (n in r.notes) println("   $n")
-            println("   froze at ${r.frozen}")
             val timer = r.timer
             if (timer == null) { problems.add("${v.name}: not found"); continue }
-            println("   ${timer.area}, digits ${timer.digitHeight.toInt()} px, dark ${timer.dark}, decimals ${timer.runningDecimals} running, ${timer.stoppedDecimals} stopped, learned ${timer.examples.isLearned}")
-            // with what it learned: every stop of the answer key, half a second and 1.5 s later
-            val key = File(dir, v.name.replace(".mp4", ".places.txt")).readLines().filter { !it.startsWith("#") && it.isNotBlank() }.map { it.split(" ") }
-            var right = 0
-            var areaNanos = 0L
-            val bad = ArrayList<String>()
-            for (k in key) for (after in listOf(0.5, 1.5)) {
-                val p = picture(v, k[1].toDouble() + after)
-                val s = System.nanoTime()
-                val got = p?.let { timer.read(it) }?.text
-                areaNanos += System.nanoTime() - s
-                if (got == k[0]) right++ else bad.add("${k[0]} as $got")
-            }
-            println("   ${"%.1f".format(areaNanos / 1e6 / (2 * key.size))} ms per area read"); println("   held times read with the learned digits: $right of ${2 * key.size} $bad")
-            if (!timer.examples.isLearned) problems.add("${v.name}: not learned")
-            if (r.frozen.isEmpty() || r.frozen.any { f -> key.none { it[0] == f } }) problems.add("${v.name}: froze at ${r.frozen}")
-            if (bad.isNotEmpty()) problems.add("${v.name}: $bad")
+            println("   ${timer.area}, digits ${timer.digitHeight.toInt()} px, decimals ${timer.runningDecimals} running, ${timer.stoppedDecimals} stopped, learned ${timer.examples.isLearned}, froze at ${r.frozen}")
+            video.nanos = 0
+            val scanning = System.nanoTime()
+            var reads = 0
+            val scan = scanFoundTimer(
+                { t -> reads++; video.at(t)?.let { timer.read(it)?.text } },
+                video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { t -> video.frameTime(t) }
+            )
+            val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
+            val key = File(dir, v.name.replace(".mp4", ".places.txt")).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
+                .map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
+            val c = compareScan(key, scan.solves.filter { it.timeText != "0.34" })       // (a test tap the owner left out of the key)
+            println(
+                "SCAN ${v.name}: expected ${c.expectedCount}, found ${c.matches.size}, missed ${c.missed.size}, false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}; " +
+                        "${c.onFrame} on the frame, ${c.close} within 0.1 s, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
+                        "readable ${(scan.readableFraction * 100).toInt()}%; $reads reads, ${"%.1f".format(seconds)} s without getting pictures"
+            )
+            for (f in scan.solves.filter { it.note.isNotEmpty() }) println("   flagged: ${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+            for (f in c.falseSolves) println("   false: ${videoPlace(f.stopSec)} ${f.timeText}")
+            for (m in c.missed) println("   missed: ${videoPlace(m.stopSec)} ${m.time}")
+            for (m in c.wrongTime) println("   wrong: ${m.expected.time} as ${m.found.timeText}")
+            for (m in c.matches.filter { abs(it.offsetSec) > CUT_FRAME_SEC }) println("   cut off: ${m.expected.time} by ${"%+.3f".format(m.offsetSec)} s")
+            if (c.missed.isNotEmpty() || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty() || c.close < c.matches.size) problems.add(v.name)
+            video.close()
         }
         assertTrue("$problems", problems.isEmpty())
     }
 
-    private fun picture(v: File, t: Double): GrayPic? {
-        val w = 1080
-        val h = 1920
-        val b = run("ffmpeg", "-v", "error", "-ss", "%.4f".format(java.util.Locale.ROOT, maxOf(0.0, t - 0.008)), "-i", v.path, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-")
-        return if (b.size == w * h) GrayPic(w, h, b) else null
-    }
+    /** Pictures of a video through ffmpeg: half-second steps from one running decode, frame by frame from short bursts, the rest by seeking. */
+    private class FfmpegVideo(private val file: File) {
+        private val w = 1080
+        private val h = 1920
+        private val times: DoubleArray = text(
+            "ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0", file.path
+        ).split(Regex("[,\\s]+")).mapNotNull { it.toDoubleOrNull() }.sorted().toDoubleArray()
+        val duration: Double = text("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file.path).trim().toDouble()
+        val frameSec: Double = duration / times.size
+        var nanos = 0L                                          // spent getting pictures
+        private val kept = LinkedHashMap<Int, GrayPic>()        // by frame number
+        private val keptSteps = LinkedHashMap<Int, GrayPic>()   // by half second
+        private var steps: Process? = null
+        private var stepsIn: DataInputStream? = null
+        private var nextStep = 0
+        private var lastFrame = -10
 
-    private fun run(vararg command: String): ByteArray {
-        val p = ProcessBuilder(*command).start()
-        val out = p.inputStream.readBytes()
-        p.waitFor(60, TimeUnit.SECONDS)
-        return out
+        fun at(t: Double): GrayPic? {
+            val started = System.nanoTime()
+            val p = get(t)
+            nanos += System.nanoTime() - started
+            return p
+        }
+
+        private fun get(t: Double): GrayPic? {
+            val k = Math.round(t * 2).toInt()
+            if (abs(t * 2 - k) < 1e-6) {
+                keptSteps[k]?.let { return it }
+                if (steps == null && k == 0) openSteps()        // a scan begins: from here on the half seconds come in order
+                if (steps != null && k >= nextStep && k - nextStep < 40) {
+                    var p: GrayPic? = null
+                    while (nextStep <= k) { p = readStep(); nextStep++ }
+                    if (p != null) {
+                        keptSteps[k] = p
+                        while (keptSteps.size > 20) keptSteps.remove(keptSteps.keys.first())
+                        return p
+                    }
+                }
+            }
+            val i = nearest(t) ?: return null
+            val walking = i - lastFrame in 0..2                 // frame by frame: get a burst
+            lastFrame = i
+            kept[i]?.let { return it }
+            for ((j, p) in frames(i, if (walking) 40 else 1).withIndex()) kept[i + j] = p
+            while (kept.size > 90) kept.remove(kept.keys.first())
+            return kept[i]
+        }
+
+        fun frameTime(t: Double): Double = nearest(t)?.let { times[it] } ?: t
+
+        private fun nearest(t: Double): Int? {
+            if (t < 0 || t > duration) return null
+            var i = java.util.Arrays.binarySearch(times, t)
+            if (i < 0) i = -i - 1
+            if (i >= times.size || (i > 0 && t - times[i - 1] < times[i] - t)) i--
+            return i.coerceIn(times.indices)
+        }
+
+        private fun frames(i: Int, n: Int): List<GrayPic> {
+            val b = run(
+                "ffmpeg", "-v", "error", "-ss", "%.5f".format(Locale.ROOT, maxOf(0.0, times[i] - 0.004)), "-i", file.path,
+                "-frames:v", "$n", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "-"
+            )
+            return List(b.size / (w * h)) { GrayPic(w, h, b.copyOfRange(it * w * h, (it + 1) * w * h)) }
+        }
+
+        private fun openSteps() {
+            val p = ProcessBuilder("ffmpeg", "-v", "error", "-hwaccel", "cuda", "-i", file.path, "-vf", "fps=2:round=up", "-f", "rawvideo", "-pix_fmt", "gray", "-").start()
+            steps = p
+            stepsIn = DataInputStream(BufferedInputStream(p.inputStream, 1 shl 22))
+        }
+
+        private fun readStep(): GrayPic? = try {
+            GrayPic(w, h, ByteArray(w * h).also { stepsIn!!.readFully(it) })
+        } catch (e: EOFException) {
+            null
+        }
+
+        fun close() {
+            steps?.destroy()
+        }
+
+        private fun text(vararg command: String) = run(*command).toString(Charsets.UTF_8)
+
+        private fun run(vararg command: String): ByteArray {
+            val p = ProcessBuilder(*command).start()
+            val out = p.inputStream.readBytes()
+            p.waitFor(60, TimeUnit.SECONDS)
+            return out
+        }
     }
 }

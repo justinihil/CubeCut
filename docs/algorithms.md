@@ -109,6 +109,23 @@ The examples come from 11 open fonts, or only from the video itself once all ten
 
 On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 47 to 66 whole pictures, 273 to 344 area reads, 2.2 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). On the owner's phone (debug build, before the speed-up below) video 01 gave the same result in 48 s: 6 s for pictures, 42 s for searching and reading, 36 ms per area read. Since then pictures are looked at at half size and fonts are compared roughly first, which makes it 3.3 times faster on the PC; the phone isn't measured again yet.
 
+**Scanning a found timer** (`FinderScan.kt`, 3.3-C; only the debug scan report uses it so far). The idea and the constants of [§ 1](#1-finding-solves), with these differences:
+- A text with fewer decimals than a stopped time is a *running* time, and is kept.
+- **Start to stop:** the running readings give the start, and stop minus start must be the time within 0.2 s. Not confirmed, or never seen running: the solve is kept with `CLOCK_NOTE` and needs a check. It exposes wrong whole numbers and tenths, not hundredths. The clock also chooses between competing readings in the vote.
+- **The cut is searched frame by frame** in the last half second, with each frame's own time (`GraySource.lastFrameSec`). Halving the gap is misled by frames in which the phone blended two numbers.
+- **A time that shows again without having run** is the same hold (the timer was covered).
+- **A hidden stop** (first seen too late for the clock) is worked out from the start, with `HIDDEN_STOP_NOTE`.
+
+Measured on the PC with the app's own code (`ReferenceVideoTest`, 2026-11-24, without csTimer's look-alike font):
+
+| Video | Found | False | Wrong time | On the frame | Worst cut | Reads |
+|---|---|---|---|---|---|---|
+| `ref_cstimer_old_01` | 25 / 25 | 0 | 0 | 25 | 0.017 s | 3017 |
+| `ref_cstimer_old_02` | 25 / 25 | 0 | 0 | 24 | 0.084 s | 2424 |
+| `ref_cstimer_old_03` | 25 / 25 | 0 | 0 | 25 | 0.017 s | 2424 |
+
+On 03 it also lists the `0.34` test tap, flagged, which the owner left out of the key. Scanning took 4 to 5 s per video without getting pictures.
+
 **Debugging tip:** before blaming a font, look at the straightened black-and-white picture that *Read timer here* shows. An earlier "italic touching font" theory turned out wrong when that picture was measured.
 
 ## 4. Learning a timer (setup)
@@ -222,7 +239,7 @@ So the late cuts come from unreadable frames, and misreads add none. The few ear
 | `ref_cstimer_old_03.mp4` (csTimer; 18:45, brighter) | no | – | 25 | 0 | 25 | 0 | 0 | – | – | – | 89c9a3d, not run |
 
 **How it works.** An answer key says what a video should give, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
-1. **Timer:** was it found? Until 3.3-C the app can't search by itself, so this is the manual setup, tried again from scratch. None, or a refused one, is *NOT FOUND*, and the report still runs.
+1. **Timer:** was it found? CubeCut looks by itself (3.3-C), with no setup and nothing from the answer key. If the video also has a setup by hand, that is tried from scratch and graded first, the old way. *NOT FOUND* is a result, and the report still runs.
 2. **Reading:** the display is read 6 times in the 1.1 s after every expected stop (`gradeReading`): right, wrong or unreadable. Reset displays are left out.
 3. **Scan:** Find solves from scratch: found, missed, false, wrong times, off-frame cuts (`compareScan`).
 
@@ -267,7 +284,7 @@ A list of times has no places, so it is lined up in order. A missed solve right 
 3. *Scan report (debug)* → pick the timer → *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`; `groundTruthFiles_areValid` checks it on every test run.
 4. *Scan report (debug)* → *Compare with the list* → *Copy*. This is the video's "before" row in the table above. Don't change the video's list afterwards.
 
-From 3.3-C step 2 the report ends with a part *By itself*: whether the finder found the timer without any setup, where, what it learned, and how long each part took on this phone. The scan doesn't use it yet.
+The report ends with *How it was found*: what the finder did and learned, how long each part took on this phone, and which solves were flagged. *Find solves* doesn't use the finder yet. A list of times can't grade the cuts; for csTimer videos with known places, a reference file (JSON, in `D:\CubeCutRef`) can.
 
 The answer key stays valid however the timer is found. The dots become a fallback after 3.3-C, and show whether the app found the right place by itself.
 

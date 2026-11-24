@@ -42,6 +42,7 @@ Rough sizes are given to warn you what you are opening.
 | `DisplayReaders.kt` | Font-specific step behind an interface | `DisplayReader`, `DisplayReaders.all` / `byId`, `SegmentReader`, `GlyphReader` (disabled) | Return `null` when unsure |
 | `SolidDigits.kt` | (3.3-C) Reads times in solid digits (csTimer, phone apps) anywhere in a picture. **No OpenCV, no Android**; not used by *Find solves* yet | `findTimeRows`, `pickRow`, `DigitShapes.from` / `learned`, `readDigitStyles`, `GrayPic` | Needs exactly one decimal point, no colon yet. The examples come from `assets/digit_shapes.bin` ([ADR-0016](../docs/adr/0016-find-the-timer-without-ml.md)) |
 | `TimerFinder.kt` | (3.3-C) Finds the timer by itself and learns its digits. **No OpenCV, no Android**; only the debug scan report uses it so far | `findTimer(PicAt, duration, fonts, …)` → `FinderResult`, `FoundTimer.read` | Throws `ScanCancelled`. Reads pictures out of order: give it one frame source of its own |
+| `FinderScan.kt` | (3.3-C) Finds the solves of a timer `TimerFinder` found. Pure; only the debug scan report uses it so far | `scanFoundTimer(read, duration, decimals…, frameSec, frameTime, …)` → `ScanResult`, `CLOCK_NOTE`, `HIDDEN_STOP_NOTE` | `read` gives text with its decimal point (`12.69`), not digits. Shares the constants of `SolveAnalyzer`, not its code |
 | `FrameSource.kt` | Frames for the scan | `GraySource`, `openFrameSource`, `CodecSource`, `RetrieverSource`, `AutoSource` / `calibrate` | The caller releases each `Mat`. Logs `Frame source:` under tag `CubeCut`. Keep the fallback |
 
 ### Storage and platform
@@ -72,7 +73,8 @@ Rough sizes are given to warn you what you are opening.
 - `GroundTruthTest` (3.3-A): the ground-truth JSON, csTimer's CSV, `compareScan`, `compareTimes`, `gradeReading` and the report text;
 - `SolidDigitsTest` (3.3-C): the solid-digit reader on drawn times, always in a font it isn't given;
 - `TimerFinderTest` (3.3-C): the finder on a drawn session (`DrawnTime` draws for both tests);
-- `ReferenceVideoTest` (3.3-C): the app's own finder on the whole reference videos, through ffmpeg. Only with `CUBECUT_REF_VIDEOS=1` (about 6 minutes);
+- `FinderScanTest` (3.3-C): the scan of a found timer on a simulated csTimer (covered timer, hidden stop, misreads, blended frames);
+- `ReferenceVideoTest` (3.3-C): the app's own finder and scan on the whole reference videos, through ffmpeg. Only with `CUBECUT_REF_VIDEOS=1` (about 8 minutes; not while another Gradle run is busy);
 - `ReferenceFramesTest` (3.3-C): the same on whole frames of the reference videos. Skipped on a computer without `D:\CubeCutRef`;
 - `PuzzleIconsTest`: every puzzle logo stays inside its box; NxN has N² stickers.
 

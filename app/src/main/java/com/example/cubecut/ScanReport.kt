@@ -54,6 +54,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 // (3.3-A) The debug-only scan report, shown in the editor of debug builds only (BuildConfig.DEBUG). It runs Find solves again WITHOUT
 // touching the list, and compares what it finds with the expected solves: the list you fixed by hand, a ground-truth file, or a plain list
@@ -145,8 +146,8 @@ fun ScanReportHost(
                     BulletLines(
                         listOf(
                             "Finds the timer, reads it and finds solves. Your list doesn't change.",
-                            "It also looks for the timer by itself. The scan doesn't use that yet.",
-                            "No timer setup, or a refused one? The report counts 0 found.",
+                            "CubeCut looks for the timer by itself. A setup by hand is graded too.",
+                            "Find solves doesn't do that yet.",
                             "A file can be a reference file or csTimer's CSV export."
                         )
                     )
@@ -222,74 +223,96 @@ fun lastSetupAttempt(context: Context, footageId: Long): SetupAttempt? {
 }
 
 /**
- * Runs the report's three stages and returns its text: finds the timer, reads the held times, then scans. Until the scan uses the finder
- * (3.3-C), the timer is set up from scratch as [truth] says, so a changed reader is tried on the same display. What the finder finds by
- * itself is listed under it.
- * Blocking; run it on Dispatchers.Default. Its engine is its own and is freed here.
+ * Runs the report and returns its text. CubeCut always tries by itself (3.3-C): finds the timer, reads the held times, scans. A timer
+ * that was also set up by hand is graded first, the old way, from scratch as [truth] says: that is the result the other must not fall below.
+ * Blocking; run it on Dispatchers.Default. Everything it opens is freed here.
  */
 fun runScanReportStages(
     context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
     onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
 ): String {
-    val byItself = finderReport(context, uri, durationMs, truth, onProgress, isCancelled)
-    return setupReport(context, uri, durationMs, truth, videoName, app, onProgress, isCancelled) + "\n\n" + byItself
+    val byHand = if (truth.setup != null) byHandReport(context, uri, durationMs, truth, truth.setup, videoName, app, onProgress, isCancelled) else ""
+    val byItself = byItselfReport(context, uri, durationMs, truth, videoName, app, onProgress, isCancelled)
+    return if (byHand.isEmpty()) byItself else "SET UP BY HAND\n$byHand\n\nBY ITSELF\n$byItself"
 }
 
-/** (3.3-C) What the finder makes of this video, with no setup and no answer key, and how long each part takes on this phone. */
-private fun finderReport(
-    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
+private fun noTimerText(truth: GroundTruth, videoName: String, why: String, app: String) =
+    if (truth.timesOnly.isNotEmpty()) timesReportText(truth, videoName, false, why, compareTimes(truth.timesOnly, emptyList()), 0.0, 0.0, app)
+    else scanReportText(truth, videoName, false, why, emptyList(), compareScan(truth.solves, emptyList()), 0.0, 0.0, app)
+
+/** (3.3-C) What CubeCut makes of this video by itself, and how long each part takes on this phone. The answer key is only used to grade. */
+private fun byItselfReport(
+    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
+    onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
 ): String {
-    val lines = ArrayList<String>()
+    val durationSec = durationMs / 1000.0
     val fonts = DigitShapes.from(context.assets.open("digit_shapes.bin").use { readDigitStyles(it) })
-    val opened = System.nanoTime()
     val source = openFrameSource(context, uri, durationMs)
     try {
-        val opening = (System.nanoTime() - opened) / 1e9
-        var frames = 0
-        var inFrames = 0L
+        var pictures = 0
+        var inPictures = 0L
         val pic = PicAt { t ->
             val start = System.nanoTime()
             val gray = source.gray(t)
             val p = if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
-            frames++
-            inFrames += System.nanoTime() - start
+            pictures++
+            inPictures += System.nanoTime() - start
             p
         }
+
         val start = System.nanoTime()
-        val r = findTimer(pic, durationMs / 1000.0, fonts, { onProgress(it, 100) }, isCancelled)
-        val seconds = (System.nanoTime() - start) / 1e9
-        val timer = r.timer
-        lines.add("By itself (3.3-C, not used by the scan yet): " + if (timer == null) "NOT FOUND" else "FOUND")
-        if (timer != null) {
-            val a = timer.area
-            lines.add("At x ${a.left}-${a.right}, y ${a.top}-${a.bottom}; digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}; decimals ${timer.runningDecimals} running, ${timer.stoppedDecimals} stopped")
-        }
-        val known = truth.timesOnly.ifEmpty { truth.solves.map { it.time } }
-        if (r.frozen.isNotEmpty()) lines.add("Saw it stop at ${r.frozen.joinToString(", ")}: ${r.frozen.count { f -> known.any { sameTime(it, f) } }} of ${r.frozen.size} are expected times")
-        lines.addAll(r.notes)
-        lines.add(
-            "Took ${"%.1f".format(seconds)} s + ${"%.1f".format(opening)} s to open: ${"%.1f".format(inFrames / 1e9)} s for $frames pictures, " +
-                    "${"%.1f".format(seconds - inFrames / 1e9)} s for ${r.wholeFrames} whole-picture searches and ${r.areaReads} area reads"
+        val r = findTimer(pic, durationSec, fonts, { onProgress(it / 10, 100) }, isCancelled)
+        val finding = (System.nanoTime() - start) / 1e9
+        val how = ArrayList<String>()
+        how.add("")
+        how.add("How it was found:")
+        how.addAll(r.notes)
+        how.add(
+            "Took ${"%.1f".format(finding)} s: ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, ${"%.1f".format(finding - inPictures / 1e9)} s " +
+                    "for ${r.wholeFrames} whole-picture searches and ${r.areaReads} area reads"
         )
-        if (timer != null) {
-            // what the scan will do all the time: one picture every half second, only the timer's area, with the learned digits
-            val from = durationMs / 3000.0
-            var ms = 0L
-            var read = 0
-            val n = 40
-            for (k in 0 until n) {
-                if (isCancelled()) throw ScanCancelled()
-                val p = pic.at(from + k * 0.5) ?: continue
-                val s = System.nanoTime()
-                if (timer.read(p) != null) read++
-                ms += (System.nanoTime() - s) / 1000
-            }
-            lines.add("Reading its area: ${"%.1f".format(ms / 1000.0 / n)} ms each, $read of $n pictures readable (from ${videoPlace(from)} on)")
+        val timer = r.timer ?: return noTimerText(truth, videoName, "CubeCut didn't find one by itself.", app) + how.joinToString("\n", "\n")
+        val a = timer.area
+        val found = "Found by itself at x ${a.left}-${a.right}, y ${a.top}-${a.bottom}, digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}, " +
+                "decimals ${timer.runningDecimals} running and ${timer.stoppedDecimals} stopped, " + (if (timer.examples.isLearned) "digits learned." else "digits NOT learned.")
+
+        pictures = 0
+        inPictures = 0L
+        var inReading = 0L
+        fun read(t: Double): String? {
+            val p = pic.at(t) ?: return null
+            val s = System.nanoTime()
+            val text = timer.read(p)?.text
+            inReading += System.nanoTime() - s
+            return text
         }
+        val scanStart = System.nanoTime()
+        val scan = scanFoundTimer(
+            ::read, durationSec, timer.runningDecimals, timer.stoppedDecimals, videoFrameSec(context, uri),
+            { t -> source.lastFrameSec().takeIf { abs(it - t) < 0.05 } ?: t }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
+        )
+        val seconds = (System.nanoTime() - scanStart) / 1e9
+        how.add(
+            "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, ${"%.1f".format(inReading / 1e9)} s reading " +
+                    "(${"%.1f".format(inReading / 1e6 / maxOf(1, pictures))} ms each)"
+        )
+        val flagged = scan.solves.filter { it.note.isNotEmpty() }
+        if (flagged.isNotEmpty()) how.add("Flagged for checking:")
+        for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+
+        val text = if (truth.timesOnly.isNotEmpty()) {
+            timesReportText(truth, videoName, true, found, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
+        } else {
+            val reading = gradeReading(truth.solves, timer.stoppedDecimals, durationSec) { t ->
+                if (isCancelled()) throw ScanCancelled()
+                read(t)?.filter { it.isDigit() }
+            }
+            scanReportText(truth, videoName, true, found, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
+        }
+        return text + how.joinToString("\n", "\n")
     } finally {
         source.close()
     }
-    return lines.joinToString("\n")
 }
 
 /** A copy of [m] (8-bit grey) for the finder. */
@@ -299,27 +322,22 @@ private fun grayPic(m: org.opencv.core.Mat): GrayPic {
     return GrayPic(m.cols(), m.rows(), d)
 }
 
-private fun setupReport(
-    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
+private fun byHandReport(
+    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, attempt: SetupAttempt, videoName: String, app: String,
     onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
 ): String {
-    val timesOnly = truth.timesOnly.isNotEmpty()
-    fun failed(why: String) =
-        if (timesOnly) timesReportText(truth, videoName, false, why, compareTimes(truth.timesOnly, emptyList()), 0.0, 0.0, app)
-        else scanReportText(truth, videoName, false, why, emptyList(), compareScan(truth.solves, emptyList()), 0.0, 0.0, app)
-    val attempt = truth.setup ?: return failed("None was set up by hand, and the scan doesn't use the finder yet (3.3-C).")
-    val frame = grabFrame(context, uri, attempt.frameMs) ?: return failed("No picture at ${videoPlace(attempt.frameMs / 1000.0)}.")
+    val frame = grabFrame(context, uri, attempt.frameMs) ?: return noTimerText(truth, videoName, "No picture at ${videoPlace(attempt.frameMs / 1000.0)}.", app)
     val res = TimerVision.createSetup(frame, attempt.corners.toDoubleArray(), attempt.typed)
     val setup = res.setup
     val ref = res.reference
-    if (setup == null || ref == null) return failed("The setup by hand was refused: " + res.message)
+    if (setup == null || ref == null) return noTimerText(truth, videoName, "The setup by hand was refused: " + res.message, app)
     val engine = TimerEngine(setup, ref)
     try {
         val started = System.currentTimeMillis()
         val scan = SolveAnalyzer.analyze(context, uri, durationMs, engine, onProgress, isCancelled)
         val seconds = (System.currentTimeMillis() - started) / 1000.0
         val found = "Set up by hand. " + res.message
-        if (timesOnly) {
+        if (truth.timesOnly.isNotEmpty()) {
             return timesReportText(truth, videoName, true, found, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
         }
         engine.forgetPosition()
