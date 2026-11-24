@@ -1110,7 +1110,8 @@ fun AboutDialog(onDismiss: () -> Unit) {
                         "Free software under the GNU General Public License, version 3, with no warranty.",
                         "If you share CubeCut or a changed version, you must also share the source code under the same licence.",
                         "Keep this credit in the app, and say clearly when a version is changed.",
-                        "See LICENSE and NOTICE.md in the source code."
+                        "See LICENSE and NOTICE.md in the source code.",
+                        "Digit examples made from open fonts (SIL Open Font License), listed in NOTICE.md."
                     ),
                     style = MaterialTheme.typography.bodySmall
                 )

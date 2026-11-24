@@ -20,6 +20,12 @@ A changed version must say so in a reasonable way, for example in its About wind
 
 "DadCuber" is the name the original author uses for CubeCut. Where the author can be found online is shown in the app's About window, but that line is not part of these terms and can change.
 
+## Fonts used for the example digits
+
+CubeCut contains pictures of the digits 0-9 made from these fonts, each under the SIL Open Font License 1.1: Arimo, Barlow, Courier Prime, JetBrains Mono, Lato, Montserrat, Oswald, PT Serif, Roboto, Roboto Mono and Share Tech Mono. The fonts themselves are not included. Their copyright lines and the licence text are in `app/src/main/assets/digit_fonts_license.txt`, which must stay in the app.
+
+This section is information about those fonts, not an additional term.
+
 ## A request, not a condition
 
 If you use CubeCut for videos you publish, a mention of it is appreciated. This is only a request. It is not a condition of the licence and it never limits how you use the app.

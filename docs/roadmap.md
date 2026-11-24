@@ -109,7 +109,7 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 - The too-fast check stays as a safety net.
 - Start: [algorithms §1–4](algorithms.md); `SolveAnalyzer.kt`.
 
-### 3.3-C Find and read the timer by itself ⬜
+### 3.3-C Find and read the timer by itself 🔶
 **Goal (owner, 2026-11-24):** import raw footage, and CubeCut finds the timer, learns how it looks and reads it. Borders, font, angle and place must not matter. No corners, no typed number. `TimerSetupScreen` stays only as a manual fallback.
 
 **Planned method:**
@@ -176,10 +176,19 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 **Rules:**
 - **Good enough (owner, 2026-11-24):** it doesn't have to work in every scenario. It has to be reliable in a reasonable setting, and the user is responsible for keeping the timer reasonably visible for most of the footage. The extreme copies above are limits to document, not bugs to fix.
 - Ask about ML ([ADR-0001](adr/0001-offline-classic-cv-no-ml.md)) only if this fails on the reference videos. New digit shapes go behind the [`DisplayReader` seam](adr/0014-display-reader-seam.md).
-- Digit templates must come from fonts we may bundle (the prototype used Windows fonts).
+- Digit templates come from bundled open-licence fonts ([ADR-0016](adr/0016-find-the-timer-without-ml.md)). With 10 of them (without csTimer's look-alike) and 12 learned shapes per digit, the prototype gave 25 of 25 on all three videos, the same as with the Windows fonts.
 - No reference video may get worse, including the ones measured with a manual setup.
 - **Decided (owner, 2026-11-24):** a solve the clock doesn't confirm is kept and flagged for checking, never left out. Solves already found the old way stay as they are. `TimerSetupScreen`'s missing `BackHandler` ([known issue](known-issues.md)) is fixed in this phase, in its own commit.
-- **Still open:** what the app shows when it isn't sure which number is the timer, and where the digit templates come from (the phone's fonts or bundled ones).
+- **Decided (owner, 2026-11-24):** the app asks which number is the timer, with a picture, only when it isn't sure. Re-scanning an old video works as today.
+
+**Build steps**, each with its own commit and a phone test:
+1. ✅ Solid-digit reader (`SolidDigits.kt`), not used by the app yet.
+2. ⬜ Finder and learner, shown only in the debug scan report. First phone speed.
+3. ⬜ Scan: frame-by-frame cuts, the clock check, a time that reappears. Only for timers the finder found.
+4. ⬜ *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix.
+5. ⬜ Follow a camera that moves.
+
+Seven-segment timers come after the QiYi baseline.
 - The per-video timer columns stay for the fallback.
 
 ### 3.3-E Penalty marks and long times on the display ⬜

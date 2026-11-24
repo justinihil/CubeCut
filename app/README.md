@@ -40,6 +40,7 @@ Rough sizes are given to warn you what you are opening.
 |---|---|---|---|
 | `TimerReader.kt` (~1k lines) | Finding, straightening, binarising and reading the display; learning a setup | `TimerVision` (`createSetup`, `prep`, `learn`, `readBin`, `tightenQuad`, `formatDigits`), `ShapeFinder`, `TimerEngine` (`readDigitsGray`, `readFrame`, `forgetPosition`, `release`), `DigitLayout`, `TimerSetup`, `TimerStore` (cleanup shim) | The most heavily tuned file. **Owner rule: don't change the digit reader unless asked.** Every `Mat` must be released. Not thread-safe |
 | `DisplayReaders.kt` | Font-specific step behind an interface | `DisplayReader`, `DisplayReaders.all` / `byId`, `SegmentReader`, `GlyphReader` (disabled) | Return `null` when unsure |
+| `SolidDigits.kt` | (3.3-C) Reads times in solid digits (csTimer, phone apps) anywhere in a picture. **No OpenCV, no Android**; not used by *Find solves* yet | `findTimeRows`, `pickRow`, `DigitShapes.from` / `learned`, `readDigitStyles`, `GrayPic` | Needs exactly one decimal point, no colon yet. The examples come from `assets/digit_shapes.bin` ([ADR-0016](../docs/adr/0016-find-the-timer-without-ml.md)) |
 | `FrameSource.kt` | Frames for the scan | `GraySource`, `openFrameSource`, `CodecSource`, `RetrieverSource`, `AutoSource` / `calibrate` | The caller releases each `Mat`. Logs `Frame source:` under tag `CubeCut`. Keep the fallback |
 
 ### Storage and platform
@@ -51,6 +52,7 @@ Rough sizes are given to warn you what you are opening.
 | `AnalysisService.kt` | Foreground notification during Find solves | `AnalysisService.start` / `update` / `stop` / `notifyDone` | Does no work itself ([ADR-0011](../docs/adr/0011-foreground-service-for-notification-only.md)) |
 
 ### Resources
+- `assets/digit_shapes.bin`: example digits for `SolidDigits.kt`, made by `tools/make_digit_shapes.py`. `assets/digit_fonts_license.txt`: the licences of those fonts; it must stay in the app.
 - `res/layout/video_player_view.xml`: the TextureView `PlayerView`, required for editor pinch zoom and for the viewer.
 - `res/values(-night)/themes.xml` and `colors.xml`: window background only (`window_background`). The `black` and `white` colours are template leftovers.
 - `res/xml/data_extraction_rules.xml`: excludes everything from Google backup and transfer (the app has its own backup file, `Backup.kt`).
@@ -67,6 +69,8 @@ Rough sizes are given to warn you what you are opening.
 - `PenaltyTest`: penalty display, file-name part, renaming an exported name, and that a penalty never moves a clip;
 - `SolveAnalyzerScanTest` (3.3-A): `SolveAnalyzer.scan` on `FakeDisplay`, a simulated timer display with unreadable frames, 4/7→1 misreads and dropped last digits. It holds the simulated baseline ([algorithms § 8](../docs/algorithms.md#ground-truth-harness-33-a)) and checks every file in `src/test/resources/groundtruth/`. One test is `@Ignore`d until 3.3-B fixes it;
 - `GroundTruthTest` (3.3-A): the ground-truth JSON, csTimer's CSV, `compareScan`, `compareTimes`, `gradeReading` and the report text;
+- `SolidDigitsTest` (3.3-C): the solid-digit reader on drawn times, always in a font it isn't given;
+- `ReferenceFramesTest` (3.3-C): the same on whole frames of the reference videos. Skipped on a computer without `D:\CubeCutRef`;
 - `PuzzleIconsTest`: every puzzle logo stays inside its box; NxN has N² stickers.
 
 The tests written before 3.2-A lock the 3.1 behaviour: if one fails, a clip or a merge moved. `src/androidTest` is still the template (`ExampleInstrumentedTest`). `org.json` is a test dependency because `android.jar` only has stubs of it.
