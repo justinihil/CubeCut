@@ -57,12 +57,16 @@ class ReferenceVideoTest {
             // with what it learned: every stop of the answer key, half a second and 1.5 s later
             val key = File(dir, v.name.replace(".mp4", ".places.txt")).readLines().filter { !it.startsWith("#") && it.isNotBlank() }.map { it.split(" ") }
             var right = 0
+            var areaNanos = 0L
             val bad = ArrayList<String>()
             for (k in key) for (after in listOf(0.5, 1.5)) {
-                val got = picture(v, k[1].toDouble() + after)?.let { timer.read(it) }?.text
+                val p = picture(v, k[1].toDouble() + after)
+                val s = System.nanoTime()
+                val got = p?.let { timer.read(it) }?.text
+                areaNanos += System.nanoTime() - s
                 if (got == k[0]) right++ else bad.add("${k[0]} as $got")
             }
-            println("   held times read with the learned digits: $right of ${2 * key.size} $bad")
+            println("   ${"%.1f".format(areaNanos / 1e6 / (2 * key.size))} ms per area read"); println("   held times read with the learned digits: $right of ${2 * key.size} $bad")
             if (!timer.examples.isLearned) problems.add("${v.name}: not learned")
             if (r.frozen.isEmpty() || r.frozen.any { f -> key.none { it[0] == f } }) problems.add("${v.name}: froze at ${r.frozen}")
             if (bad.isNotEmpty()) problems.add("${v.name}: $bad")

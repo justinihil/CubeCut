@@ -62,6 +62,12 @@ private const val FOLLOW_SEC = 90.0
 private const val MARGIN_ACROSS = 2.0
 private const val MARGIN_DOWN = 1.2
 
+/** The whole picture is searched this many times smaller first; only if that finds nothing, at full size. Digits under 24 px need that. */
+private const val SEARCH_SHRINK = 2
+
+/** Digits are read at about this height: enough for 6 and 8 to differ, and four times fewer pixels than a 94 px digit has. */
+private const val READ_HEIGHT = 45.0
+
 /** Gives the picture closest to a second of the video, or null if there is none. */
 fun interface PicAt {
     fun at(t: Double): GrayPic?
@@ -102,7 +108,8 @@ private fun readArea(frame: GrayPic, area: Area, height: Double, dark: Boolean, 
 private fun areaRows(frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes, minLikeness: Float): List<TimeRow> =
     findTimeRows(
         frame.crop(area.left, area.top, min(frame.w, area.right), min(frame.h, area.bottom)), examples, listOf(dark),
-        minHeight = 0.55 * height, maxHeight = 1.6 * height, minLikeness = minLikeness, offX = area.left, offY = area.top
+        minHeight = 0.55 * height, maxHeight = 1.6 * height, minLikeness = minLikeness, offX = area.left, offY = area.top,
+        shrink = max(1, (height / READ_HEIGHT).toInt())
     )
 
 private fun median(v: List<Double>): Double {
@@ -145,6 +152,7 @@ private class TimerSearch(
     private var dark = false
     private var frameW = 0
     private var frameH = 0
+    private var searchShrink = SEARCH_SHRINK
 
     private fun frame(t: Double): GrayPic? {
         if (isCancelled()) throw ScanCancelled()
@@ -157,7 +165,12 @@ private class TimerSearch(
     private fun result(timer: FoundTimer?) = FinderResult(timer, notes, places, frozen, wholeFrames, areaReads)
 
     fun run(): FinderResult {
-        val hits = search()
+        var hits = search()
+        if (hits.isEmpty()) {
+            notes.add("Again at full size")
+            searchShrink = 1
+            hits = search()
+        }
         if (hits.isEmpty()) return result(null)
         val rows = hits.flatMap { h -> h.map { it.row } }
         dark = mostCommon(rows.map { it.dark })!!
@@ -174,7 +187,7 @@ private class TimerSearch(
         for (k in 0 until RUN_PICTURES) {
             val p = frame(t + k * RUN_STEP) ?: return emptyList()
             wholeFrames++
-            val rows = findTimeRows(p, fonts, listOf(false, true))
+            val rows = findTimeRows(p, fonts, listOf(false, true), shrink = searchShrink)
             if (rows.isEmpty()) return emptyList()
             seen.add(rows)
         }
@@ -195,6 +208,7 @@ private class TimerSearch(
 
     /** Places spread over the video, halving the gaps, until enough runs of the same number are seen. The biggest running number is the timer. */
     private fun search(): List<Run> {
+        places = 0
         val order = ArrayList<Double>()
         var q = 2
         while (order.size < MAX_PLACES) {

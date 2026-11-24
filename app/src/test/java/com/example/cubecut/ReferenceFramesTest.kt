@@ -29,7 +29,13 @@ import java.io.File
 class ReferenceFramesTest {
 
     @Test
-    fun heldTimes_areReadFromWholeFrames() {
+    fun heldTimes_areReadFromWholeFrames() = check(1)
+
+    /** The size the finder searches at. */
+    @Test
+    fun heldTimes_areReadFromWholeFrames_halfSize() = check(2)
+
+    private fun check(shrink: Int) {
         val dir = File(System.getenv("CUBECUT_REF") ?: "D:/CubeCutRef", "kotlin/held")
         val files = dir.listFiles { f -> f.name.endsWith(".pgm") }.orEmpty().sortedBy { it.name }
         assumeTrue("no reference frames on this PC", files.isNotEmpty())
@@ -43,7 +49,7 @@ class ReferenceFramesTest {
             val expected = f.name.removeSuffix(".pgm").substringAfterLast('_')
             val pic = readPgm(f)
             val start = System.nanoTime()
-            val rows = findTimeRows(pic, shapes, listOf(false, true))
+            val rows = findTimeRows(pic, shapes, listOf(false, true), shrink = shrink)
             nanos += System.nanoTime() - start
             // one still also holds junk (a window edge that reads 1.1). Telling the timer from that takes several frames and is not the
             // reader's job: here only what it reads at the timer's place counts
@@ -51,7 +57,7 @@ class ReferenceFramesTest {
             val read = there?.let { e -> pickRow(rows.filter { it.left < e.right && it.right > e.left && it.top < e.bottom && it.bottom > e.top && it.height > 0.7 * e.height })?.text }
             if (read == expected) right++ else notRight.add("${f.name} as $read")
         }
-        println("REFERENCE FRAMES: $right of ${files.size} right, ${nanos / 1_000_000 / files.size} ms per whole frame. Not right: $notRight")
+        println("REFERENCE FRAMES (1/$shrink size): $right of ${files.size} right, ${nanos / 1_000_000 / files.size} ms per whole frame. Not right: $notRight")
         assertTrue("$right of ${files.size}: $notRight", right >= files.size * 0.95)
     }
 

@@ -47,6 +47,12 @@ private const val SHAPE_SIZE = SHAPE_W * SHAPE_H
 /** The example digits are also tried leaning, because a row's slope is undone by shifting columns, which leaves turned digits leaning. */
 private val LEANS = FloatArray(11) { (it - 5) * 0.1f }
 
+/** How many digits of the rough look are compared properly. 6 and 8, or 1 and 7, can change places in the rough look. */
+private const val LIKELY_DIGITS = 4
+
+/** A blob less alike than this is no digit at all; the rest of its row needn't be compared. Below any likeness a caller asks for. */
+private const val HOPELESS = 0.35f
+
 /** Below this likeness (1 = identical) a blob is not called a digit, and its row is dropped. */
 const val MIN_LIKENESS = 0.6f
 
@@ -76,6 +82,29 @@ class GrayPic(val w: Int, val h: Int, val d: ByteArray) {
         for (y in y0 until y1) System.arraycopy(d, y * w + x0, out, (y - y0) * cw, cw)
         return GrayPic(cw, y1 - y0, out)
     }
+
+    /** [by] times smaller: every pixel is the average of [by] x [by]. Big digits don't need all their pixels to be read. */
+    fun shrunk(by: Int): GrayPic {
+        if (by <= 1) return this
+        val nw = w / by
+        val nh = h / by
+        val out = ByteArray(nw * nh)
+        val sums = IntArray(nw)
+        val half = by * by / 2
+        for (y in 0 until nh) {
+            sums.fill(0)
+            for (k in 0 until by) {
+                var i = (y * by + k) * w
+                for (x in 0 until nw) {
+                    var t = 0
+                    for (j in 0 until by) t += d[i++].toInt() and 255
+                    sums[x] += t
+                }
+            }
+            for (x in 0 until nw) out[y * nw + x] = ((sums[x] + half) / (by * by)).toByte()
+        }
+        return GrayPic(nw, nh, out)
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -84,31 +113,39 @@ class GrayPic(val w: Int, val h: Int, val d: ByteArray) {
 
 /** true where a pixel stands out from the average of the [block] x [block] pixels around it (outside the picture, the edge is repeated). */
 fun standsOut(p: GrayPic, block: Int, dark: Boolean): BooleanArray {
+    // plain loops over arrays, nothing clever: this runs over every pixel of every picture, and debug builds don't optimise calls away
     val w = p.w
     val h = p.h
     val r = block / 2
     val area = block * block
     val out = BooleanArray(w * h)
-    val column = IntArray(w)            // sum of each column over the rows y-r..y+r
     val flip = if (dark) 255 else 0
-    fun at(x: Int, y: Int): Int = (p.d[y * w + x].toInt() and 255) xor flip
+    val d = IntArray(w * h)
+    for (i in d.indices) d[i] = (p.d[i].toInt() and 255) xor flip
+    // the sum of each column over the rows y-r..y+r, with the edge columns repeated r times on both sides
+    val column = IntArray(w + 2 * r)
     for (x in 0 until w) {
         var s = 0
-        for (k in -r..r) s += at(x, k.coerceIn(0, h - 1))
-        column[x] = s
+        for (k in -r..r) s += d[(if (k < 0) 0 else if (k >= h) h - 1 else k) * w + x]
+        column[r + x] = s
     }
+    val limit = 2 * area * LIGHTER_BY + area           // value - mean > LIGHTER_BY, with the mean rounded, without dividing
     for (y in 0 until h) {
         if (y > 0) {
-            val leave = max(0, y - 1 - r)
-            val enter = min(h - 1, y + r)
-            for (x in 0 until w) column[x] += at(x, enter) - at(x, leave)
+            val leave = (if (y - 1 - r < 0) 0 else y - 1 - r) * w
+            val enter = (if (y + r >= h) h - 1 else y + r) * w
+            for (x in 0 until w) column[r + x] += d[enter + x] - d[leave + x]
         }
+        val first = column[r]
+        val last = column[r + w - 1]
+        for (k in 0 until r) { column[k] = first; column[r + w + k] = last }
         var s = 0
-        for (k in -r..r) s += column[k.coerceIn(0, w - 1)]
+        for (k in 0 until 2 * r + 1) s += column[k]
+        val row = y * w
         for (x in 0 until w) {
-            if (x > 0) s += column[min(w - 1, x + r)] - column[max(0, x - 1 - r)]
-            // mean rounded to a whole number, in integers: the same pixels on every phone
-            out[y * w + x] = at(x, y) - (2 * s + area) / (2 * area) > LIGHTER_BY
+            if (x > 0) s += column[x + 2 * r] - column[x - 1]
+            // v - (2s + area) / (2 area) > 18  <=>  2 area (v - 18) >= 2s + area + 1 ... written so that no division is needed
+            if (2 * area * d[row + x] - 2 * s > limit) out[row + x] = true
         }
     }
     return out
@@ -302,8 +339,25 @@ fun digitShape(p: GrayPic): FloatArray? {
 /** How alike two shapes are: 1 = identical. */
 fun likeness(a: FloatArray, b: FloatArray): Float {
     var s = 0f
-    for (i in 0 until SHAPE_SIZE) s += a[i] * b[i]
+    for (i in a.indices) s += a[i] * b[i]
     return s
+}
+
+/** [shape] at half the width and height: good enough to see which digits it could be, and four times quicker to compare. */
+private fun roughShape(shape: FloatArray): FloatArray {
+    val w = SHAPE_W / 2
+    val h = SHAPE_H / 2
+    val out = FloatArray(w * h)
+    var norm = 0f
+    for (y in 0 until h) for (x in 0 until w) {
+        val i = 2 * y * SHAPE_W + 2 * x
+        val v = shape[i] + shape[i + 1] + shape[i + SHAPE_W] + shape[i + SHAPE_W + 1]
+        out[y * w + x] = v
+        norm += v * v
+    }
+    val n = sqrt(norm)
+    if (n > 0f) for (i in out.indices) out[i] /= n
+    return out
 }
 
 // ---------------------------------------------------------------------------------------
@@ -337,7 +391,9 @@ class RowReading(val digits: IntArray, val likeness: FloatArray)
  */
 class DigitShapes private constructor(
     private val byLean: Array<Array<Array<FloatArray>>>,        // lean, digit, examples
-    private val learned: Array<Array<FloatArray>>?              // digit, examples
+    private val learned: Array<Array<FloatArray>>?,             // digit, examples
+    private val roughByLean: Array<Array<Array<FloatArray>>> =
+        Array(byLean.size) { k -> Array(10) { d -> Array(byLean[k][d].size) { roughShape(byLean[k][d][it]) } } }
 ) {
     val isLearned: Boolean get() = learned != null
 
@@ -348,31 +404,50 @@ class DigitShapes private constructor(
             val s = shapes[d]
             val n = min(keep, s.size)
             Array(n) { s[if (n == 1) 0 else it * (s.size - 1) / (n - 1)] }
-        })
+        }, roughByLean)
     }
 
     fun readRow(shapes: List<FloatArray>): RowReading {
         val own = learned
         if (own != null) return best(shapes) { shape, d -> own[d].maxOf { likeness(shape, it) } }
-        // All digits of a row lean the same way. Every shape gets its best example per lean; the lean that suits the whole row wins
-        // (with its two neighbours: digits far from the middle of a tilted screen lean a little differently).
-        val table = Array(LEANS.size) { k -> Array(shapes.size) { i -> FloatArray(10) { d -> byLean[k][d].maxOf { likeness(shapes[i], it) } } } }
+        // All digits of a row lean the same way: the lean that suits the whole row counts. Comparing with every example at full size is
+        // slow, so a rough look (a quarter of the cells) picks the lean and the likely digits, and only those are compared properly.
+        val n = shapes.size
+        val rough = Array(n) { i -> roughShape(shapes[i]) }
+        val table = Array(LEANS.size) { Array(n) { FloatArray(10) } }
         var lean = 0
         var leanSum = -1e9f
         for (k in LEANS.indices) {
-            var s = 0f
-            for (i in shapes.indices) s += table[k][i].max()
-            if (s > leanSum) { leanSum = s; lean = k }
+            var sum = 0f
+            for (i in 0 until n) {
+                var best = -2f
+                for (d in 0..9) {
+                    var l = -2f
+                    for (e in roughByLean[k][d]) { val x = likeness(rough[i], e); if (x > l) l = x }
+                    table[k][i][d] = l
+                    if (l > best) best = l
+                }
+                sum += best
+            }
+            if (sum > leanSum) { leanSum = sum; lean = k }
         }
-        val near = max(0, lean - 1)..min(LEANS.size - 1, lean + 1)
-        val digits = IntArray(shapes.size)
-        val likes = FloatArray(shapes.size)
-        for (i in shapes.indices) {
+        // (its two neighbours count too: digits far from the middle of a tilted screen lean a little differently)
+        val from = max(0, lean - 1)
+        val to = min(LEANS.size - 1, lean + 1)
+        val digits = IntArray(n)
+        val likes = FloatArray(n)
+        for (i in 0 until n) {
+            val roughly = FloatArray(10) { d -> var l = -2f; for (k in from..to) l = max(l, table[k][i][d]); l }
+            val order = (0..9).sortedByDescending { roughly[it] }
             var b = -1
-            var l = -1f
-            for (k in near) for (d in 0..9) if (table[k][i][d] > l) { l = table[k][i][d]; b = d }
+            var l = -2f
+            for (c in 0 until LIKELY_DIGITS) {
+                val d = order[c]
+                for (k in from..to) for (e in byLean[k][d]) { val x = likeness(shapes[i], e); if (x > l) { l = x; b = d } }
+            }
             digits[i] = b
             likes[i] = l
+            if (l < HOPELESS) return RowReading(IntArray(n) { -1 }, FloatArray(n) { l })        // one blob that is no digit spoils the row
         }
         return RowReading(digits, likes)
     }
@@ -437,25 +512,29 @@ private fun slopeOf(x: DoubleArray, y: DoubleArray): Double {
 /**
  * Every time with a decimal point that can be read in [pic] (a colon isn't read yet). [darks]: look for light digits (false), dark ones
  * (true) or both. The same time is usually found with several [blocks] and is then listed several times; [pickRow] chooses.
- * Boxes are given in the coordinates of the whole frame: [pic] starts at ([offX], [offY]).
+ * Boxes and heights are in pixels of the whole frame: [pic] starts at ([offX], [offY]), and is looked at [shrink] times smaller.
  */
 fun findTimeRows(
     pic: GrayPic, examples: DigitShapes, darks: List<Boolean>, blocks: IntArray = SEARCH_BLOCKS,
-    minHeight: Double = 12.0, maxHeight: Double = 400.0, minLikeness: Float = MIN_LIKENESS, offX: Int = 0, offY: Int = 0
+    minHeight: Double = 12.0, maxHeight: Double = 400.0, minLikeness: Float = MIN_LIKENESS, offX: Int = 0, offY: Int = 0,
+    shrink: Int = 1
 ): List<TimeRow> {
     val out = ArrayList<TimeRow>()
+    val small = pic.shrunk(shrink)
+    val least = minHeight / shrink
+    val most = maxHeight / shrink
     for (dark in darks) for (wanted in blocks) {
-        val side = min(pic.w, pic.h)
+        val side = min(small.w, small.h)
         val block = if (wanted >= side) side / 2 * 2 - 1 else wanted
         if (block < 3) continue
-        val blobs = Blobs(standsOut(pic, block, dark), pic.w, pic.h)
+        val blobs = Blobs(standsOut(small, block, dark), small.w, small.h)
         val digits = blobs.list.filter { b ->
             val r = b.w.toDouble() / b.h
-            b.h >= minHeight && b.h <= maxHeight && r > 0.12 && r < 1.4 && b.area > 0.1 * b.w * b.h
+            b.h >= least && b.h <= most && r > 0.12 && r < 1.4 && b.area > 0.1 * b.w * b.h
         }.sortedBy { it.x0 }
         if (digits.size < 2) continue
-        val dots = blobs.list.filter { it.h >= 2 && it.h < 0.28 * maxHeight && it.w < 0.3 * maxHeight }.sortedBy { it.x0 }
-        for (row in digitRows(digits)) readRow(blobs, row, dots, examples, dark, block, minLikeness, offX, offY)?.let { out.add(it) }
+        val dots = blobs.list.filter { it.h >= 2 && it.h < 0.28 * most && it.w < 0.3 * most }.sortedBy { it.x0 }
+        for (row in digitRows(digits)) readRow(blobs, row, dots, examples, dark, block, minLikeness, offX, offY, shrink)?.let { out.add(it) }
     }
     return out
 }
@@ -492,7 +571,8 @@ private fun digitRows(digits: List<Blob>): List<List<Blob>> {
 
 /** The row as a time, or null: it must have exactly one decimal point, and every blob must look like a digit. */
 private fun readRow(
-    blobs: Blobs, row: List<Blob>, dots: List<Blob>, examples: DigitShapes, dark: Boolean, block: Int, minLikeness: Float, offX: Int, offY: Int
+    blobs: Blobs, row: List<Blob>, dots: List<Blob>, examples: DigitShapes, dark: Boolean, block: Int, minLikeness: Float, offX: Int, offY: Int,
+    shrink: Int
 ): TimeRow? {
     var point = -1
     for (i in 0 until row.size - 1) {
@@ -516,8 +596,9 @@ private fun readRow(
     val n = heights.size
     val height = if (n % 2 == 1) heights[n / 2].toDouble() else (heights[n / 2 - 1] + heights[n / 2]) / 2.0
     return TimeRow(
-        text, read.likeness.min(), height,
-        row.minOf { it.x0 } + offX, row.minOf { it.y0 } + offY, row.maxOf { it.x1 } + 1 + offX, row.maxOf { it.y1 } + 1 + offY,
+        text, read.likeness.min(), height * shrink,
+        row.minOf { it.x0 } * shrink + offX, row.minOf { it.y0 } * shrink + offY,
+        (row.maxOf { it.x1 } + 1) * shrink + offX, (row.maxOf { it.y1 } + 1) * shrink + offY,
         dark, block, shapes
     )
 }

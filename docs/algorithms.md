@@ -107,7 +107,7 @@ The examples come from 11 open fonts, or only from the video itself once all ten
 2. **Watch** those runs to their end: where the number freezes, and with how many decimals.
 3. **Learn:** the same runs again at 12 pictures a second. The exact start is the phase that makes the tenths' shapes most alike within each label, then the whole tenth that agrees best with the readings. The clock then names every digit. Shapes that look more like another digit are left out. Used only when all ten digits were seen at least 4 times.
 
-On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 52 to 73 whole pictures, 273 to 344 area reads, 7 to 8 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). **The phone isn't measured yet.**
+On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 47 to 66 whole pictures, 273 to 344 area reads, 2.2 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). On the owner's phone (debug build, before the speed-up below) video 01 gave the same result in 48 s: 6 s for pictures, 42 s for searching and reading, 36 ms per area read. Since then pictures are looked at at half size and fonts are compared roughly first, which makes it 3.3 times faster on the PC; the phone isn't measured again yet.
 
 **Debugging tip:** before blaming a font, look at the straightened black-and-white picture that *Read timer here* shows. An earlier "italic touching font" theory turned out wrong when that picture was measured.
 
