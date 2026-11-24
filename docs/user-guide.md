@@ -5,7 +5,7 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 ## Cutting a session
 
 1. **Import** the video with *Import video* in the Gallery. If CubeCut has seen the video before, it says *Imported before*. **Open saved** brings back its saved solves, settings and timer setup; **Cancel** leaves things as they were. A new video asks **Which puzzle is this?** One puzzle per video works best; *Decide later* skips it (set it later in the Setup box).
-2. **The timer.** csTimer and other timers with solid digits need nothing: CubeCut finds the timer by itself. Keep it in view and readable, also while it runs, for most of the video. If two numbers run at the same time, it asks which one is the timer.
+2. **The timer.** csTimer and other timers with solid digits need nothing: CubeCut finds the timer by itself. Keep it in view and readable, also while it runs, for most of the video. **Film with a fixed camera:** a small bump is fine, but if the camera ends up pointing somewhere else, the solves after that can be missed. If two numbers run at the same time, it asks which one is the timer.
 
    **QiYi, Stackmat, GAN and other seven-segment timers** (strokes that don't touch) need a setup by hand: Setup box → *Set up by hand*.
    1. Pause on a frame that shows **an actual time after a solve**: the timer has stopped and shows its final time. **Do not use 0.000.**

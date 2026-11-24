@@ -1649,6 +1649,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                         listOf(
                                             "Just press Find solves.",
                                             "Keep the timer in view and readable, also while it runs.",
+                                            "Film with a fixed camera. A small bump is fine.",
                                             "It reads solid digits, like csTimer.",
                                             "QiYi, Stackmat or GAN? Set up by hand.",
                                             "By hand: pause on a finished time, like 12.412. Not 0.000, and no hand in front of it."

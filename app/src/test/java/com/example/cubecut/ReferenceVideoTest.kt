@@ -85,6 +85,59 @@ class ReferenceVideoTest {
         assertTrue("$problems", problems.isEmpty())
     }
 
+    /** The whole chain on the first video, with the picture moved after a third and again after two thirds of it. */
+    @Test
+    fun smallCameraMoves() {
+        val v = videos().first()
+        val key = File(dir, v.name.replace(".mp4", ".places.txt")).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
+            .map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
+        // per stage: shift right, shift down (pixels of a 1080 x 1920 frame), zoom, turn (degrees)
+        val cases = mapOf(
+            "nudge" to listOf(doubleArrayOf(20.0, 12.0, 1.0, 0.5), doubleArrayOf(-15.0, -10.0, 1.0, -0.5)),
+            "bump" to listOf(doubleArrayOf(60.0, 40.0, 1.03, 2.0), doubleArrayOf(40.0, -50.0, 0.97, -2.0)),
+            "big" to listOf(doubleArrayOf(150.0, 150.0, 1.0, 3.0), doubleArrayOf(300.0, 350.0, 1.0, 0.0))
+        )
+        for ((name, stages) in cases) {
+            val video = FfmpegVideo(v)
+            val at = { t: Double ->
+                video.at(t)?.let { p ->
+                    when {
+                        t < video.duration / 3 -> p
+                        t < video.duration * 2 / 3 -> moved(p, stages[0])
+                        else -> moved(p, stages[1])
+                    }
+                }
+            }
+            val r = findTimer({ at(it) }, video.duration, fonts())
+            val timer = r.timer
+            if (timer == null) { println("MOVES $name: NOT FOUND ${r.notes}"); continue }
+            val scan = scanFoundTimer(
+                { t -> at(t)?.let { timer.read(it)?.text } }, video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { t -> video.frameTime(t) }
+            )
+            val c = compareScan(key, scan.solves)
+            println(
+                "MOVES $name: area ${timer.area}; found ${c.matches.size} of ${c.expectedCount}, false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}, " +
+                        "${c.onFrame} on the frame, worst ${"%.3f".format(c.worstOffsetSec)} s; missed ${c.missed.map { it.time }}; flagged ${scan.solves.count { it.note.isNotEmpty() }}"
+            )
+            video.close()
+        }
+    }
+
+    private fun moved(p: GrayPic, m: DoubleArray): GrayPic {
+        val a = Math.toRadians(m[3])
+        val cos = Math.cos(a) / m[2]
+        val sin = Math.sin(a) / m[2]
+        val out = ByteArray(p.d.size)
+        for (y in 0 until p.h) for (x in 0 until p.w) {
+            val dx = x - p.w / 2.0 - m[0]
+            val dy = y - p.h / 2.0 - m[1]
+            val sx = (dx * cos + dy * sin + p.w / 2.0).toInt().coerceIn(0, p.w - 1)
+            val sy = (-dx * sin + dy * cos + p.h / 2.0).toInt().coerceIn(0, p.h - 1)
+            out[y * p.w + x] = p.d[sy * p.w + sx]
+        }
+        return GrayPic(p.w, p.h, out)
+    }
+
     /** Pictures of a video through ffmpeg: half-second steps from one running decode, frame by frame from short bursts, the rest by seeking. */
     private class FfmpegVideo(private val file: File) {
         private val w = 1080

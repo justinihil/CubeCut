@@ -75,7 +75,7 @@ Rough sizes are given to warn you what you are opening.
 - `SolidDigitsTest` (3.3-C): the solid-digit reader on drawn times, always in a font it isn't given;
 - `TimerFinderTest` (3.3-C): the finder on a drawn session (`DrawnTime` draws for both tests);
 - `FinderScanTest` (3.3-C): the scan of a found timer on a simulated csTimer (covered timer, hidden stop, misreads, blended frames);
-- `ReferenceVideoTest` (3.3-C): the app's own finder and scan on the whole reference videos, through ffmpeg. Only with `CUBECUT_REF_VIDEOS=1` (about 8 minutes; not while another Gradle run is busy);
+- `ReferenceVideoTest` (3.3-C): the app's own finder and scan on the whole reference videos, through ffmpeg. Also small camera moves. Only with `CUBECUT_REF_VIDEOS=1` (about 17 minutes; not while another Gradle run is busy);
 - `ReferenceFramesTest` (3.3-C): the same on whole frames of the reference videos. Skipped on a computer without `D:\CubeCutRef`;
 - `PuzzleIconsTest`: every puzzle logo stays inside its box; NxN has N² stickers.
 

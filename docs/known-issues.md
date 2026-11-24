@@ -18,6 +18,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 ## Limitations by design
 
 - **Found automatically: solid digits only** (csTimer, phone apps), with exactly one decimal point: no times over a minute, no timer that hides its decimals or its running time ([ADR-0016](adr/0016-find-the-timer-without-ml.md)). Measured on one desk, one font and one theme. Digits under about 24 px, strong blur and a screen turned far over don't read. **Seven-segment timers** (QiYi, Stackmat, GAN) need a setup by hand. +2/DNF marks next to the time and times of an hour or more aren't handled.
+- **A found timer needs a fixed camera** (owner, 2026-11-24). It is read in one area, with room around it. Small moves are fine ([algorithms](algorithms.md#3-reading-the-timer)); after a big one the later solves can be missed without a warning.
 - **Set up by hand, mixed digit sizes probably don't read** (for example csTimer's default look). Let CubeCut find that timer instead.
 - **Held time must stay on screen for about 1.5 s or more.** Timers that blank immediately aren't supported. A timer that updates its running display slower than every 0.5 s could look stopped; this has not been seen.
 - **Misread digits can win the vote** on short holds. A held time read without its last digit can become a separate solve, or rarely replace the real time, which the *too fast* check then flags ([algorithms](algorithms.md#1-finding-solves)). Reproduced in the simulator; planned for 3.3-B.

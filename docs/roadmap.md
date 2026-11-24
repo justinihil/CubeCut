@@ -116,7 +116,7 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 1. **Search:** find every number-like row in frames spread over the video.
 2. **Watch:** the timer is the number that **runs, then freezes**. In one second of video it rises by 1.00; averages, session lists and scrambles don't.
 3. **Learn:** remember its place and digit shapes in this video, and use them on harder frames.
-4. **Follow:** search again when it moves or is covered.
+4. **Follow:** search again when it moves or is covered. (Not built: a fixed camera is required, see step 5 below.)
 5. **Check:** start to stop must match the final time, which catches misreads.
 
 A timer that is hidden or shows no decimals while running weakens steps 2 and 5. Then use the number that changes once per solve.
@@ -185,8 +185,10 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 1. ✅ Solid-digit reader (`SolidDigits.kt`), not used by the app yet.
 2. ✅ Finder and learner (`TimerFinder.kt`), shown only in the debug scan report. On the owner's phone, video 01 gave the same result as on the PC, in 48 s; made faster since.
 3. ✅ Scan (`FinderScan.kt`): frame-by-frame cuts, the clock check, a time that reappears. Only for timers the finder found, and only in the debug scan report. Phone, video 01: 25 of 25, no false solves or wrong times, 2 min for 21 min of video ([numbers](algorithms.md#3-reading-the-timer)).
-4. 🔶 *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix. Built; the phone test is waiting on the owner. Decided (owner, 2026-11-24): the Setup box says CubeCut finds the timer, with *Set up by hand* as a small button; only the place of a found timer is remembered; *Read timer here* only after a setup by hand; *Find it by itself again* drops that setup; *Couldn't find the timer* shows what to try and a *Set up by hand* button.
-5. ⬜ Follow a camera that moves.
+4. ✅ *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix. Tested by the owner on the phone (2026-11-24). Decided (owner, 2026-11-24): the Setup box says CubeCut finds the timer, with *Set up by hand* as a small button; only the place of a found timer is remembered; *Read timer here* only after a setup by hand; *Find it by itself again* drops that setup; *Couldn't find the timer* shows what to try and a *Set up by hand* button.
+5. ➖ Follow a camera that moves: not built (owner, 2026-11-24). A fixed camera is a requirement, told to the user; small moves are tolerated, measured in [algorithms](algorithms.md#3-reading-the-timer).
+6. ⬜ Times over a minute (the colon). Waiting on the owner's 4x4 footage.
+7. ⬜ A csTimer-like timer with another font.
 
 Seven-segment timers come after the QiYi baseline.
 - The per-video timer columns stay for the fallback.
