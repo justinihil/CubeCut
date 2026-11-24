@@ -18,6 +18,7 @@ package com.example.cubecut
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import kotlin.math.abs
 
 // (3.3-A) The ground-truth harness: what a reference video SHOULD give, and how a scan compares with it.
@@ -52,6 +53,8 @@ data class SetupAttempt(val frameMs: Long, val corners: List<Double>, val typed:
 /**
  * Everything one ground-truth file says. [video] is the file name, used to warn when a file is compared with another video.
  * [setup] is null if no timer setup was ever tried on the video.
+ * [timesOnly] is the other kind of answer key: just the times in order (csTimer's export, see [parseTimesList]), with no places in the
+ * video. [solves] is empty then, and it is never written to JSON.
  */
 data class GroundTruth(
     val video: String,
@@ -59,7 +62,8 @@ data class GroundTruth(
     val durationSec: Double,
     val solves: List<ExpectedSolve>,
     val note: String = "",
-    val setup: SetupAttempt? = null
+    val setup: SetupAttempt? = null,
+    val timesOnly: List<String> = emptyList()
 )
 
 /** An expected solve and the found solve matched to it. [offsetSec] is found minus expected (negative = the cut is early). */
@@ -123,6 +127,124 @@ fun compareScan(expected: List<ExpectedSolve>, found: List<FoundSolve>): ScanCom
     )
 }
 
+// ---- an answer key with only the times, in order: it needs no work by hand, and nothing CubeCut found went into it ----
+
+/**
+ * The times of a list, oldest first, as the display showed them when the timer stopped. Understands csTimer's CSV export, or plain text
+ * with one time per line. A +2 is taken off again and "DNF(12.25)" gives 12.25; a DNF with no time gives "" (any time fits).
+ * Throws IllegalArgumentException naming the first line it can't read, so no solve is dropped silently.
+ */
+fun parseTimesList(text: String): List<String> {
+    val rows = csvRows(text.removePrefix("\uFEFF"))
+    if (rows.isEmpty()) throw IllegalArgumentException("the file is empty")
+    val timeAt = rows[0].indexOf("Time")
+    // P.1 is the time without its penalty, but only the first part of a solve timed in several phases (then there is a P.2)
+    val rawAt = if ("P.2" in rows[0]) -1 else rows[0].indexOf("P.1")
+    val body = if (timeAt >= 0) rows.drop(1) else rows
+    val times = body.map { r ->
+        val cell = if (timeAt >= 0) r.getOrElse(timeAt) { "" } else r[0]
+        val raw = if (timeAt >= 0 && rawAt >= 0) r.getOrElse(rawAt) { "" } else ""
+        if (parseTimeSeconds(raw) != null) raw.trim()
+        else timeAsShown(cell) ?: throw IllegalArgumentException("can't read the time \"${cell.take(30)}\"")
+    }
+    if (times.isEmpty()) throw IllegalArgumentException("no times in it")
+    return times
+}
+
+private fun timeAsShown(cell: String): String? {
+    val c = cell.trim()
+    if (c == "DNF") return ""
+    if (c.startsWith("DNF(") && c.endsWith(")")) return c.substring(4, c.length - 1).takeIf { parseTimeSeconds(it) != null }
+    if (c.endsWith("+")) {
+        val sec = parseTimeSeconds(c.dropLast(1)) ?: return null
+        return if (sec > 2.0) "%.3f".format(Locale.US, sec - 2.0) else null
+    }
+    return c.takeIf { parseTimeSeconds(it) != null }
+}
+
+/** Rows of a ';' file; a quoted field may hold ';', line breaks and "" (csTimer quotes comments that way). Empty lines are left out. */
+private fun csvRows(text: String): List<List<String>> {
+    val rows = ArrayList<List<String>>()
+    var row = ArrayList<String>()
+    val field = StringBuilder()
+    var quoted = false
+    fun endRow() {
+        row.add(field.toString())
+        field.setLength(0)
+        if (row.any { it.isNotBlank() }) rows.add(row)
+        row = ArrayList()
+    }
+    var i = 0
+    while (i < text.length) {
+        val ch = text[i]
+        when {
+            quoted && ch == '"' && text.getOrNull(i + 1) == '"' -> { field.append('"'); i++ }
+            quoted && ch == '"' -> quoted = false
+            quoted -> field.append(ch)
+            ch == '"' && field.isEmpty() -> quoted = true
+            ch == ';' -> { row.add(field.toString()); field.setLength(0) }
+            ch == '\n' -> endRow()
+            ch != '\r' -> field.append(ch)
+        }
+        i++
+    }
+    endRow()
+    return rows
+}
+
+/** How a scan did against a list of times: [wrong] pairs an expected time with the solve in its place, [missed] is (number in the list, time). */
+class TimesComparison(
+    val right: Int,
+    val wrong: List<Pair<String, FoundSolve>>,
+    val missed: List<Pair<Int, String>>,
+    val falseSolves: List<FoundSolve>,
+    val leftovers: List<FoundSolve>
+) {
+    val expectedCount: Int get() = right + wrong.size + missed.size
+}
+
+/**
+ * Lines the [found] solves up with the [expected] times in order, with the fewest differences. There are no places to go by, so a missed
+ * solve right next to a false one can't be told apart from a wrong time: it counts as a wrong time.
+ */
+fun compareTimes(expected: List<String>, found: List<FoundSolve>): TimesComparison {
+    val leftovers = found.filter { !it.include && it.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START) }
+    val real = found.filter { it !in leftovers }.sortedBy { it.stopSec }
+    val n = expected.size
+    val m = real.size
+    fun fits(e: Int, f: Int) = expected[e].isEmpty() || sameTime(expected[e], real[f].timeText)
+    // an unknown time fits anything, but a little worse than a real match, so it doesn't take another solve's place
+    fun pairCost(e: Int, f: Int) = if (!fits(e, f)) 10 else if (expected[e].isEmpty()) 1 else 0
+    val cost = Array(n + 1) { IntArray(m + 1) }
+    for (e in 0..n) for (f in 0..m) {
+        var best = if (e == 0 && f == 0) 0 else Int.MAX_VALUE
+        if (e > 0) best = minOf(best, cost[e - 1][f] + 10)
+        if (f > 0) best = minOf(best, cost[e][f - 1] + 10)
+        if (e > 0 && f > 0) best = minOf(best, cost[e - 1][f - 1] + pairCost(e - 1, f - 1))
+        cost[e][f] = best
+    }
+    var right = 0
+    val wrong = ArrayList<Pair<String, FoundSolve>>()
+    val missed = ArrayList<Pair<Int, String>>()
+    val extra = ArrayList<FoundSolve>()
+    var e = n
+    var f = m
+    while (e > 0 || f > 0) {
+        if (e > 0 && f > 0 && cost[e][f] == cost[e - 1][f - 1] + pairCost(e - 1, f - 1)) {
+            e--
+            f--
+            if (fits(e, f)) right++ else wrong.add(0, Pair(expected[e], real[f]))
+        } else if (e > 0 && cost[e][f] == cost[e - 1][f] + 10) {
+            e--
+            missed.add(0, Pair(e + 1, expected[e]))
+        } else {
+            f--
+            extra.add(0, real[f])
+        }
+    }
+    return TimesComparison(right, wrong, missed, extra, leftovers)
+}
+
 // ---- grading the reader by itself: the answer key says what the display shows right after each stop ----
 
 /** Where after a stop the display is read, in seconds: the time is still held there, because the scan itself needs about 1.5 s of hold. */
@@ -168,24 +290,16 @@ fun videoPlace(sec: Double): String {
 
 /**
  * The scan report as plain text, short enough to paste into a chat or into docs/algorithms.md § 8. Its three stages depend on each
- * other: setup ([setup] = what it said, [setupOk] = there was an engine to read with), reading ([reading]), scan ([c]).
+ * other: finding the timer ([timerOk], [timer] = what was said about it), reading ([reading]), scan ([c]).
  * [seconds] is how long the scan took, [readable] the share of sampled frames the reader could read (0..1), [app] the app version.
- * Without a setup nothing can be read or found: that is a result too (0 found), so the report says it instead of not running.
+ * Without a timer nothing can be read or found: that is a result too (0 found), so the report says it instead of not running.
  */
 fun scanReportText(
-    truth: GroundTruth, videoName: String, setupOk: Boolean, setup: String, reading: List<ReadGrade>,
+    truth: GroundTruth, videoName: String, timerOk: Boolean, timer: String, reading: List<ReadGrade>,
     c: ScanComparison, seconds: Double, readable: Double, app: String
 ): String {
-    val lines = ArrayList<String>()
-    lines.add("Scan report: $videoName" + (if (truth.timer.isNotEmpty()) " (${truth.timer})" else ""))
-    if (truth.video.isNotEmpty() && truth.video != videoName) lines.add("WARNING: the expected solves are for ${truth.video}")
-    lines.add("1. Setup: " + (if (setupOk) "" else "FAILED. ") + setup)
-    if (!setupOk) {
-        lines.add("2. Reading: not tested")
-        lines.add("3. Scan: not tested. Expected ${c.expectedCount}, found 0, missed ${c.expectedCount}")
-        lines.add("CubeCut $app")
-        return lines.joinToString("\n")
-    }
+    val lines = reportStart(truth, videoName, timerOk, timer)
+    if (!timerOk) return noTimerReport(lines, c.expectedCount, app)
     val right = reading.sumOf { it.right }
     val wrong = reading.sumOf { it.wrong.size }
     val unreadable = reading.sumOf { it.unreadable }
@@ -216,6 +330,41 @@ fun scanReportText(
     for (m in c.matches.filter { abs(it.offsetSec) > CUT_FRAME_SEC }) {
         lines.add("Cut off: ${videoPlace(m.expected.stopSec)} ${m.expected.time} by ${"%+.3f".format(m.offsetSec)} s")
     }
+    return lines.joinToString("\n")
+}
+
+private fun reportStart(truth: GroundTruth, videoName: String, timerOk: Boolean, timer: String): ArrayList<String> {
+    val lines = ArrayList<String>()
+    lines.add("Scan report: $videoName" + (if (truth.timer.isNotEmpty()) " (${truth.timer})" else ""))
+    if (truth.video.isNotEmpty() && truth.video != videoName) lines.add("WARNING: the expected solves are for ${truth.video}")
+    lines.add("1. Timer: " + (if (timerOk) "" else "NOT FOUND. ") + timer)
+    return lines
+}
+
+private fun noTimerReport(lines: MutableList<String>, expected: Int, app: String): String {
+    lines.add("2. Reading: not tested")
+    lines.add("3. Scan: not tested. Expected $expected, found 0, missed $expected")
+    lines.add("CubeCut $app")
+    return lines.joinToString("\n")
+}
+
+/** The same report for an answer key with only times: the reading and the cuts can't be graded, because no place in the video is known. */
+fun timesReportText(
+    truth: GroundTruth, videoName: String, timerOk: Boolean, timer: String, c: TimesComparison, seconds: Double, readable: Double, app: String
+): String {
+    val lines = reportStart(truth, videoName, timerOk, timer)
+    if (!timerOk) return noTimerReport(lines, c.expectedCount, app)
+    lines.add("2. Reading: not graded (list of times only)")
+    lines.add("3. Scan against the list of times (cuts not graded):")
+    lines.add(
+        "Expected ${c.expectedCount}, found ${c.right + c.wrong.size}, missed ${c.missed.size}, " +
+                "false ${c.falseSolves.size}, wrong time ${c.wrong.size}"
+    )
+    lines.add("Readable ${Math.round(readable * 100)}%, took ${"%.1f".format(seconds)} s, CubeCut $app")
+    if (c.leftovers.isNotEmpty()) lines.add("Left-over at the start (switched off): ${c.leftovers.size}")
+    for ((number, time) in c.missed) lines.add("Missed: no. $number, ${time.ifEmpty { "DNF" }}")
+    for (f in c.falseSolves) lines.add("False: ${videoPlace(f.stopSec)} ${f.timeText}")
+    for ((time, f) in c.wrong) lines.add("Wrong time: ${videoPlace(f.stopSec)} expected $time, read ${f.timeText}")
     return lines.joinToString("\n")
 }
 

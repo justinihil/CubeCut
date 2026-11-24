@@ -68,7 +68,7 @@ The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in t
 
 The owner rule "change the reader only when asked" is lifted for this version. Every change is still measured against the harness from 3.3-A.
 
-**Order (decided 2026-11-24): A → D → B → C → E → Z.** csTimer is the owner's first priority and its default font is refused at timer setup, so fonts come before accuracy. Finding the display by itself (C) is little use before its digits can be read.
+**Order (decided 2026-11-24): A → C → B → E → Z.** Finding the timer and reading any font are one phase (C). Splitting them (the old 3.3-D) made no sense: a timer is recognised by its digits, and digits are only worth reading once the timer is known.
 
 ### 3.3-A Ground-truth harness 🔶
 - The owner records reference videos for each timer:
@@ -87,13 +87,14 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 - No reference videos are recorded yet. The harness was built first, and the real-footage baseline rows are filled in as the owner records them ([algorithms § 8](algorithms.md#ground-truth-harness-33-a)).
 - The other phases wait until reference videos exist, so each change can be measured.
 - (2026-11-24) Reference videos are filmed raw, as the timers are really used. A refused setup is a result, not a reason to change the font.
-- The ML question for 3.3-D is asked when D starts.
+- (2026-11-24) A timer that can't be set up by hand (csTimer) needs **no work in the app**: the raw video and csTimer's own list of times are enough. A timer that can (QiYi, Stackmat) is also measured with the manual setup now, as the result 3.3-C must not fall below.
+- The ML question is asked only if 3.3-C fails on the reference videos without it.
 
 **Built:** `FakeDisplay` + `SolveAnalyzerScanTest` (the simulated baseline), `GroundTruth.kt` + `GroundTruthTest`, the debug *Scan report* in the editor (`ScanReport.kt`), and 1-frame buttons in the *Edit* window, so a hand-made answer key is frame-exact.
 
-**Waiting on the owner (2026-11-23):** record reference videos (checklist in [algorithms § 8](algorithms.md#ground-truth-harness-33-a)), save their reference files, and send them with the *Compare* reports. Then fill in the real-footage baseline and close 3.3-A. Set 1 (csTimer as used, easy and hard) is enough to start 3.3-D.
+**Waiting on the owner (2026-11-24):** record reference videos ([algorithms § 8](algorithms.md#ground-truth-harness-33-a)). One csTimer video with its list of times is enough to start 3.3-C. The QiYi baseline can follow, but is needed before 3.3-C changes anything for seven-segment timers.
 
-**Reworked (2026-11-24):** the first version of the report needed a working timer setup, so it couldn't test the videos that fail at setup. It now grades setup, reading and scan separately and always runs.
+**Reworked (2026-11-24):** the report first needed a working timer setup, so it couldn't test the videos that fail there. It now grades finding the timer, reading and scanning separately, always runs, and also takes a plain list of times.
 
 ### 3.3-B Scan accuracy ⬜
 - *Earlier note:* a held time misread without its last digit (`1151` while `11517` is held) should count as the same hold in `scan`. 3.3-A reproduced it: the hold often splits, and rarely the real time is lost. Un-ignore `heldTimeMissingLastDigit_isTheSameHold`.
@@ -102,15 +103,38 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 - The too-fast check stays as a safety net.
 - Start: [algorithms §1–4](algorithms.md); `SolveAnalyzer.kt`.
 
-### 3.3-C Find the display automatically (no setup) ⬜
-- Search sampled frames for display candidates, using `ShapeFinder` in `TimerReader.kt`.
-- `TimerSetupScreen` stays as a manual fallback ("Set up manually"). Ask whether to fix its missing `BackHandler` here ([known issue](known-issues.md)).
-- This replaces the need for the per-video timer columns, but keeps them for the fallback.
+### 3.3-C Find and read the timer by itself ⬜
+**Goal (owner, 2026-11-24):** import raw footage, and CubeCut finds the timer, learns how it looks and reads it. Borders, font, angle and place must not matter. No corners, no typed number. `TimerSetupScreen` stays only as a manual fallback.
 
-### 3.3-D More fonts ⬜
-- **First, an ADR.** Does a bundled, offline digit classifier count as "ML" under [ADR-0001](adr/0001-offline-classic-cv-no-ml.md)?
-- Then add readers behind the [`DisplayReader` seam](adr/0014-display-reader-seam.md), starting from the disabled `GlyphReader` ([recipe](../ARCHITECTURE.md#new-display-reader-another-font)).
-- csTimer's default look has smaller digits after the point. The segment reader measures all digits in one height band ([known issue](known-issues.md)). A per-digit band might be a small fix inside `SegmentReader`; measure it on the default-font reference videos.
+**Planned method:**
+1. **Search:** find every number-like row in frames spread over the video.
+2. **Watch:** the timer is the number that **runs, then freezes**. In one second of video it rises by 1.00; averages, session lists and scrambles don't.
+3. **Learn:** remember its place and digit shapes in this video, and use them on harder frames.
+4. **Follow:** search again when it moves or is covered.
+5. **Check:** start to stop must match the final time, which catches misreads.
+
+A timer that is hidden or shows no decimals while running weakens steps 2 and 5. Then use the number that changes once per solve.
+
+**What is shared and what isn't.** Steps 1, 2, 4 and 5, the scan and the answer keys are meant for every timer. Only the digit shapes differ: solid digits (csTimer, phone apps) and seven-segment digits (QiYi, Stackmat, GAN), whose strokes are separate pieces. Seven-segment digits should go through the existing `SegmentReader` once the place is known.
+
+**Measured with a PC prototype (2026-11-24)**, on one screenshot of csTimer's default font at a steep angle (only the digits 1, 2 and 5). It thresholds the picture, groups digit-like blobs into rows, levels them, and compares them with digits from 17 fonts. No ML:
+
+| Test | Result |
+|---|---|
+| The picture as it is | `12.25`, and no other time-like number |
+| 20 altered copies | Right number among the results in 16; nothing with the last digit covered (correct); nothing when nearly black or with heavy noise; misread as `12.15` when turned 25° |
+| Wrong extra numbers | 3 copies (such as `1.19`, `19.25`). The ao12, `13.01`, was also read in 3: reading alone can't tell which number is the timer |
+| Single digits in a font left out of the 17 | 3966 / 4080 (97.2 %); worst Courier New, 180 / 240 |
+| Drawn seven-segment digits | Without gaps, 4 of 6 right; **with gaps between the segments, 0 of 18** (nothing, or a wrong `8.98`) |
+
+Steps 2 to 5 and the speed on a phone are untested. The scripts are in `C:\CubeCutRef\prototype`.
+
+**Rules:**
+- Ask about ML ([ADR-0001](adr/0001-offline-classic-cv-no-ml.md)) only if this fails on the reference videos. New digit shapes go behind the [`DisplayReader` seam](adr/0014-display-reader-seam.md).
+- Digit templates must come from fonts we may bundle (the prototype used Windows fonts).
+- No reference video may get worse, including the ones measured with a manual setup.
+- Decide with the owner what the app shows when it isn't sure which number is the timer, and whether to fix `TimerSetupScreen`'s missing `BackHandler` here ([known issue](known-issues.md)).
+- The per-video timer columns stay for the fallback.
 
 ### 3.3-E Penalty marks and long times on the display ⬜
 - Read +2 and DNF marks next to the time, and times of one hour or more.

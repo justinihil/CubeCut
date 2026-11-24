@@ -97,7 +97,7 @@ class GroundTruthTest {
         val c = compareScan(g.solves, listOf(found(10.0, "9.000"), found(70.0, "8.000")))
         val reading = listOf(ReadGrade(g.solves[0], 5, listOf("9.001"), 0), ReadGrade(g.solves[1], 0, emptyList(), 6))
         val text = scanReportText(g, "b.mp4", true, "Timer saved.", reading, c, 12.34, 0.8, "3.3.0")
-        assertTrue(text, text.contains("1. Setup: Timer saved."))
+        assertTrue(text, text.contains("1. Timer: Timer saved."))
         assertTrue(text, text.contains("2. Reading: 5 right, 1 wrong, 6 unreadable of 12 held frames"))
         assertTrue(text, text.contains("Misread: 0:10.00 9.000 as 9.001"))
         assertTrue(text, text.contains("Never read: 0:40.00 12.412"))
@@ -112,9 +112,85 @@ class GroundTruthTest {
     fun reportText_aRefusedSetupIsAResult() {
         val g = GroundTruth("a.mp4", "csTimer (PC)", 100.0, listOf(ExpectedSolve(10.0, "9.00"), ExpectedSolve(40.0, "12.25")))
         val text = scanReportText(g, "a.mp4", false, "Couldn't find digit shapes", emptyList(), compareScan(g.solves, emptyList()), 0.0, 0.0, "3.3.0")
-        assertTrue(text, text.contains("1. Setup: FAILED. Couldn't find digit shapes"))
+        assertTrue(text, text.contains("1. Timer: NOT FOUND. Couldn't find digit shapes"))
         assertTrue(text, text.contains("2. Reading: not tested"))
         assertTrue(text, text.contains("Expected 2, found 0, missed 2"))
+    }
+
+    @Test
+    fun timesList_readsCsTimersExport() {
+        // the columns and quoting of csTimer's exportCSV
+        val csv = "\uFEFFNo.;Time;Comment;Scramble;Date;P.1\r\n" +
+                "1;12.25;;R U R';2026-11-24 06:00:00;12.25\r\n" +
+                "2;14.31+;\"lockup; then\nsaid \"\"no\"\"\";F2 B;2026-11-24 06:01:00;12.31\r\n" +
+                "3;DNF(9.87);;L D;2026-11-24 06:02:00;9.87\r\n" +
+                "4;1:02.34;;L D;2026-11-24 06:04:00;1:02.34\r\n"
+        assertEquals(listOf("12.25", "12.31", "9.87", "1:02.34"), parseTimesList(csv))
+    }
+
+    @Test
+    fun timesList_multiPhaseUsesTheWholeTime() {
+        val csv = "No.;Time;Comment;Scramble;Date;P.1;P.2\r\n1;14.50+;;;;5.00;7.50\r\n2;DNF(12.00);;;;5.00;7.00"
+        val times = parseTimesList(csv)
+        assertTrue(times.toString(), sameTime("12.50", times[0]) && sameTime("12.00", times[1]))
+    }
+
+    @Test
+    fun timesList_readsOneTimePerLine() {
+        assertEquals(listOf("12.25", "", "9.87"), parseTimesList("12.25\n\nDNF\n 9.87 \n"))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun timesList_refusesALineItCannotRead() {
+        parseTimesList("12.25\nhello\n9.87")
+    }
+
+    @Test
+    fun compareTimes_linesUpInOrder() {
+        val expected = listOf("10.00", "11.00", "12.00", "13.00", "")
+        val f = listOf(found(10.0, "10.00"), found(50.0, "12.00"), found(70.0, "13.07"), found(90.0, "8.88"))
+        val c = compareTimes(expected, f)
+        assertEquals(3, c.right)                                       // 10.00, 12.00 and the DNF (any time fits)
+        assertEquals(listOf(2 to "11.00"), c.missed)
+        assertEquals(listOf("13.00"), c.wrong.map { it.first })
+        assertEquals(0, c.falseSolves.size)
+        assertEquals(5, c.expectedCount)
+    }
+
+    @Test
+    fun compareTimes_countsFalseSolvesAndLeavesOutLeftovers() {
+        val left = found(0.0, "12.41", include = false, note = SolveAnalyzer.LEFTOVER_NOTE_START + " when the video began")
+        val c = compareTimes(listOf("10.00", "11.00"), listOf(left, found(10.0, "10.00"), found(20.0, "3.00"), found(50.0, "11.00")))
+        assertEquals(2, c.right)
+        assertEquals(listOf("3.00"), c.falseSolves.map { it.timeText })
+        assertEquals(1, c.leftovers.size)
+        assertEquals(0, c.missed.size)
+    }
+
+    @Test
+    fun compareTimes_nothingFound_isAllMissed() {
+        assertEquals(2, compareTimes(listOf("10.00", "11.00"), emptyList()).missed.size)
+    }
+
+    @Test
+    fun compareTimes_onACleanDisplay_isAllRight() {
+        val d = FakeDisplay.session(count = 12, seed = 3)
+        val c = compareTimes(d.expected.map { it.time }, d.scan().solves)
+        assertEquals(12, c.right)
+        assertEquals(0, c.falseSolves.size)
+    }
+
+    @Test
+    fun timesReportText_saysWhatItCannotGrade() {
+        val g = GroundTruth("", "", 100.0, emptyList(), timesOnly = listOf("10.00", "11.00"))
+        val c = compareTimes(g.timesOnly, listOf(found(10.0, "10.00")))
+        val text = timesReportText(g, "a.mp4", true, "Set up by hand.", c, 1.0, 0.5, "3.3.0")
+        assertTrue(text, text.contains("cuts not graded"))
+        assertTrue(text, text.contains("Expected 2, found 1, missed 1, false 0, wrong time 0"))
+        assertTrue(text, text.contains("Missed: no. 2, 11.00"))
+        val none = timesReportText(g, "a.mp4", false, "No timer.", compareTimes(g.timesOnly, emptyList()), 0.0, 0.0, "3.3.0")
+        assertTrue(none, none.contains("1. Timer: NOT FOUND. No timer."))
+        assertTrue(none, none.contains("Expected 2, found 0, missed 2"))
     }
 
     @Test

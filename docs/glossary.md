@@ -27,8 +27,8 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Not found again** | An untouched cut that the latest Find solves didn't see | `NOT_FOUND_AGAIN_NOTE` (`mergeRescan`) |
 | **Find solves / scan** | Reading the timer along the whole video to find the cuts | `runFindSolves`, `SolveAnalyzer.analyze` / `scan`, `analyzing` flag |
 | **Re-scan** | Find solves on a video that already has cuts. The results are merged | `mergeRescan`, `RescanResult` |
-| **Ground truth / reference video** | (3.3-A) A video whose correct solves were fixed by hand, and the JSON file listing them | `GroundTruth`, `ExpectedSolve`, `src/test/resources/groundtruth/` |
-| **Scan report** | (3.3-A, debug builds) Grades timer setup, reading and Find solves against the ground truth without changing the list. Runs even when the setup is refused | `ScanReportHost`, `runScanReport`, `runScanReportStages`, `gradeReading`, `compareScan`, `scanReportText` |
+| **Ground truth / reference video** | (3.3-A) A video whose correct solves are known: a JSON file fixed by hand, or only the times in order (csTimer's export) | `GroundTruth`, `ExpectedSolve`, `parseTimesList`, `src/test/resources/groundtruth/` |
+| **Scan report** | (3.3-A, debug builds) Grades finding the timer, reading and Find solves against the ground truth without changing the list. Runs even when there is no timer | `ScanReportHost`, `runScanReport`, `runScanReportStages`, `gradeReading`, `compareScan`, `compareTimes`, `scanReportText`, `timesReportText` |
 | **Set up timer / timer setup** | Marking the display's corners and typing the number shown, so the reader can learn the layout | `TimerSetupScreen`, `TimerVision.createSetup`, `TimerSetup`, `saveTimerSetup` |
 | **Read timer here** | A one-off read at the playhead, with the debug picture | `engine.readFrame` in `EditorScreen` |
 | **Exported** | A file exists in `Movies/CubeCut`, is not trashed, and opens | Table `exports`, `ExportedClip`, `recordExports` |

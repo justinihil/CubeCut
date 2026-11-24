@@ -56,7 +56,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // (3.3-A) The debug-only scan report, shown in the editor of debug builds only (BuildConfig.DEBUG). It runs Find solves again WITHOUT
-// touching the list, and compares what it finds with the expected solves: the list you fixed by hand, or a ground-truth file.
+// touching the list, and compares what it finds with the expected solves: the list you fixed by hand, a ground-truth file, or a plain list
+// of times (csTimer's export).
 // It can also save the list as a ground-truth file for the repo (app/src/test/resources/groundtruth/). Model and maths: GroundTruth.kt.
 
 /** One finished report: the text shown and copied. */
@@ -65,8 +66,8 @@ class ScanReportResult(val text: String)
 /**
  * Everything the scan report needs from the editor. [listSolves] are the expected solves from the editor's list right now.
  * [loadAttempt] gives the video's timer setup as last tried, also one that was refused (null = never tried).
- * [canRun] is false while a scan, an import or a timer setup is running. A timer that couldn't be set up does NOT stop the report: "setup
- * failed" is the result then. [onRun] starts it (the editor owns the `analyzing` guard); the editor then sets [result].
+ * [canRun] is false while a scan, an import or a timer setup is running. A timer that can't be found does NOT stop the report: that
+ * is the result then. [onRun] starts it (the editor owns the `analyzing` guard); the editor then sets [result].
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -115,7 +116,9 @@ fun ScanReportHost(
                 val truth = withContext(Dispatchers.IO) {
                     val text = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
                         ?: throw java.io.IOException("couldn't open the file")
-                    parseGroundTruth(text)
+                    // a ground-truth file is JSON; anything else has to be a list of times
+                    if (text.trimStart().startsWith("{")) parseGroundTruth(text)
+                    else GroundTruth("", "", durationSec, emptyList(), timesOnly = parseTimesList(text))
                 }
                 if (canRun) {
                     onClose()
@@ -141,8 +144,9 @@ fun ScanReportHost(
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     BulletLines(
                         listOf(
-                            "Tries the timer setup, the reading and Find solves. Your list doesn't change.",
-                            "Works when the timer can't be set up too: that is the result then."
+                            "Finds the timer, reads it and finds solves. Your list doesn't change.",
+                            "No timer setup, or a refused one? The report counts 0 found.",
+                            "A file can be a reference file or csTimer's CSV export."
                         )
                     )
                     Spacer(Modifier.height(10.dp))
@@ -152,7 +156,7 @@ fun ScanReportHost(
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Compare with the list ($count solves)") }
                     OutlinedButton(
-                        onClick = { message = ""; openFile.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) },
+                        onClick = { message = ""; openFile.launch(arrayOf("*/*")) },
                         enabled = canRun,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Compare with a file...") }
@@ -217,25 +221,33 @@ fun lastSetupAttempt(context: Context, footageId: Long): SetupAttempt? {
 }
 
 /**
- * Runs the report's three stages and returns its text: sets the timer up from scratch as [truth] says (so a changed reader is tried on the
- * same display), reads the held times, then scans. Blocking; run it on Dispatchers.Default. Its engine is its own and is freed here.
+ * Runs the report's three stages and returns its text: finds the timer, reads the held times, then scans. Until the app can find a timer
+ * by itself (3.3-C), the timer is set up from scratch as [truth] says, so a changed reader is tried on the same display.
+ * Blocking; run it on Dispatchers.Default. Its engine is its own and is freed here.
  */
 fun runScanReportStages(
     context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
     onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
 ): String {
-    fun failed(why: String) = scanReportText(truth, videoName, false, why, emptyList(), compareScan(truth.solves, emptyList()), 0.0, 0.0, app)
-    val attempt = truth.setup ?: return failed("No timer setup was tried on this video. Try one first (it may be refused), then run this again.")
+    val timesOnly = truth.timesOnly.isNotEmpty()
+    fun failed(why: String) =
+        if (timesOnly) timesReportText(truth, videoName, false, why, compareTimes(truth.timesOnly, emptyList()), 0.0, 0.0, app)
+        else scanReportText(truth, videoName, false, why, emptyList(), compareScan(truth.solves, emptyList()), 0.0, 0.0, app)
+    val attempt = truth.setup ?: return failed("CubeCut can't find a timer by itself yet (3.3-C), and none was set up by hand.")
     val frame = grabFrame(context, uri, attempt.frameMs) ?: return failed("No picture at ${videoPlace(attempt.frameMs / 1000.0)}.")
     val res = TimerVision.createSetup(frame, attempt.corners.toDoubleArray(), attempt.typed)
     val setup = res.setup
     val ref = res.reference
-    if (setup == null || ref == null) return failed(res.message)
+    if (setup == null || ref == null) return failed("The setup by hand was refused: " + res.message)
     val engine = TimerEngine(setup, ref)
     try {
         val started = System.currentTimeMillis()
         val scan = SolveAnalyzer.analyze(context, uri, durationMs, engine, onProgress, isCancelled)
         val seconds = (System.currentTimeMillis() - started) / 1000.0
+        val found = "Set up by hand. " + res.message
+        if (timesOnly) {
+            return timesReportText(truth, videoName, true, found, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
+        }
         engine.forgetPosition()
         val source = openFrameSource(context, uri, durationMs)
         val reading = try {
@@ -247,7 +259,7 @@ fun runScanReportStages(
         } finally {
             source.close()
         }
-        return scanReportText(truth, videoName, true, res.message, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
+        return scanReportText(truth, videoName, true, found, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
     } finally {
         engine.release()
     }

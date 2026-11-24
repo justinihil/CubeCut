@@ -13,7 +13,7 @@ CubeCut processes personal practice videos. The owner set hard requirements: run
 
 ## Consequences
 - Privacy is simple: nothing leaves the phone, and the README says so.
-- Only seven-segment-style fonts are readable. Supporting another font needs a new `DisplayReader` ([ADR-0014](0014-display-reader-seam.md)). The placeholder `GlyphReader` comments suggest a small TFLite classifier, which would break this rule. TODO(owner): decide whether a bundled, offline digit classifier would count as "ML" under this rule before building it ([roadmap](../roadmap.md) phases 3.3-C and 3.3-D).
+- Only seven-segment-style fonts are readable. Supporting another font needs a new `DisplayReader` ([ADR-0014](0014-display-reader-seam.md)). The placeholder `GlyphReader` comments suggest a small TFLite classifier, which would break this rule. TODO(owner): decide whether a bundled, offline digit classifier would count as "ML" under this rule before building it. Asked only if [roadmap](../roadmap.md) phase 3.3-C fails without one.
 - Hard cases are handled by the review UI (edit, add a missed solve, checks) rather than by endless tuning.
 
 ## Alternatives considered

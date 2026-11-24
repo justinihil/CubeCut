@@ -198,43 +198,59 @@ The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or 
 
 So the late cuts come from unreadable frames, and misreads add none. The few early ones also happen without noise: a running frame shortly before the stop can differ from the final time by one 1↔4 or 1↔7, which `similar` accepts. Part of the late error can't be avoided when the first frame itself is unreadable. (An earlier version of this page blamed misreads for all of them. That was never measured and was wrong.)
 
-**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. TODO(owner): no reference videos recorded yet (2026-11-24). One row per video, from its report; a video whose setup fails counts as 0 found:
+**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. TODO(owner): no reference videos recorded yet (2026-11-24). One row per video, from its report; a timer that isn't found counts as 0 found:
 
-| Video (timer) | Setup | Reading: right / wrong / unreadable | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
+| Video (timer) | Timer found | Reading: right / wrong / unreadable | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 
-**How it works.** Your hand-fixed list of a video is the answer key, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
-1. **Setup:** the timer is set up from scratch on the saved picture, corners and typed number. A refused setup is the result then, and the report still runs.
+**How it works.** An answer key says what a video should give, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
+1. **Timer:** was it found? Until 3.3-C the app can't search by itself, so this is the manual setup, tried again from scratch. None, or a refused one, is *NOT FOUND*, and the report still runs.
 2. **Reading:** the display is read 6 times in the 1.1 s after every expected stop (`gradeReading`): right, wrong or unreadable. Reset displays are left out.
 3. **Scan:** Find solves from scratch: found, missed, false, wrong times, off-frame cuts (`compareScan`).
 
+**Two kinds of answer key:**
+
+| | List of times (`compareTimes`) | Reference file (`compareScan`) |
+|---|---|---|
+| Comes from | csTimer's CSV export, or a text file with one time per line | The editor's list, every solve checked by hand |
+| Work for you | None | Minutes to an hour |
+| Grades | Found, missed, false, wrong time | The same, plus reading and the exact cut frame |
+| Use it for | Timers that can't be set up (csTimer) | Timers that can (QiYi, Stackmat); csTimer after 3.3-C |
+
+A list of times has no places, so it is lined up in order. A missed solve right next to a false one counts as one wrong time. Nothing CubeCut found goes into it, so it also catches solves the scan always misses.
+
 **Recording reference videos.** Film the timers **as they are really used**. Don't change a font or a display so that CubeCut can read it: what fails is what we need to know.
-- 1080p at 60 fps, with the phone on a stand (a screen gives the tracker little to follow);
-- the whole display in frame (unless that's what the video tests);
-- 10–15 solves (5–10 min), raw and unedited, with normal pauses, scrambles and fumbles;
+- 1080p at 60 fps, with the phone on a stand for most videos;
+- raw and unedited, 10–15 solves (5–10 min), with normal pauses, scrambles and fumbles;
+- for csTimer: start a new session first, so its list holds only the filmed solves;
 - what's special about it in the file name, e.g. `ref_cstimer_default_dim_01.mp4`.
 
-**Where the videos live.** On the phone (don't delete them: every change is re-measured there), plus a copy in a PC folder outside the repo, `C:\CubeCutRef`, where frames are looked at while building readers. **Never committed.**
+**Where the videos live.** On the phone (don't delete them: every change is re-measured there), plus a copy in a PC folder outside the repo, `C:\CubeCutRef`, with the lists of times. **Never committed.**
 
 | Set | Videos | For |
 |---|---|---|
-| **1 (first)** | csTimer as you use it: **easy** (good light, straight on, hands clear, mouse pointer off the digits); **hard** (dim, steep angle, hands over some stops); a phone timer app (note its name) | 3.3-D, then B |
-| 2 | Stackmat, GAN, QiYi; one with the camera moved mid-session | Seven-segment displays; shape tracking |
-| 3 | **Edge cases** on any timer: a time already showing at the start, holds over 10 s, many 4s and 7s, a quick reset; glare; moiré / flicker | 3.3-B |
-| 4 | The display in different places and sizes in the frame; +2 / DNF marks on the display; a solve over a minute; a mixed-puzzle session | 3.3-C, 3.3-E |
+| **1 (first)** | csTimer as you use it: **easy** (good light, straight on) and **hard** (dim, steep angle, hands over some stops) | 3.3-C |
+| **2** | QiYi as you use it: easy and hard, with the manual setup | The result 3.3-C must not fall below; seven-segment digits |
+| 3 | A phone timer app (note its name), Stackmat, GAN; one video with the camera moved mid-session | 3.3-C |
+| 4 | **Edge cases** on any timer: a time already showing at the start, holds over 10 s, many 4s and 7s, a quick reset; glare; moiré / flicker | 3.3-B |
+| 5 | The display in different places and sizes in the frame; +2 / DNF marks on the display; a solve over a minute; a mixed-puzzle session | 3.3-C, 3.3-E |
 
-**Making a reference** (debug build: run from Android Studio, or `./gradlew installDebug`):
-1. Import the video as *A session*.
-2. **Try** the timer setup on a frame right after a solve: dots on the display's corners, the number typed as shown. If it's refused, tap *Cancel*; the attempt is remembered for the report.
-3. If the setup worked, run *Find solves*.
-4. Make the list exactly right. Check **every** solve, not only the flagged ones:
-   - delete false solves; add missed ones (*Add a missed solve* at the first frame of the final time). With a refused setup, add them all this way;
+**Timer that can't be set up by hand (csTimer):** nothing to do in the app.
+1. Export the list: csTimer's session manager → `...` on the session → *Export CSV*. The whole session is exported.
+2. Copy the video and the CSV to `C:\CubeCutRef`, with the same name. Its "before" row is *not found*, 0 found.
+
+**Timer that can be set up by hand (QiYi, Stackmat):** debug build (run from Android Studio, or `./gradlew installDebug`).
+1. Import the video as *A session*, set up the timer with the four dots as usual, and run *Find solves*.
+2. Make the list exactly right. Check **every** solve, not only the flagged ones, and the gaps between them:
+   - delete false solves; add missed ones (*Add a missed solve* at the first frame of the final time);
    - correct times in *Edit*;
    - put each cut on the **first frame that shows the final time**: in *Edit*, use the 0.5 s / 0.1 s buttons, then finish with **◂ 1 frame / 1 frame ▸**. Leave cuts that are already on the right frame alone.
-5. *Scan report (debug)* → pick the timer → *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`; `groundTruthFiles_areValid` checks it on every test run.
-6. *Scan report (debug)* → *Compare with the list* → *Copy*. This is the video's "before" row in the table above. Don't change the video's list afterwards.
+3. *Scan report (debug)* → pick the timer → *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`; `groundTruthFiles_areValid` checks it on every test run.
+4. *Scan report (debug)* → *Compare with the list* → *Copy*. This is the video's "before" row in the table above. Don't change the video's list afterwards.
 
-**After every scan or reader change:** install the new debug build, open each reference video, run *Scan report (debug)* → *Compare with the list* (or *Compare with a file…* after a reinstall or on another phone) → *Copy*. The setup is tried again by itself. A change ships only if no video gets worse. 3.3-Z writes the before and after numbers here.
+The answer key stays valid however the timer is found. The dots become a fallback after 3.3-C, and show whether the app found the right place by itself.
+
+**After every scan or reader change:** install the new debug build, open each reference video, run *Scan report (debug)* → *Compare with the list* (or *Compare with a file…* for a list of times, after a reinstall, or on another phone) → *Copy*. A change ships only if no video gets worse. 3.3-Z writes the before and after numbers here.
 
 **File format** (`GroundTruth.kt`; `format` 1). `stopSec` is the cut to the millisecond and `time` is what the timer showed (`""` = not checked). Left-overs are never listed.
 ```json
