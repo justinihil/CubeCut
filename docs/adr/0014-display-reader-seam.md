@@ -1,6 +1,6 @@
 # ADR-0014: Digit reading behind a DisplayReader seam; seven-segment only for now
 
-- **Status:** Accepted (documented retroactively)
+- **Status:** Accepted (documented retroactively). Solid digits no longer go through it: [ADR-0016](0016-find-the-timer-without-ml.md)
 - **Date:** 1.1.0
 
 ## Context

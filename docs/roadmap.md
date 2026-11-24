@@ -185,7 +185,7 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 1. ✅ Solid-digit reader (`SolidDigits.kt`), not used by the app yet.
 2. ✅ Finder and learner (`TimerFinder.kt`), shown only in the debug scan report. On the owner's phone, video 01 gave the same result as on the PC, in 48 s; made faster since.
 3. ✅ Scan (`FinderScan.kt`): frame-by-frame cuts, the clock check, a time that reappears. Only for timers the finder found, and only in the debug scan report. Phone, video 01: 25 of 25, no false solves or wrong times, 2 min for 21 min of video ([numbers](algorithms.md#3-reading-the-timer)).
-4. ⬜ *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix.
+4. 🔶 *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix. Built; the phone test is waiting on the owner. Decided (owner, 2026-11-24): the Setup box says CubeCut finds the timer, with *Set up by hand* as a small button; only the place of a found timer is remembered; *Read timer here* only after a setup by hand; *Find it by itself again* drops that setup; *Couldn't find the timer* shows what to try and a *Set up by hand* button.
 5. ⬜ Follow a camera that moves.
 
 Seven-segment timers come after the QiYi baseline.

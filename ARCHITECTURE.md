@@ -23,6 +23,7 @@ flowchart TB
   end
   subgraph Domain["Pure logic (no Android UI)"]
     SA["SolveAnalyzer.kt<br/>scan · vote · first frame"]
+    TF["SolidDigits.kt · TimerFinder.kt · FinderScan.kt<br/>find, learn, scan without a setup"]
     RM["RescanMerge.kt<br/>merge · checks"]
     CE1["ClipExporter.kt<br/>CutItem · computeClips"]
   end
@@ -74,7 +75,7 @@ stateDiagram-v2
   ClipsTab --> Editor: Import video (OpenDocument)
   Editor --> FootageTab: Gallery button / Back (flashFootage)
   Editor --> ClipViewer: View on a card (ui.openClip)
-  Editor --> TimerSetup: Set up timer (setupFrame != null)
+  Editor --> TimerSetup: Set up by hand (setupFrame != null)
   TimerSetup --> Editor: Save / Cancel
 ```
 The Gallery and Editor both open `AboutDialog` from the credit line. The Gallery's ⋮ menu opens Settings, Sort, Filter and Recently deleted. Each dialog is a boolean or nullable "target" flag in the screen that owns it.
@@ -82,6 +83,7 @@ The Gallery and Editor both open `AboutDialog` from the credit line. The Gallery
 ## Data flow
 
 ### Find solves
+This is the way with a timer set up **by hand**. Without one, `runFindSolves` calls `analyzeByItself` (`AutoScan.kt`) instead: `findTimer` → `scanFoundTimer` on one frame source, no engine. It can end with a question (`TimerQuestionDialog`) or *Couldn't find the timer* (`NeedsUser`). From `mergeRescan` on both ways are the same.
 ```mermaid
 sequenceDiagram
   participant E as EditorScreen.runFindSolves
@@ -141,7 +143,8 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | I want to change… | Look at |
 |---|---|
 | How solves are detected, voting, first-frame search | `SolveAnalyzer.scan` / `pickWinner` / `firstAppearance`; constants at the top of `SolveAnalyzer.kt`. Background in [algorithms](docs/algorithms.md#1-finding-solves) |
-| How digits are read; supported fonts | `TimerVision` in `TimerReader.kt`; `DisplayReaders.kt` (add a reader here) |
+| How digits are read; supported fonts | Found timers: `SolidDigits.kt`. Set up by hand: `TimerVision` in `TimerReader.kt`, `DisplayReaders.kt` |
+| Finding the timer without a setup; the question which one | `TimerFinder.kt`, `FinderScan.kt`; `AutoScan.kt` (glue and dialog); `SessionStore.saveFoundTimer` / `timerPlaceOf` |
 | Timer setup screen and learning | `TimerSetupScreen.kt` (UI); `TimerVision.createSetup` (learning); `SessionStore.saveTimerSetup` / `timerCornersOf` (persistence) |
 | Where frames come from, decoder speed | `FrameSource.kt` (`openFrameSource`, `calibrate`) |
 | Clip start/end, scramble, buffers | `computeClips` and `parseTimeSeconds` in `ClipExporter.kt`; one clip's own buffers: `PadEditor` (`ClipSettings.kt`) in the Edit window and the viewer sheet (`ClipViewer.setPads`, then *Re-export now?* and the old file's trash warning) |
@@ -177,7 +180,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 ### New full-screen view or screen
 There is no router. Pick the composable that owns the context, either `GalleryScreen` or `EditorScreen`, and add a nullable state (`var x by remember { mutableStateOf<T?>(null) }`). Draw the view as an `if (x != null)` overlay at the end of the screen's root `Box`, and give it a `BackHandler` that clears the state. Copy `ClipViewer` (`ui.detail`) or `TimerSetupScreen` (`setupFrame`).
 - A view that must survive leaving the Gallery belongs in `GalleryUiState`, not `remember`.
-- Without its own `BackHandler`, Back falls through to the screen underneath. `TimerSetupScreen` currently has this bug, see [known-issues](docs/known-issues.md).
+- Without its own `BackHandler`, Back falls through to the screen underneath. `TimerSetupScreen` has one.
 - If the view starts work on the video or engine, gate it on `analyzing` (invariant 1).
 
 ### New dialog

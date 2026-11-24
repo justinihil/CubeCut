@@ -40,7 +40,7 @@ interface DisplayReader {
     /** Saved inside the layout (DigitLayout.readerId). Never change an id once it has shipped. */
     val id: String
 
-    /** false = skipped everywhere (used by readers that are not built yet). */
+    /** false = skipped everywhere. */
     val available: Boolean
 
     /**
@@ -61,7 +61,7 @@ interface DisplayReader {
 
 object DisplayReaders {
     /** Order matters: cheapest / most reliable first. Add new readers here. */
-    val all: List<DisplayReader> = listOf(SegmentReader, GlyphReader)
+    val all: List<DisplayReader> = listOf(SegmentReader)
 
     /** The reader a saved layout asks for. Falls back to the segment reader if that id is unknown or not available. */
     fun byId(id: String): DisplayReader = all.firstOrNull { it.id == id && it.available } ?: SegmentReader
@@ -78,33 +78,4 @@ object SegmentReader : DisplayReader {
     override fun read(th: Bin, l: DigitLayout): String? = TimerVision.readBin(th, l)
     override fun learnUnverified(gray: Mat, q: DoubleArray, typed: String): DigitLayout? =
         TimerVision.learn(gray, q, typed, true)
-}
-
-/**
- * Reader 2 (approach 2, NOT BUILT YET): any font. Placeholder so the rest of the app is already wired for it.
- *
- * To build it later, only this object (plus a model file) needs to change:
- *
- *  1. Set [available] to true.
- *  2. learn(): find the digit boxes without assuming even spacing (connected components on the black-and-white
- *     picture instead of TimerVision.groups, because proportional fonts have a narrow "1"), run the glyph model on
- *     each box, and accept only if the result equals the digits in [typed]. Reuse TimerVision.canvasSize / prep /
- *     autoBand for the straightening and the digit band - they don't depend on the font.
- *  3. Return DigitLayout(invert, shear, bandTop, bandBottom, digitW, offsets = IntArray(0), canvasW, canvasH,
- *     decimals, readerId = "glyph", readerData = "<model name or version>"). Unused numbers can be 0 / empty.
- *     The layout itself is not saved: SessionStore keeps the corners and the typed number per video, and learn() runs again
- *     when the video is opened, so readerData is worked out afresh each time.
- *  4. read(): same segmentation, run the model, return the digits. Return null whenever any glyph is unsure
- *     (the vote in SolveAnalyzer relies on "null when unsure" rather than a wrong guess).
- *  5. If the model works better on grayscale than black-and-white, add a grayscale variant of TimerVision.prep
- *     (same warp / contrast / un-lean steps, stop before the threshold) and pass it to read() as a second parameter.
- *
- * The expected model: a small TFLite digit classifier (0-9) trained on digits rendered from many fonts, with blur,
- * noise and skew added. Keep it in app/src/main/assets and load it lazily the first time learn() or read() runs.
- */
-object GlyphReader : DisplayReader {
-    override val id = "glyph"
-    override val available = false
-    override fun learn(gray: Mat, q: DoubleArray, typed: String): DigitLayout? = null
-    override fun read(th: Bin, l: DigitLayout): String? = null
 }

@@ -89,6 +89,33 @@ class TimerFinderTest {
         assertNull("${r.notes}", r.timer)
     }
 
+    /** A second timer runs along (like a QiYi linked to csTimer), drawn [scale] times the size of the first. */
+    private fun withSecond(t: Double, scale: Double): GrayPic = pictures.getOrPut("${shown(t)}/$scale") {
+        val second = shown(t).let { if (it.contains('.')) it else "0.00" }
+        DrawnTime.Canvas(420, 240).put(shown(t), "roboto Regular", 60.0, 30.0, 1.0).put(second, "lato Regular", 60.0, 150.0, scale).pic()
+    }
+
+    @Test
+    fun twoNumbersOfTheSameSizeRun_itAsks_andTakesTheAnswer() {
+        val r = findTimer({ t -> withSecond(t, 0.85) }, duration, fonts)
+        assertNull(r.timer)
+        assertEquals("${r.notes}", 2, r.choices.size)
+        assertTrue(r.choices[0].box.bottom <= r.choices[1].box.top)
+        for (c in r.choices) {
+            val chosen = findTimer({ t -> withSecond(t, 0.85) }, duration, fonts, near = c.box)
+            assertNotNull("${chosen.notes}", chosen.timer)
+            val n = chosen.timer!!.numbers
+            assertTrue("$n for ${c.box}", n.top < c.box.bottom && n.bottom > c.box.top && n.bottom - n.top < 80)
+        }
+    }
+
+    @Test
+    fun aMuchSmallerSecondTimer_isNoQuestion() {
+        val r = findTimer({ t -> withSecond(t, 0.45) }, duration, fonts)
+        assertTrue(r.choices.isEmpty())
+        assertTrue("${r.timer?.numbers}", r.timer!!.numbers.bottom < 130)
+    }
+
     @Test
     fun noPicture_isNotFound() {
         assertNull(findTimer({ null }, 60.0, fonts).timer)

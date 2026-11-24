@@ -33,9 +33,9 @@ erDiagram
     real before_pad "default 2.5"
     real after_pad "default 2.5"
     int scramble_all "default 1"
-    int timer_frame_ms "v3; -1 = never set up"
+    int timer_frame_ms "v3; -1 = not set up by hand"
     text timer_corners "v3; 8 doubles, comma separated"
-    text timer_typed "v3"
+    text timer_typed "v3; '' = not set up by hand"
     int trashed_ms "v4; 0 = not in trash"
     text puzzle "v7; '' = not tagged"
     text category "v7; '' = not tagged"
@@ -112,6 +112,10 @@ There is no `onDowngrade`, so installing an older APK over a newer database cras
 3. same `size_bytes` + `duration_ms` (skipped if the size is unknown), so a renamed file is still recognised.
 
 On a match it refreshes the stored uri, name and size, and returns `isNew = false`. `findKnown` applies the same rules without changing anything. Both *Import video* buttons call it first, and a known video shows *Imported before* (*Open saved* / *Cancel*) before `openOrCreate` runs, so Cancel leaves no trace. Opening a session from the Gallery doesn't ask. `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
+
+## The timer columns
+
+`timer_corners` with a typed number is a setup **by hand**: it is set up again when the video is opened (`timerCornersOf`). `timer_corners` with an empty `timer_typed` and `timer_frame_ms` −1 is where CubeCut **found** the timer by itself (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` never overwrites a setup by hand. What the finder learned isn't stored; every scan learns it again.
 
 ## How exports link to cuts
 

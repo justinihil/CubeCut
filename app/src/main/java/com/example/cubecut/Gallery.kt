@@ -1847,7 +1847,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     } else if (d.footage.isEmpty()) {
                         InfoNote(
                             title = "Nothing here yet",
-                            text = "Tap Import video, set up the timer and press Find solves. Every session you scan is kept here.",
+                            text = "Tap Import video, then press Find solves. Every session you scan is kept here.",
                             modifier = Modifier.padding(12.dp)
                         )
                     } else if (page == 0) {

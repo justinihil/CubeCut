@@ -92,9 +92,9 @@ For each frame:
 6. **Classify.** Seven-segment fill fractions decide the digit. Narrow cells are 1, 7 (thin top bar) or a 4 with faded left strokes. A missing inner digit gets one more, more sensitive look.
 7. If any digit is unclear, the whole frame returns `null`.
 
-The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](adr/0014-display-reader-seam.md)). `SegmentReader` (id `"segment"`) is the only working reader. `GlyphReader` (id `"glyph"`, `available = false`) is a placeholder for any-font reading.
+The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](adr/0014-display-reader-seam.md)). `SegmentReader` (id `"segment"`) is the only reader behind it.
 
-**Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A separate reader that needs no display position. It isn't used by *Find solves* yet.
+**Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A separate reader that needs no display position. *Find solves* uses it on every video without a setup by hand (`analyzeByItself` in `AutoScan.kt`).
 1. Black-and-white by comparing each pixel with the average around it (`SEARCH_BLOCKS`, three sizes), for light and dark digits.
 2. Joined blobs of digit size are chained into rows; a row needs exactly one decimal point.
 3. The row's slope is undone, and each blob is scaled to 24 × 28 and compared with example digits. **All digits of a row lean the same way**, so the lean that suits the whole row counts.
@@ -102,14 +102,14 @@ The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](a
 
 The examples come from 11 open fonts, or only from the video itself once all ten digits were learned ([ADR-0016](adr/0016-find-the-timer-without-ml.md)). Measured on 150 whole frames of held times from the three csTimer videos, without csTimer's look-alike font and without a position: 150 right, about 80 ms per frame on a PC (`ReferenceFramesTest`).
 
-**Finding the timer** (`TimerFinder.kt`, 3.3-C; only the debug scan report uses it so far). Pure logic over "the picture at second t":
-1. **Search** places spread over the video, halving the gaps. A run is 4 pictures 0.5 s apart in which a number rises by 0.5 each time. After 3 runs of the same number it stops; the **biggest** running number is the timer.
+**Finding the timer** (`TimerFinder.kt`, 3.3-C). Pure logic over "the picture at second t":
+1. **Search** places spread over the video, halving the gaps. A run is 4 pictures 0.5 s apart in which a number rises by 0.5 each time. After 3 runs of the same number it stops; the **biggest** running number is the timer. If a second number at least 0.6 times as tall ran next to it at two places, CubeCut asks (`FinderResult.choices`); the answer comes back as `near`. The whole picture is searched at half size first, then, if nothing runs, at full size at fewer places.
 2. **Watch** those runs to their end: where the number freezes, and with how many decimals.
 3. **Learn:** the same runs again at 12 pictures a second. The exact start is the phase that makes the tenths' shapes most alike within each label, then the whole tenth that agrees best with the readings. The clock then names every digit. Shapes that look more like another digit are left out. Used only when all ten digits were seen at least 4 times.
 
 On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 47 to 66 whole pictures, 273 to 344 area reads, 2.2 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). On the owner's phone (debug build, before the speed-up below) video 01 gave the same result in 48 s: 6 s for pictures, 42 s for searching and reading, 36 ms per area read. Since then pictures are looked at at half size and fonts are compared roughly first, which makes it 3.3 times faster on the PC; the phone isn't measured again yet.
 
-**Scanning a found timer** (`FinderScan.kt`, 3.3-C; only the debug scan report uses it so far). The idea and the constants of [§ 1](#1-finding-solves), with these differences:
+**Scanning a found timer** (`FinderScan.kt`, 3.3-C). The idea and the constants of [§ 1](#1-finding-solves), with these differences:
 - A text with fewer decimals than a stopped time is a *running* time, and is kept.
 - **Start to stop:** the running readings give the start, and stop minus start must be the time within 0.2 s. Not confirmed, or never seen running: the solve is kept with `CLOCK_NOTE` and needs a check. It exposes wrong whole numbers and tenths, not hundredths. The clock also chooses between competing readings in the vote.
 - **The cut is searched frame by frame** in the last half second, with each frame's own time (`GraySource.lastFrameSec`). Halving the gap is misled by frames in which the phone blended two numbers.
@@ -288,7 +288,7 @@ A list of times has no places, so it is lined up in order. A missed solve right 
 3. *Scan report (debug)* → pick the timer → *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`; `groundTruthFiles_areValid` checks it on every test run.
 4. *Scan report (debug)* → *Compare with the list* → *Copy*. This is the video's "before" row in the table above. Don't change the video's list afterwards.
 
-The report ends with *How it was found*: what the finder did and learned, how long each part took on this phone, and which solves were flagged. *Find solves* doesn't use the finder yet. A list of times can't grade the cuts; for csTimer videos with known places, a reference file (JSON, in `D:\CubeCutRef`) can.
+The report ends with *How it was found*: what the finder did and learned, how long each part took on this phone, and which solves were flagged. A list of times can't grade the cuts; for csTimer videos with known places, a reference file (JSON, in `D:\CubeCutRef`) can.
 
 The answer key stays valid however the timer is found. The dots become a fallback after 3.3-C, and show whether the app found the right place by itself.
 

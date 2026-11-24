@@ -11,14 +11,14 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 | **Thin tests** | `app/src/test`, `ExampleInstrumentedTest` | Unit tests cover the pure functions (`computeClips`, `parseTimeSeconds`, `mergeRescan`, `checkCuts`, the v7 field helpers) and, since 3.3-A, `SolveAnalyzer.scan` on a simulated display. The SQL (including the v7 upgrade), the digit reader on real frames and the UI are checked only on the phone. See [app/README § Tests](../app/README.md#tests) |
 | **Stale code comments** | `SolveAnalyzer.kt:53-57` (describes walk-back only, but the code bisects first; mentions a prototype test that isn't in the repo) | Fix when touching those files |
 | **`TimerStore.clear` shim** | `TimerReader.kt`, called at start-up | Deletes 1.x files. Can go once nobody runs 1.x |
-| **Find solves estimate is too high** | `estMin` = 0.3 × video length (`MainActivity.kt`) | Dates from before the 4× speed-up |
+| **Find solves estimate is too high** | `estMin` = 0.3 × video length with a setup by hand (`MainActivity.kt`); 0.15 when CubeCut finds the timer, measured 0.09 on the owner's phone | The first dates from before the 4× speed-up |
 | **Two meanings of `102.34`** | Setup box: 1:02.34. `parseTimeSeconds` (Edit window): 102.34 s | Documented to users. Unifying would be a behaviour change |
 | **Template leftovers** | `res/values/colors.xml` `black` / `white`; `keepRules/rules.keep` | Harmless |
 
 ## Limitations by design
 
-- **Only seven-segment fonts**, and setup needs the user to mark the display and type a number ([ADR-0014](adr/0014-display-reader-seam.md)). +2/DNF marks next to the time and times of an hour or more aren't handled.
-- **Mixed digit sizes probably don't read** (for example csTimer's default look, where the digits after the point are smaller). Every digit is measured in one shared height band (`refineBand`, then `classify` with `bandTop` / `bandBottom`), so a small digit's segments are looked for in the wrong rows. The spacing is learned from the big digits too. Expected from the code. The owner's first try (csTimer's default font at a steep angle, 2026-11-24) was refused at setup; the font alone may explain that. Target for [3.3-C](roadmap.md).
+- **Found automatically: solid digits only** (csTimer, phone apps), with exactly one decimal point: no times over a minute, no timer that hides its decimals or its running time ([ADR-0016](adr/0016-find-the-timer-without-ml.md)). Measured on one desk, one font and one theme. Digits under about 24 px, strong blur and a screen turned far over don't read. **Seven-segment timers** (QiYi, Stackmat, GAN) need a setup by hand. +2/DNF marks next to the time and times of an hour or more aren't handled.
+- **Set up by hand, mixed digit sizes probably don't read** (for example csTimer's default look). Let CubeCut find that timer instead.
 - **Held time must stay on screen for about 1.5 s or more.** Timers that blank immediately aren't supported. A timer that updates its running display slower than every 0.5 s could look stopped; this has not been seen.
 - **Misread digits can win the vote** on short holds. A held time read without its last digit can become a separate solve, or rarely replace the real time, which the *too fast* check then flags ([algorithms](algorithms.md#1-finding-solves)). Reproduced in the simulator; planned for 3.3-B.
 - **Deleted cuts can come back** on a re-scan ([ADR-0013](adr/0013-rescan-merge-keeps-user-edits.md)).

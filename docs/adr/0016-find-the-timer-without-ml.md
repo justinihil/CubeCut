@@ -16,7 +16,7 @@
 - **Good enough** means reliable in a reasonable setting, with the timer reasonably visible for most of the footage (owner).
 
 ## Consequences
-- The reader works on a whole picture, before any display is located. It therefore doesn't fit `DisplayReader`, which starts from a straightened display. `GlyphReader` (the placeholder for a model) is no longer the plan; it goes when *Find solves* uses the finder.
+- The reader works on a whole picture, before any display is located. It therefore doesn't fit `DisplayReader`, which starts from a straightened display. `GlyphReader` (the placeholder for a model) was removed when *Find solves* started to use the finder.
 - Seven-segment digits are not read this way (their strokes are separate pieces). They keep `SegmentReader`.
 - The licence text must stay in the app (`assets/digit_fonts_license.txt`, the About window) and in `NOTICE.md`.
 - Known limits: digits under about 24 px, strong blur, and screens turned far over.

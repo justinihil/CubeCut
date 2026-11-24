@@ -906,9 +906,32 @@ object SessionStore {
         db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
     }
 
-    /** The remembered timer corners (8 numbers), or null if none were saved. */
-    fun timerCornersOf(f: Footage): DoubleArray? {
-        if (f.timerFrameMs < 0 || f.timerTyped.isEmpty()) return null
+    /**
+     * (3.3-C) Remembers where CubeCut found the timer by itself: the box around its numbers, in frame pixels. In the same columns as a
+     * setup by hand, with no typed number and no picture time, which is how the two are told apart. A setup by hand wins: it is never overwritten
+     * (it may be there without being usable right now).
+     */
+    fun saveFoundTimer(context: Context, footageId: Long, box: Area) {
+        val c = doubleArrayOf(
+            box.left.toDouble(), box.top.toDouble(), box.right.toDouble(), box.top.toDouble(),
+            box.right.toDouble(), box.bottom.toDouble(), box.left.toDouble(), box.bottom.toDouble()
+        )
+        val v = ContentValues()
+        v.put("timer_frame_ms", -1L)
+        v.put("timer_corners", c.joinToString(","))
+        db(context).update("footage", v, "id = ? AND timer_typed = ''", arrayOf(footageId.toString()))
+    }
+
+    /** (3.3-C) Forgets the timer of this video, set up by hand or found. Its solves stay. */
+    fun clearTimerSetup(context: Context, footageId: Long) = saveTimerSetup(context, footageId, -1L, DoubleArray(0), "")
+
+    /** The corners of a timer set up BY HAND (8 numbers), or null if there is none. */
+    fun timerCornersOf(f: Footage): DoubleArray? = if (f.timerFrameMs < 0 || f.timerTyped.isEmpty()) null else cornersIn(f)
+
+    /** Where the timer is in this video (8 numbers), set up by hand or found, or null. For pictures only, not for reading it. */
+    fun timerPlaceOf(f: Footage): DoubleArray? = cornersIn(f)
+
+    private fun cornersIn(f: Footage): DoubleArray? {
         val parts = f.timerCorners.split(',').mapNotNull { it.trim().toDoubleOrNull() }
         return if (parts.size == 8) parts.toDoubleArray() else null
     }

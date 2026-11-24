@@ -44,6 +44,15 @@ private const val RUNS_WANTED = 3
 /** ...and gives up after looking at this many places. A video without a readable timer pays for all of them. */
 private const val MAX_PLACES = 160
 
+/** The second search, at full size, is slower and only helps with tiny digits: it looks at fewer places. */
+private const val MAX_PLACES_FULL_SIZE = 64
+
+/** Two numbers run at the same moment: the smaller one could be the timer too when it is at least this tall compared with the bigger one... */
+private const val RIVAL_HEIGHT = 0.6
+
+/** ...and was seen running next to it at this many places. Then CubeCut asks instead of guessing. */
+private const val RIVAL_PLACES = 2
+
 /** Extra runs to learn from when the first ones don't show all ten digits. */
 private const val MORE_RUNS = 8
 private const val MORE_PLACES = 24
@@ -78,7 +87,8 @@ data class Area(val left: Int, val top: Int, val right: Int, val bottom: Int)
 
 /** A timer the finder is sure about: where it is, how big its digits are, and what they look like. */
 class FoundTimer(
-    val area: Area,
+    val area: Area,                     // where it is read, with room around it
+    val numbers: Area,                  // just the numbers themselves
     val digitHeight: Double,
     val dark: Boolean,                  // dark digits on a light background
     val runningDecimals: Int,
@@ -89,14 +99,18 @@ class FoundTimer(
     fun read(frame: GrayPic): TimeRow? = readArea(frame, area, digitHeight, dark, examples)
 }
 
-/** What the finder has to say. [timer] null = not found. [notes] explains, for the debug report. */
+/** One number that could be the timer: where it is in the picture at second [t]. */
+class TimerChoice(val t: Double, val box: Area)
+
+/** What the finder has to say. [timer] null = not found, or not sure: then [choices] are the numbers to choose from. [notes] explains, for the debug report. */
 class FinderResult(
     val timer: FoundTimer?,
     val notes: List<String>,
     val places: Int,                    // how many places were looked at
     val frozen: List<String>,           // the stopped times it saw while watching
     val wholeFrames: Int,               // how many whole pictures were searched
-    val areaReads: Int                  // how many times only the timer's area was read
+    val areaReads: Int,                 // how many times only the timer's area was read
+    val choices: List<TimerChoice> = emptyList()
 )
 
 private class Seen(val t: Double, val row: TimeRow)
@@ -132,13 +146,16 @@ private fun rises(a: TimeRow, b: TimeRow, dt: Double): Boolean {
             abs((a.top + a.bottom) / 2.0 - (b.top + b.bottom) / 2.0) < 0.6 * a.height
 }
 
-/** Looks for the timer of a video of [durationSec] seconds. [onProgress] gets 0..100. Throws [ScanCancelled] when [isCancelled] says so. */
+/**
+ * Looks for the timer of a video of [durationSec] seconds. [near]: the number the user chose, only numbers there count (null = any).
+ * [onProgress] gets 0..100. Throws [ScanCancelled] when [isCancelled] says so.
+ */
 fun findTimer(
-    pic: PicAt, durationSec: Double, fonts: DigitShapes, onProgress: (Int) -> Unit = {}, isCancelled: () -> Boolean = { false }
-): FinderResult = TimerSearch(pic, durationSec, fonts, onProgress, isCancelled).run()
+    pic: PicAt, durationSec: Double, fonts: DigitShapes, near: Area? = null, onProgress: (Int) -> Unit = {}, isCancelled: () -> Boolean = { false }
+): FinderResult = TimerSearch(pic, durationSec, fonts, near, onProgress, isCancelled).run()
 
 private class TimerSearch(
-    private val pic: PicAt, private val duration: Double, private val fonts: DigitShapes,
+    private val pic: PicAt, private val duration: Double, private val fonts: DigitShapes, private val near: Area?,
     private val onProgress: (Int) -> Unit, private val isCancelled: () -> Boolean
 ) {
     private val notes = ArrayList<String>()
@@ -146,6 +163,7 @@ private class TimerSearch(
     private var places = 0
     private var wholeFrames = 0
     private var areaReads = 0
+    private var choices: List<TimerChoice> = emptyList()
 
     private var area = Area(0, 0, 1, 1)
     private var height = 0.0
@@ -162,11 +180,11 @@ private class TimerSearch(
         return p
     }
 
-    private fun result(timer: FoundTimer?) = FinderResult(timer, notes, places, frozen, wholeFrames, areaReads)
+    private fun result(timer: FoundTimer?) = FinderResult(timer, notes, places, frozen, wholeFrames, areaReads, if (timer == null) choices else emptyList())
 
     fun run(): FinderResult {
         var hits = search()
-        if (hits.isEmpty()) {
+        if (hits.isEmpty() && choices.isEmpty()) {
             notes.add("Again at full size")
             searchShrink = 1
             hits = search()
@@ -209,18 +227,19 @@ private class TimerSearch(
     /** Places spread over the video, halving the gaps, until enough runs of the same number are seen. The biggest running number is the timer. */
     private fun search(): List<Run> {
         places = 0
+        val most = if (searchShrink == 1) MAX_PLACES_FULL_SIZE else MAX_PLACES
         val order = ArrayList<Double>()
         var q = 2
-        while (order.size < MAX_PLACES) {
+        while (order.size < most) {
             for (i in 0 until q) order.add(round(duration * (2 * i + 1) / (2 * q) * 2) / 2)
             q *= 2
         }
         val hits = ArrayList<Run>()
-        for (t in order.take(MAX_PLACES).distinct()) {
+        for (t in order.take(most).distinct()) {
             if (t + (RUN_PICTURES - 1) * RUN_STEP + 0.5 > duration) continue
             places++
             onProgress(min(45, places))
-            hits.addAll(runsAt(t))
+            hits.addAll(runsAt(t).filter { isNear(it) })
             if (hits.size < RUNS_WANTED) continue
             val biggest = hits.maxOf { it[0].row.height }
             val best = LinkedHashMap<Double, Run>()             // one per place
@@ -229,6 +248,11 @@ private class TimerSearch(
                 if (b == null || worst(h) > worst(b)) best[h[0].t] = h
             }
             if (best.size >= RUNS_WANTED) {
+                choices = rivals(hits)
+                if (choices.isNotEmpty()) {
+                    notes.add("Search: $places places, two numbers run at the same time: which one is the timer?")
+                    return emptyList()
+                }
                 val others = hits.filter { it[0].row.height <= 0.8 * biggest }
                     .map { "${it[0].row.text} (${it[0].row.height.toInt()} px)" }.distinct()
                 notes.add("Search: $places places, ${best.size} runs of the timer" + if (others.isEmpty()) "" else "; smaller running numbers: $others")
@@ -237,6 +261,31 @@ private class TimerSearch(
         }
         notes.add("Search: $places places, ${hits.size} runs: no timer. " + hits.take(5).map { h -> h.map { it.row.text } })
         return emptyList()
+    }
+
+    private fun boxOf(r: TimeRow) = Area(r.left, r.top, r.right, r.bottom)
+
+    /** Is it the number the user chose (or was none chosen)? */
+    private fun isNear(run: Run): Boolean = near == null || touches(boxOf(run[0].row), near, run[0].row.height / 2)
+
+    /** Do the boxes overlap, or nearly (within [room])? */
+    private fun touches(a: Area, b: Area, room: Double): Boolean =
+        a.left - room < b.right && a.right + room > b.left && a.top - room < b.bottom && a.bottom + room > b.top
+
+    /** The two numbers to choose from, when a second one of about the same size ran next to the biggest at several places. */
+    private fun rivals(hits: List<Run>): List<TimerChoice> {
+        if (near != null) return emptyList()
+        var found: List<TimerChoice> = emptyList()
+        var count = 0
+        for ((t, runs) in hits.groupBy { it[0].t }) {
+            val big = runs.maxByOrNull { it[0].row.height }!![0].row
+            val other = runs.map { it[0].row }
+                .filter { it.height >= RIVAL_HEIGHT * big.height && !touches(boxOf(it), boxOf(big), big.height / 2) }
+                .maxByOrNull { it.height } ?: continue
+            count++
+            found = listOf(TimerChoice(t, boxOf(big)), TimerChoice(t, boxOf(other)))
+        }
+        return if (count >= RIVAL_PLACES) found else emptyList()
     }
 
     private fun setArea(rows: List<TimeRow>) {
@@ -258,7 +307,7 @@ private class TimerSearch(
         for (i in 0 until MORE_PLACES) {
             val t = round(duration * (i + 0.37) / MORE_PLACES * 2) / 2
             if (t + (RUN_PICTURES - 1) * RUN_STEP + 0.5 > duration || done.any { abs(t - it) < 15 }) continue
-            val runs = runsAt(t)
+            val runs = runsAt(t).filter { isNear(it) }
             val tallest = runs.maxOfOrNull { it[0].row.height } ?: continue
             if (abs(tallest / have[0][0].row.height - 1) >= 0.3) continue
             done.add(t)
@@ -360,7 +409,8 @@ private class TimerSearch(
             notes.add("A number runs, but it was never seen to stop")
             return null
         }
-        return FoundTimer(area, height, dark, mostCommon(hits.map { it[0].row.decimals })!!, stoppedDecimals, learned ?: fonts)
+        val numbers = Area(rows.minOf { it.left }, rows.minOf { it.top }, rows.maxOf { it.right }, rows.maxOf { it.bottom })
+        return FoundTimer(area, numbers, height, dark, mostCommon(hits.map { it[0].row.decimals })!!, stoppedDecimals, learned ?: fonts)
     }
 
     /** One run again at [LEARN_RATE] pictures a second: adds its digits' shapes to [into], named by the clock. */

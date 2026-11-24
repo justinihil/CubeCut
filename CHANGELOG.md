@@ -12,15 +12,19 @@ Notes on history:
 
 ## [Unreleased]
 
-### Fixed
-- **Back** on the timer setup screen cancels the setup instead of leaving the editor.
-
 ### Added
+- **No timer setup any more for csTimer and other solid digits.** *Find solves* finds the timer by itself, learns how its digits look and reads it: no corners, no typed number. When two numbers run at the same time it asks which one is the timer. QiYi, Stackmat, GAN and other seven-segment timers still need *Set up by hand* (in the Setup box), and a setup by hand always wins.
+- **Solves the running timer doesn't confirm** are kept and marked *check*, for example a test tap, or a time misread by a digit. So are solves whose stop was hidden: their cut is worked out from the running time.
 - **1-frame buttons** in the editor's *Edit* window (◂ 1 frame / 1 frame ▸), so a cut can sit exactly on the first frame of the final time. One step is one frame of that video (30 or 60 fps).
 - **Puzzle logos:** a small flat drawing for each puzzle (a grid for 2x2 to 7x7, a pentagon for Megaminx, and so on; a plain cube for *Other*). They show in the viewer's details, on the puzzle buttons of the *Which puzzle is this?* window, in a corner of tagged clip and video pictures in the Gallery, and on the *Puzzle:* line while ticking clips.
 
+### Fixed
+- **Back** on the timer setup screen cancels the setup instead of leaving the editor.
+
 ### Changed
-- The About window names the open fonts behind the new digit reader (not used for finding solves yet).
+- The Setup box says *CubeCut finds the timer by itself*. *Read timer here* shows only after a setup by hand, and *Find it by itself again* drops that setup. The *Edit* window zooms onto a found timer too.
+- The estimated time before *Find solves* is lower when CubeCut finds the timer.
+- The About window names the open fonts behind the new digit reader.
 - The viewer's details (swipe up) are sorted into groups: the time and anything that needs a look first, then *Export* / *Editor* / *Delete file* with the export status under them, then **Solve** (puzzle, penalty), **Clip** (scramble, extra time), **Note and sharing**, and the video it comes from. *Reconnect video* moved from the bottom to the top. The clip's start and end times in the video are no longer listed.
 - A clip tagged the same puzzle as its video is no longer shown differently: the tag window has no separate *As the video* button (the video's puzzle is simply chosen), the viewer drops *From the video*, and the editor's solve card stays ticked instead of saying *own tag*.
 - **Buffers are now called "Extra time"** everywhere, with one line saying what it is: seconds kept before the solve starts and after the timer stops. *Follow video* is now *Same as video*. Nothing about how clips are cut changed.

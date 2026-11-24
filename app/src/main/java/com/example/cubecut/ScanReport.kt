@@ -54,7 +54,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 
 // (3.3-A) The debug-only scan report, shown in the editor of debug builds only (BuildConfig.DEBUG). It runs Find solves again WITHOUT
 // touching the list, and compares what it finds with the expected solves: the list you fixed by hand, a ground-truth file, or a plain list
@@ -147,7 +146,6 @@ fun ScanReportHost(
                         listOf(
                             "Finds the timer, reads it and finds solves. Your list doesn't change.",
                             "CubeCut looks for the timer by itself. A setup by hand is graded too.",
-                            "Find solves doesn't do that yet.",
                             "A file can be a reference file or csTimer's CSV export."
                         )
                     )
@@ -246,7 +244,7 @@ private fun byItselfReport(
     onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
 ): String {
     val durationSec = durationMs / 1000.0
-    val fonts = DigitShapes.from(context.assets.open("digit_shapes.bin").use { readDigitStyles(it) })
+    val fonts = loadDigitFonts(context)
     val source = openFrameSource(context, uri, durationMs)
     try {
         var pictures = 0
@@ -261,7 +259,7 @@ private fun byItselfReport(
         }
 
         val start = System.nanoTime()
-        val r = findTimer(pic, durationSec, fonts, { onProgress(it / 10, 100) }, isCancelled)
+        val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled)
         val finding = (System.nanoTime() - start) / 1e9
         val how = ArrayList<String>()
         how.add("")
@@ -271,7 +269,7 @@ private fun byItselfReport(
             "Took ${"%.1f".format(finding)} s: ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, ${"%.1f".format(finding - inPictures / 1e9)} s " +
                     "for ${r.wholeFrames} whole-picture searches and ${r.areaReads} area reads"
         )
-        val timer = r.timer ?: return noTimerText(truth, videoName, "CubeCut didn't find one by itself.", app) + how.joinToString("\n", "\n")
+        val timer = r.timer ?: return noTimerText(truth, videoName, if (r.choices.isEmpty()) "CubeCut didn't find one by itself." else "Two numbers run at the same time, CubeCut would ask which one.", app) + how.joinToString("\n", "\n")
         val a = timer.area
         val found = "Found by itself at x ${a.left}-${a.right}, y ${a.top}-${a.bottom}, digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}, " +
                 "decimals ${timer.runningDecimals} running and ${timer.stoppedDecimals} stopped, " + (if (timer.examples.isLearned) "digits learned." else "digits NOT learned.")
@@ -289,7 +287,7 @@ private fun byItselfReport(
         val scanStart = System.nanoTime()
         val scan = scanFoundTimer(
             ::read, durationSec, timer.runningDecimals, timer.stoppedDecimals, videoFrameSec(context, uri),
-            { t -> source.lastFrameSec().takeIf { abs(it - t) < 0.05 } ?: t }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
+            { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
         )
         val seconds = (System.nanoTime() - scanStart) / 1e9
         how.add(
@@ -313,13 +311,6 @@ private fun byItselfReport(
     } finally {
         source.close()
     }
-}
-
-/** A copy of [m] (8-bit grey) for the finder. */
-private fun grayPic(m: org.opencv.core.Mat): GrayPic {
-    val d = ByteArray(m.rows() * m.cols())
-    m.get(0, 0, d)
-    return GrayPic(m.cols(), m.rows(), d)
 }
 
 private fun byHandReport(

@@ -5,10 +5,12 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 ## Cutting a session
 
 1. **Import** the video with *Import video* in the Gallery. If CubeCut has seen the video before, it says *Imported before*. **Open saved** brings back its saved solves, settings and timer setup; **Cancel** leaves things as they were. A new video asks **Which puzzle is this?** One puzzle per video works best; *Decide later* skips it (set it later in the Setup box).
-2. **Set up the timer.** Everything depends on this step.
+2. **The timer.** csTimer and other timers with solid digits need nothing: CubeCut finds the timer by itself. Keep it in view and readable, also while it runs, for most of the video. If two numbers run at the same time, it asks which one is the timer.
+
+   **QiYi, Stackmat, GAN and other seven-segment timers** (strokes that don't touch) need a setup by hand: Setup box → *Set up by hand*.
    1. Pause on a frame that shows **an actual time after a solve**: the timer has stopped and shows its final time. **Do not use 0.000.**
    2. Tap the display, drag the four dots onto its corners (a magnifier helps), and type the number shown. For 1:02.34, type `102.34`.
-   3. The setup is remembered for this video.
+   3. The setup is remembered for this video, and always wins. *Find it by itself again* drops it.
 3. **Find solves.** The app reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. You can switch apps (a notification shows progress) or press Cancel. While it runs, importing and timer setup are blocked.
 4. **Review** the list. The arrows step through solves. Tapping the timeline selects the solve there; playing the video doesn't change the selection.
    - **Missed solve:** put the playhead on the first frame that shows its final time, tap **Add a missed solve at the playhead**, and type the time. The list jumps to the new solve, which blinks briefly.
@@ -64,10 +66,13 @@ Picking the same video again says *Already in your Gallery*. The editor's own *I
 | "Couldn't find digit shapes in this box…" | Check how many digits you typed. Drag the dots tighter around the digits only, leaving out icons and window edges |
 | "Couldn't recognise the timer's shape" | Pick a sharper frame with the whole timer body visible |
 | Setup mentions fixed-camera mode, and later reads fail | The display is a plain screen, so the camera and the window must not move. Set up again if they did |
-| No solves found | Set up again on a frame showing a real final time (not 0.000). Test with *Read timer here* on moments after solves. Or add solves by hand |
+| "Couldn't find the timer" | Seven-segment timer (QiYi, Stackmat, GAN)? Set up by hand. Else check that the number is in view and readable **while it runs**, with a decimal point. Very small digits (under about 24 pixels tall), strong blur and a screen turned far over don't read |
+| A solve says *the running time doesn't confirm this time* | The time may be misread, or it was a test tap. Check it, then **Edit** or delete it |
+| A solve says *the timer was hidden when it stopped* | The cut is worked out and can be a few frames off. Move it in **Edit** |
+| No solves found | (Set up by hand) Set up again on a frame showing a real final time (not 0.000). Test with *Read timer here* on moments after solves. Or add solves by hand |
 | A real solve is missing | Its time was on screen for under about 1.5 s, or it was hidden by a hand or glare. Add it at the playhead |
 | One digit wrong (e.g. `12.112` for `12.412`) | Fix it with **Edit**. If it happens often, set up again on a clearer frame |
-| csTimer reads wrong digits | Turn off csTimer's "use small font after decimal point" |
+| csTimer set up by hand reads wrong digits | Let CubeCut find it instead (*Find it by itself again*) |
 | A solve-only clip contains the whole scramble | The solve has no time yet. Add the time |
 | Find solves is very slow | The fast decoder may have been rejected. Logcat tag `CubeCut` shows a `Frame source:` line with the reason. Long videos are simply slow |
 | No notification during Find solves | Allow notifications: Settings → Apps → CubeCut. Find solves works without them |

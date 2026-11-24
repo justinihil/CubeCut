@@ -25,15 +25,15 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 | Phone | **Samsung Galaxy S25 Ultra**, and only that phone |
 | Footage | **1080p at 30 fps and 60 fps** |
 | Camera | **Fixed on a tripod**, with the timer's display in view |
-| Timers | **QiYi Bluetooth Timer** (LCD display) and **csTimer in the "Digital 2" font**, with csTimer's "use small font after decimal point" option **turned off** |
+| Timers | **QiYi Bluetooth Timer** (LCD display) and **csTimer in the "Digital 2" font**, with csTimer's "use small font after decimal point" option **turned off**, both set up by hand. csTimer in its default font, found automatically, on three recordings of one desk |
 
 **Not tested** (it may work, it may not)
 
 * Any other phone or Android version
 * Head-mounted, handheld or otherwise moving cameras
 * 4K, HDR / 10-bit video, and frame rates other than 30 and 60 fps
-* Other timers and fonts. **Only seven-segment style digits can be read.**
-* csTimer with the small-decimals option on, penalty marks (+2 / DNF) next to the time, and times of an hour or more
+* csTimer with other fonts and themes than its default, phone timer apps, and other solid digits
+* Penalty marks (+2 / DNF) next to the time, and times of an hour or more. Times over a minute only work with a timer set up by hand
 * A timer that blanks or resets its display right after the solve. The final time has to stay on screen for about 1.5 s.
 
 ## Requirements
@@ -41,7 +41,7 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 | | |
 |---|---|
 | Phone | **Android 11 or newer**, **64-bit (arm64)** |
-| Timer | **Seven-segment style digits**: Stackmat-style LCD timers (e.g. QiYi Smart Timer) or screens such as csTimer (small-decimals option off) |
+| Timer | **Solid digits**, such as csTimer: found automatically. **Seven-segment digits**, such as QiYi Smart Timer: set up by hand once per video |
 | Footage | A fixed camera works best, with the display in view and the final time held for about 1.5 s or more |
 
 ## Install
