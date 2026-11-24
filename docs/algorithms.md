@@ -126,6 +126,10 @@ Measured on the PC with the app's own code (`ReferenceVideoTest`, 2026-11-24, wi
 
 On 03 it also lists the `0.34` test tap, flagged, which the owner left out of the key. Scanning took 4 to 5 s per video without getting pictures.
 
+On the owner's phone (2026-11-24, debug build 3ffa64e), video 01: found by itself, 25 / 25, 0 missed, 0 false, 0 wrong time; held frames 141 right, 0 wrong, 9 unreadable of 150. Finding took 10.4 s, scanning 106.8 s (86.7 s of it getting 3036 pictures, 6.5 ms per read) for 21 minutes of video. The report showed every cut 0.071 to 0.105 s late, because its key was on another clock (next paragraph). Corrected by calculation, not by a second run: 24 of 25 on the frame, worst 0.033 s.
+
+**Two clocks.** Samsung videos start with an edit list: their first frame is shown at 0.05 to 0.07 s of the file's own time. Android (and so CubeCut's cuts and exports) uses that time; `ffmpeg` and `ffprobe` start the same frame at 0. A place measured with ffmpeg needs that offset (the first frame's composition offset minus the edit list's `media_time`) before it goes into a reference file. The `.places.txt` files in `D:\CubeCutRef` are in ffmpeg's time, because `ReferenceVideoTest` uses ffmpeg; the `.groundtruth.json` files are in Android's.
+
 **Debugging tip:** before blaming a font, look at the straightened black-and-white picture that *Read timer here* shows. An earlier "italic touching font" theory turned out wrong when that picture was measured.
 
 ## 4. Learning a timer (setup)

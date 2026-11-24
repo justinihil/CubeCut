@@ -184,7 +184,7 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 **Build steps**, each with its own commit and a phone test:
 1. ✅ Solid-digit reader (`SolidDigits.kt`), not used by the app yet.
 2. ✅ Finder and learner (`TimerFinder.kt`), shown only in the debug scan report. On the owner's phone, video 01 gave the same result as on the PC, in 48 s; made faster since.
-3. 🔶 Scan (`FinderScan.kt`): frame-by-frame cuts, the clock check, a time that reappears. Only for timers the finder found, and only in the debug scan report. Passes on the PC; the phone test is waiting on the owner.
+3. ✅ Scan (`FinderScan.kt`): frame-by-frame cuts, the clock check, a time that reappears. Only for timers the finder found, and only in the debug scan report. Phone, video 01: 25 of 25, no false solves or wrong times, 2 min for 21 min of video ([numbers](algorithms.md#3-reading-the-timer)).
 4. ⬜ *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix.
 5. ⬜ Follow a camera that moves.
 
