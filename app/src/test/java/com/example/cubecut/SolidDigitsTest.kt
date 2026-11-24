@@ -21,70 +21,17 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 import kotlin.math.abs
-import kotlin.math.floor
-import kotlin.math.max
-import kotlin.math.roundToInt
-import kotlin.random.Random
 
 /** (3.3-C) The solid-digit reader on drawn pictures. Every picture uses a font the reader is NOT given, as a real timer would. */
 class SolidDigitsTest {
 
-    private val styles = File("src/main/assets/digit_shapes.bin").inputStream().use { readDigitStyles(it) }
+    private val styles = DrawnTime.styles
+    private fun without(vararg families: String) = DrawnTime.without(*families)
 
-    /** The reader without the fonts of some families. */
-    private fun without(vararg families: String) = DigitShapes.from(styles.filter { s -> families.none { s.name.startsWith("$it ") } })
-
-    private fun ink(picture: ByteArray, i: Int): Int = picture[i].toInt() and 255
-
-    /** [text] drawn with a style of the asset (44 px digits times [scale]). [slope] tilts the line, [lean] the digits. */
     private fun draw(
-        text: String, style: String, scale: Double = 2.0, slope: Double = 0.0, lean: Double = 0.0,
-        paper: Int = 30, pen: Int = 230, noise: Int = 0
-    ): GrayPic {
-        val s = styles.first { it.name == style }
-        val n = s.size
-        val w = 900
-        val h = 500
-        val cover = DoubleArray(w * h)
-        var penX = 120.0
-        fun put(picture: ByteArray, from: Int, to: Int) {
-            for (y in 0 until h) for (x in 0 until w) {
-                val ty = y - slope * (x - 100) - 220.0
-                val gx = (x - penX - lean * (110 - ty)) / scale + from
-                val gy = ty / scale
-                val ix = floor(gx).toInt()
-                val iy = floor(gy).toInt()
-                if (ix < from || ix > to || ix + 1 >= n || iy < 0 || iy + 1 >= n) continue
-                val fx = gx - ix
-                val fy = gy - iy
-                val up = ink(picture, iy * n + ix) * (1 - fx) + ink(picture, iy * n + ix + 1) * fx
-                val down = ink(picture, (iy + 1) * n + ix) * (1 - fx) + ink(picture, (iy + 1) * n + ix + 1) * fx
-                cover[y * w + x] = max(cover[y * w + x], (up * (1 - fy) + down * fy) / 255.0)
-            }
-        }
-        for (c in text) {
-            if (c == '.') {
-                // a square point on the line the digits stand on
-                val bottom = (0 until n).last { y -> (0 until n).any { x -> ink(s.digits[0], y * n + x) > 127 } }
-                val dot = ByteArray(n * n)
-                for (y in bottom - 5..bottom) for (x in 2..7) dot[y * n + x] = -1
-                put(dot, 0, 10)
-                penX += 11 * scale
-            } else {
-                val g = s.digits[c - '0']
-                val cols = (0 until n).filter { x -> (0 until n).any { y -> ink(g, y * n + x) > 127 } }
-                put(g, cols.first() - 1, cols.last() + 1)
-                penX += (cols.last() - cols.first() + 6) * scale
-            }
-        }
-        val rnd = Random(5)
-        return GrayPic(w, h, ByteArray(w * h) {
-            val v = paper + (pen - paper) * cover[it] + (if (noise > 0) rnd.nextInt(-noise, noise + 1) else 0)
-            v.roundToInt().coerceIn(0, 255).toByte()
-        })
-    }
+        text: String, style: String, scale: Double = 2.0, slope: Double = 0.0, lean: Double = 0.0, paper: Int = 30, pen: Int = 230, noise: Int = 0
+    ): GrayPic = DrawnTime.Canvas(900, 500).put(text, style, 120.0, 220.0, scale, slope, lean).pic(paper, pen, noise)
 
     private fun read(p: GrayPic, examples: DigitShapes, dark: Boolean = false): String? = pickRow(findTimeRows(p, examples, listOf(dark)))?.text
 

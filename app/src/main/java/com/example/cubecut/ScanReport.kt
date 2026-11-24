@@ -145,6 +145,7 @@ fun ScanReportHost(
                     BulletLines(
                         listOf(
                             "Finds the timer, reads it and finds solves. Your list doesn't change.",
+                            "It also looks for the timer by itself. The scan doesn't use that yet.",
                             "No timer setup, or a refused one? The report counts 0 found.",
                             "A file can be a reference file or csTimer's CSV export."
                         )
@@ -221,11 +222,84 @@ fun lastSetupAttempt(context: Context, footageId: Long): SetupAttempt? {
 }
 
 /**
- * Runs the report's three stages and returns its text: finds the timer, reads the held times, then scans. Until the app can find a timer
- * by itself (3.3-C), the timer is set up from scratch as [truth] says, so a changed reader is tried on the same display.
+ * Runs the report's three stages and returns its text: finds the timer, reads the held times, then scans. Until the scan uses the finder
+ * (3.3-C), the timer is set up from scratch as [truth] says, so a changed reader is tried on the same display. What the finder finds by
+ * itself is listed under it.
  * Blocking; run it on Dispatchers.Default. Its engine is its own and is freed here.
  */
 fun runScanReportStages(
+    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
+    onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
+): String {
+    val byItself = finderReport(context, uri, durationMs, truth, onProgress, isCancelled)
+    return setupReport(context, uri, durationMs, truth, videoName, app, onProgress, isCancelled) + "\n\n" + byItself
+}
+
+/** (3.3-C) What the finder makes of this video, with no setup and no answer key, and how long each part takes on this phone. */
+private fun finderReport(
+    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
+): String {
+    val lines = ArrayList<String>()
+    val fonts = DigitShapes.from(context.assets.open("digit_shapes.bin").use { readDigitStyles(it) })
+    val opened = System.nanoTime()
+    val source = openFrameSource(context, uri, durationMs)
+    try {
+        val opening = (System.nanoTime() - opened) / 1e9
+        var frames = 0
+        var inFrames = 0L
+        val pic = PicAt { t ->
+            val start = System.nanoTime()
+            val gray = source.gray(t)
+            val p = if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
+            frames++
+            inFrames += System.nanoTime() - start
+            p
+        }
+        val start = System.nanoTime()
+        val r = findTimer(pic, durationMs / 1000.0, fonts, { onProgress(it, 100) }, isCancelled)
+        val seconds = (System.nanoTime() - start) / 1e9
+        val timer = r.timer
+        lines.add("By itself (3.3-C, not used by the scan yet): " + if (timer == null) "NOT FOUND" else "FOUND")
+        if (timer != null) {
+            val a = timer.area
+            lines.add("At x ${a.left}-${a.right}, y ${a.top}-${a.bottom}; digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}; decimals ${timer.runningDecimals} running, ${timer.stoppedDecimals} stopped")
+        }
+        val known = truth.timesOnly.ifEmpty { truth.solves.map { it.time } }
+        if (r.frozen.isNotEmpty()) lines.add("Saw it stop at ${r.frozen.joinToString(", ")}: ${r.frozen.count { f -> known.any { sameTime(it, f) } }} of ${r.frozen.size} are expected times")
+        lines.addAll(r.notes)
+        lines.add(
+            "Took ${"%.1f".format(seconds)} s + ${"%.1f".format(opening)} s to open: ${"%.1f".format(inFrames / 1e9)} s for $frames pictures, " +
+                    "${"%.1f".format(seconds - inFrames / 1e9)} s for ${r.wholeFrames} whole-picture searches and ${r.areaReads} area reads"
+        )
+        if (timer != null) {
+            // what the scan will do all the time: one picture every half second, only the timer's area, with the learned digits
+            val from = durationMs / 3000.0
+            var ms = 0L
+            var read = 0
+            val n = 40
+            for (k in 0 until n) {
+                if (isCancelled()) throw ScanCancelled()
+                val p = pic.at(from + k * 0.5) ?: continue
+                val s = System.nanoTime()
+                if (timer.read(p) != null) read++
+                ms += (System.nanoTime() - s) / 1000
+            }
+            lines.add("Reading its area: ${"%.1f".format(ms / 1000.0 / n)} ms each, $read of $n pictures readable (from ${videoPlace(from)} on)")
+        }
+    } finally {
+        source.close()
+    }
+    return lines.joinToString("\n")
+}
+
+/** A copy of [m] (8-bit grey) for the finder. */
+private fun grayPic(m: org.opencv.core.Mat): GrayPic {
+    val d = ByteArray(m.rows() * m.cols())
+    m.get(0, 0, d)
+    return GrayPic(m.cols(), m.rows(), d)
+}
+
+private fun setupReport(
     context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
     onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
 ): String {
@@ -233,7 +307,7 @@ fun runScanReportStages(
     fun failed(why: String) =
         if (timesOnly) timesReportText(truth, videoName, false, why, compareTimes(truth.timesOnly, emptyList()), 0.0, 0.0, app)
         else scanReportText(truth, videoName, false, why, emptyList(), compareScan(truth.solves, emptyList()), 0.0, 0.0, app)
-    val attempt = truth.setup ?: return failed("CubeCut can't find a timer by itself yet (3.3-C), and none was set up by hand.")
+    val attempt = truth.setup ?: return failed("None was set up by hand, and the scan doesn't use the finder yet (3.3-C).")
     val frame = grabFrame(context, uri, attempt.frameMs) ?: return failed("No picture at ${videoPlace(attempt.frameMs / 1000.0)}.")
     val res = TimerVision.createSetup(frame, attempt.corners.toDoubleArray(), attempt.typed)
     val setup = res.setup

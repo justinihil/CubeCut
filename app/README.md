@@ -41,6 +41,7 @@ Rough sizes are given to warn you what you are opening.
 | `TimerReader.kt` (~1k lines) | Finding, straightening, binarising and reading the display; learning a setup | `TimerVision` (`createSetup`, `prep`, `learn`, `readBin`, `tightenQuad`, `formatDigits`), `ShapeFinder`, `TimerEngine` (`readDigitsGray`, `readFrame`, `forgetPosition`, `release`), `DigitLayout`, `TimerSetup`, `TimerStore` (cleanup shim) | The most heavily tuned file. **Owner rule: don't change the digit reader unless asked.** Every `Mat` must be released. Not thread-safe |
 | `DisplayReaders.kt` | Font-specific step behind an interface | `DisplayReader`, `DisplayReaders.all` / `byId`, `SegmentReader`, `GlyphReader` (disabled) | Return `null` when unsure |
 | `SolidDigits.kt` | (3.3-C) Reads times in solid digits (csTimer, phone apps) anywhere in a picture. **No OpenCV, no Android**; not used by *Find solves* yet | `findTimeRows`, `pickRow`, `DigitShapes.from` / `learned`, `readDigitStyles`, `GrayPic` | Needs exactly one decimal point, no colon yet. The examples come from `assets/digit_shapes.bin` ([ADR-0016](../docs/adr/0016-find-the-timer-without-ml.md)) |
+| `TimerFinder.kt` | (3.3-C) Finds the timer by itself and learns its digits. **No OpenCV, no Android**; only the debug scan report uses it so far | `findTimer(PicAt, duration, fonts, …)` → `FinderResult`, `FoundTimer.read` | Throws `ScanCancelled`. Reads pictures out of order: give it one frame source of its own |
 | `FrameSource.kt` | Frames for the scan | `GraySource`, `openFrameSource`, `CodecSource`, `RetrieverSource`, `AutoSource` / `calibrate` | The caller releases each `Mat`. Logs `Frame source:` under tag `CubeCut`. Keep the fallback |
 
 ### Storage and platform
@@ -70,6 +71,8 @@ Rough sizes are given to warn you what you are opening.
 - `SolveAnalyzerScanTest` (3.3-A): `SolveAnalyzer.scan` on `FakeDisplay`, a simulated timer display with unreadable frames, 4/7→1 misreads and dropped last digits. It holds the simulated baseline ([algorithms § 8](../docs/algorithms.md#ground-truth-harness-33-a)) and checks every file in `src/test/resources/groundtruth/`. One test is `@Ignore`d until 3.3-B fixes it;
 - `GroundTruthTest` (3.3-A): the ground-truth JSON, csTimer's CSV, `compareScan`, `compareTimes`, `gradeReading` and the report text;
 - `SolidDigitsTest` (3.3-C): the solid-digit reader on drawn times, always in a font it isn't given;
+- `TimerFinderTest` (3.3-C): the finder on a drawn session (`DrawnTime` draws for both tests);
+- `ReferenceVideoTest` (3.3-C): the app's own finder on the whole reference videos, through ffmpeg. Only with `CUBECUT_REF_VIDEOS=1` (about 6 minutes);
 - `ReferenceFramesTest` (3.3-C): the same on whole frames of the reference videos. Skipped on a computer without `D:\CubeCutRef`;
 - `PuzzleIconsTest`: every puzzle logo stays inside its box; NxN has N² stickers.
 

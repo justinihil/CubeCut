@@ -102,6 +102,13 @@ The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](a
 
 The examples come from 11 open fonts, or only from the video itself once all ten digits were learned ([ADR-0016](adr/0016-find-the-timer-without-ml.md)). Measured on 150 whole frames of held times from the three csTimer videos, without csTimer's look-alike font and without a position: 150 right, about 80 ms per frame on a PC (`ReferenceFramesTest`).
 
+**Finding the timer** (`TimerFinder.kt`, 3.3-C; only the debug scan report uses it so far). Pure logic over "the picture at second t":
+1. **Search** places spread over the video, halving the gaps. A run is 4 pictures 0.5 s apart in which a number rises by 0.5 each time. After 3 runs of the same number it stops; the **biggest** running number is the timer.
+2. **Watch** those runs to their end: where the number freezes, and with how many decimals.
+3. **Learn:** the same runs again at 12 pictures a second. The exact start is the phase that makes the tenths' shapes most alike within each label, then the whole tenth that agrees best with the readings. The clock then names every digit. Shapes that look more like another digit are left out. Used only when all ten digits were seen at least 4 times.
+
+On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 52 to 73 whole pictures, 273 to 344 area reads, 7 to 8 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). **The phone isn't measured yet.**
+
 **Debugging tip:** before blaming a font, look at the straightened black-and-white picture that *Read timer here* shows. An earlier "italic touching font" theory turned out wrong when that picture was measured.
 
 ## 4. Learning a timer (setup)
@@ -259,6 +266,8 @@ A list of times has no places, so it is lined up in order. A missed solve right 
    - put each cut on the **first frame that shows the final time**: in *Edit*, use the 0.5 s / 0.1 s buttons, then finish with **◂ 1 frame / 1 frame ▸**. Leave cuts that are already on the right frame alone.
 3. *Scan report (debug)* → pick the timer → *Save file…*. Copy the file to `app/src/test/resources/groundtruth/`; `groundTruthFiles_areValid` checks it on every test run.
 4. *Scan report (debug)* → *Compare with the list* → *Copy*. This is the video's "before" row in the table above. Don't change the video's list afterwards.
+
+From 3.3-C step 2 the report ends with a part *By itself*: whether the finder found the timer without any setup, where, what it learned, and how long each part took on this phone. The scan doesn't use it yet.
 
 The answer key stays valid however the timer is found. The dots become a fallback after 3.3-C, and show whether the app found the right place by itself.
 
