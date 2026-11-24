@@ -20,6 +20,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            ndk { abiFilters += "arm64-v8a" }       // like release: an APK built here can be sent to the phone (66 MB, not 190)
+        }
         release {
             ndk { abiFilters += "arm64-v8a" }
             optimization { enable = false }
