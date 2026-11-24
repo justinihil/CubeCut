@@ -116,6 +116,27 @@ class TimerFinderTest {
         assertTrue("${r.timer?.numbers}", r.timer!!.numbers.bottom < 130)
     }
 
+    /** One solve of 1:04.42 is the whole video: 10 s before it, 8 s after. Learning has to cope with the minute too. */
+    @Test
+    fun oneSolveOverAMinute() {
+        fun text(t: Double): String {
+            val s = t - 10
+            val tenth = Math.floor(s * 10 + 1e-9) / 10
+            return when {
+                s < 0 -> "0.00"
+                s < 60 -> "%.1f".format(Locale.ROOT, tenth)
+                s < 64.42 -> "1:%04.1f".format(Locale.ROOT, tenth - 60)
+                else -> "1:04.42"
+            }
+        }
+        val r = findTimer({ t -> draw(text(t)) }, 82.0, fonts)
+        assertNotNull("${r.notes}", r.timer)
+        assertTrue("${r.notes}", r.timer!!.examples.isLearned)
+        assertEquals("${r.notes}", setOf("1:04.42"), r.frozen.toSet())
+        assertEquals(2, r.timer!!.stoppedDecimals)
+        assertEquals("1:04.42", r.timer!!.read(draw("1:04.42"))?.text)
+    }
+
     @Test
     fun noPicture_isNotFound() {
         assertNull(findTimer({ null }, 60.0, fonts).timer)

@@ -79,6 +79,43 @@ class SolidDigitsTest {
     }
 
     @Test
+    fun minutes_inFontsTheReaderDoesNotHave() {
+        for (family in listOf("arimo", "roboto", "lato", "barlow", "robotomono")) {
+            val r = without(family)
+            for (t in listOf("1:04.42", "2:47.85", "10:36.09", "1:59.9", "0:09.41", "3:00.127"))
+                for (colon in listOf(':', ';')) assertEquals("$family $colon", t, read(draw(t.replace(':', colon), "$family Regular", 1.5), r))
+        }
+    }
+
+    @Test
+    fun minutes_tiltedLeaningSmallAndFaint() {
+        val r = without("arimo")
+        for (slope in listOf(-0.35, -0.2, 0.2)) assertEquals("slope $slope", "1:04.42", read(draw("1:04.42", "arimo Regular", 1.5, slope = slope), r))
+        for (lean in listOf(-0.3, 0.3)) assertEquals("lean $lean", "1:04.42", read(draw("1:04.42", "arimo Regular", 1.5, lean = lean), r))
+        for (scale in listOf(0.6, 1.0, 2.5)) assertEquals("scale $scale", "1:04.42", read(draw("1:04.42", "arimo Regular", scale), r))
+        assertEquals("light theme", "1:04.42", read(draw("1:04.42", "arimo Regular", 1.5, paper = 220, pen = 40), r, dark = true))
+        assertEquals("noisy", "1:04.42", read(draw("1:04.42", "arimo Regular", 1.5, noise = 20), r))
+    }
+
+    @Test
+    fun minutes_thatCannotBe_areNotRead() {
+        val r = without()
+        assertNull("no decimals (a clock)", read(draw("12:45", "arimo Regular"), r))
+        assertNull("75 seconds", read(draw("1:75.20", "arimo Regular", 1.5), r))
+        assertNull("one digit of seconds", read(draw("1:5.20", "arimo Regular", 1.5), r))
+        assertNull("colon behind the point", read(draw("1.04:42", "arimo Regular", 1.5), r))
+        assertNull("hours", read(draw("1:02:03.4", "arimo Regular", 1.2), r))
+    }
+
+    @Test
+    fun shownSeconds_ofBothForms() {
+        assertEquals(12.69, shownSeconds("12.69"), 1e-9)
+        assertEquals(64.42, shownSeconds("1:04.42"), 1e-9)
+        assertEquals(636.0, shownSeconds("10:36.0"), 1e-9)
+        assertEquals(0.0, shownSeconds("0:00.00"), 1e-9)
+    }
+
+    @Test
     fun rowTellsWhereItIs() {
         val row = pickRow(findTimeRows(draw("12.69", "arimo Regular"), without("arimo"), listOf(false), offX = 1000, offY = 500))!!
         assertEquals(12.69, row.seconds, 1e-9)

@@ -29,18 +29,26 @@ import kotlin.math.abs
 
 /**
  * (3.3-C) The app's own finder and scan on the whole reference videos, on the PC that has them (docs/algorithms.md § 8). It gets the video and
- * its length, nothing else. Slow (ffmpeg starts once per picture), so it only runs when asked: set CUBECUT_REF_VIDEOS=1. Else skipped.
+ * its length, nothing else. Slow (ffmpeg starts once per picture), so it only runs when asked: set CUBECUT_REF_VIDEOS=1, or to a part of
+ * the video names ("4x4"). Else skipped. A video takes part when it has a .places.txt beside it.
  */
 class ReferenceVideoTest {
 
     private val dir = File(System.getenv("CUBECUT_REF") ?: "D:/CubeCutRef")
 
+    /** Shown by the timer, but left out of the keys: a test tap (csTimer 03) and a solve deleted on the screen (other timer 01). */
+    private val LEFT_OUT = setOf("0.34", "7.480")
+
     /** The fonts, without the one that looks like csTimer's. */
     private fun fonts(): DigitShapes = DrawnTime.without("arimo")
 
+    private fun places(video: File) = File(dir, video.name.replace(".mp4", ".places.txt"))
+
     private fun videos(): List<File> {
-        assumeTrue("set CUBECUT_REF_VIDEOS=1 to run", System.getenv("CUBECUT_REF_VIDEOS") == "1")
-        val videos = dir.listFiles { f -> f.name.startsWith("ref_cstimer") && f.name.endsWith(".mp4") }.orEmpty().sortedBy { it.name }
+        val wanted = System.getenv("CUBECUT_REF_VIDEOS").orEmpty()
+        assumeTrue("set CUBECUT_REF_VIDEOS=1 to run", wanted.isNotEmpty())
+        val videos = dir.listFiles { f -> f.name.startsWith("ref_") && f.name.endsWith(".mp4") && places(f).exists() }.orEmpty()
+            .filter { wanted == "1" || wanted in it.name }.sortedBy { it.name }
         assumeTrue("no reference videos on this PC", videos.isNotEmpty())
         return videos
     }
@@ -66,9 +74,9 @@ class ReferenceVideoTest {
                 video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { t -> video.frameTime(t) }
             )
             val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
-            val key = File(dir, v.name.replace(".mp4", ".places.txt")).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
+            val key = places(v).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
                 .map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
-            val c = compareScan(key, scan.solves.filter { it.timeText != "0.34" })       // (a test tap the owner left out of the key)
+            val c = compareScan(key, scan.solves.filter { it.timeText !in LEFT_OUT })
             println(
                 "SCAN ${v.name}: expected ${c.expectedCount}, found ${c.matches.size}, missed ${c.missed.size}, false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}; " +
                         "${c.onFrame} on the frame, ${c.close} within 0.1 s, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
@@ -76,6 +84,7 @@ class ReferenceVideoTest {
             )
             for (f in scan.solves.filter { it.note.isNotEmpty() }) println("   flagged: ${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
             for (f in c.falseSolves) println("   false: ${videoPlace(f.stopSec)} ${f.timeText}")
+            for (f in scan.solves.filter { it.timeText in LEFT_OUT }) println("   left out: ${videoPlace(f.stopSec)} ${f.timeText}")
             for (m in c.missed) println("   missed: ${videoPlace(m.stopSec)} ${m.time}")
             for (m in c.wrongTime) println("   wrong: ${m.expected.time} as ${m.found.timeText}")
             for (m in c.matches.filter { abs(it.offsetSec) > CUT_FRAME_SEC }) println("   cut off: ${m.expected.time} by ${"%+.3f".format(m.offsetSec)} s")
@@ -88,8 +97,8 @@ class ReferenceVideoTest {
     /** The whole chain on the first video, with the picture moved after a third and again after two thirds of it. */
     @Test
     fun smallCameraMoves() {
-        val v = videos().first()
-        val key = File(dir, v.name.replace(".mp4", ".places.txt")).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
+        val v = videos().first { it.name.startsWith("ref_cstimer") }
+        val key = places(v).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
             .map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
         // per stage: shift right, shift down (pixels of a 1080 x 1920 frame), zoom, turn (degrees)
         val cases = mapOf(

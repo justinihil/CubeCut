@@ -135,6 +135,12 @@ private fun median(v: List<Double>): Double {
 /** The most common value (the first seen wins a tie), or null. */
 private fun <T> mostCommon(v: List<T>): T? = v.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
 
+/** [tenths] of a second as a timer shows them: 594 = "59.4", 604 = "1:00.4". */
+private fun tenthsShown(tenths: Int): String {
+    val s = tenths / 10
+    return (if (s < 60) "$s" else "${s / 60}:${(s % 60).toString().padStart(2, '0')}") + ".${tenths % 10}"
+}
+
 /** Is [b] the number [a], [dt] seconds later, still running? */
 private fun rises(a: TimeRow, b: TimeRow, dt: Double): Boolean {
     val lastPlace = Math.pow(10.0, -a.decimals.toDouble())
@@ -431,7 +437,7 @@ private class TimerSearch(
         // The exact start. First its phase: the one that makes the tenths' shapes most alike within each label (nothing has to be read
         // right for that). Then which whole tenth: the shift that agrees best with the readings, and clearly better than the next best.
         val n = seen.size
-        val tenth = seen.map { it.row.shapes[it.row.text.indexOf('.')] }
+        val tenth = seen.map { it.row.shapes[it.row.text.substringBefore('.').count { c -> c.isDigit() }] }
         val phase = (0 until 20).map { it * 0.005 }.maxByOrNull { x ->
             val sums = Array(10) { FloatArray(tenth[0].size) }
             val counts = IntArray(10)
@@ -455,11 +461,11 @@ private class TimerSearch(
             val part = tenths - floor(tenths)
             if (tenths < 0 || part <= 0.3 || part >= 0.8) continue              // near a change two numbers are blended
             val whole = floor(tenths).toInt()
-            val want = "${whole / 10}.${whole % 10}"
+            val want = tenthsShown(whole)
             val have = s.row.text.take(s.row.text.indexOf('.') + 2)
             if (have.length != want.length) continue
             if (have.dropLast(2) != want.dropLast(2) && have.indices.count { have[it] != want[it] } > 1) continue
-            want.filter { it != '.' }.forEachIndexed { i, c -> into[c - '0'].add(s.row.shapes[i]) }
+            want.filter { it.isDigit() }.forEachIndexed { i, c -> into[c - '0'].add(s.row.shapes[i]) }
         }
     }
 

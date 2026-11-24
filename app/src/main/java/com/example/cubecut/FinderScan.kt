@@ -51,11 +51,11 @@ const val CLOCK_NOTE = "the running time doesn't confirm this time - check it"
 const val HIDDEN_STOP_NOTE = "the timer was hidden when it stopped, the cut is worked out - check it"
 
 private class TimeAt(val t: Double, val text: String) {
-    val seconds: Double = text.toDouble()
+    val seconds: Double = shownSeconds(text)
 }
 
 private class Stop(val text: String, var sec: Double, val votes: Int, val reads: Int, val certain: Boolean) {
-    val seconds: Double = text.toDouble()
+    val seconds: Double = shownSeconds(text)
     var confirmed: Boolean? = null      // null = no running reading to go by
     var agree = 0                       // how many running readings agree on the start
     var gap = 0.0                       // start to stop, minus the time
@@ -105,7 +105,7 @@ private class FinderScan(
     }
 
     private fun isStopped(text: String) = decimalsOf(text) == stoppedDecimals
-    private fun isZero(text: String) = text.toDouble() == 0.0
+    private fun isZero(text: String) = shownSeconds(text) == 0.0
 
     fun run(): ScanResult {
         findStops()
@@ -171,7 +171,7 @@ private class FinderScan(
             val before = running.filter { it.t > t - 12 && it.t < t }
             if (before.size >= 4) {
                 val start = middle(before.map { it.t - it.seconds })
-                val fits = counts.keys.filter { abs(votes[0].t - start - it.toDouble()) <= 0.75 }
+                val fits = counts.keys.filter { abs(votes[0].t - start - shownSeconds(it)) <= 0.75 }
                 if (fits.isNotEmpty() && time !in fits) time = fits.maxByOrNull { counts[it]!! }!!
             }
             val first = votes.first { it.text == time }.t

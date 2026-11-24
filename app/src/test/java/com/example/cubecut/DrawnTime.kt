@@ -35,17 +35,21 @@ object DrawnTime {
     class Canvas(val w: Int, val h: Int) {
         private val cover = FloatArray(w * h)
 
-        /** [text] in [style], starting at ([x], [y]): 44 px digits times [scale]. [slope] tilts the line, [lean] the digits. */
+        /**
+         * [text] in [style], starting at ([x], [y]): 44 px digits times [scale]. [slope] tilts the line, [lean] the digits.
+         * ':' is a colon that stands on the line, ';' draws one halfway up (some fonts do that).
+         */
         fun put(text: String, style: String, x: Double, y: Double, scale: Double, slope: Double = 0.0, lean: Double = 0.0): Canvas {
             val s = styles.first { it.name == style }
             val n = s.size
             var pen = x
             for (c in text) {
-                if (c == '.') {
-                    // a square point on the line the digits stand on
+                if (!c.isDigit()) {
+                    // square dots: a point stands on the line the digits stand on
                     val bottom = (0 until n).last { r -> (0 until n).any { q -> ink(s.digits[0], r * n + q) > 127 } }
                     val dot = ByteArray(n * n)
-                    for (r in bottom - 5..bottom) for (q in 2..7) dot[r * n + q] = -1
+                    for (up in when (c) { ':' -> listOf(0, 26); ';' -> listOf(8, 29); else -> listOf(0) })
+                        for (r in bottom - up - 5..bottom - up) for (q in 2..7) dot[r * n + q] = -1
                     stamp(dot, n, 0, 10, pen, x, y, scale, slope, lean)
                     pen += 11 * scale
                 } else {

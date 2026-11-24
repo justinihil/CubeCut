@@ -165,7 +165,7 @@ What each step taught:
 - **A time that reappears is the same hold** unless the timer ran in between (17 times on 01, after the scramble PDF).
 - **Start to stop:** on the real videos every solve agreed with the clock within 0.12 s (0.2 s in the blurred copies; more when the stop itself was covered). It exposes wrong whole numbers and tenths, not a wrong hundredth, and gives the stop when the first frame was covered (worst 0.14 s off).
 
-**Not tested:** other fonts and themes in real footage, phone timer apps, times over a minute (no colon), timers without decimals while running, +2 / DNF marks, seven-segment digits, two readable timers, a hand over the digits in real footage.
+**Not tested:** other fonts and themes in real footage, phone timer apps, times over a minute (no colon; read since step 6), timers without decimals while running, +2 / DNF marks, seven-segment digits, two readable timers, a hand over the digits in real footage.
 
 **Special to these videos:** none of the rules are, but the numbers were tuned on one desk, one font and one person. A stopped time with two decimals and a running one with one is learned, not assumed. Only `0.00` counts as a reset.
 
@@ -187,7 +187,7 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 3. ✅ Scan (`FinderScan.kt`): frame-by-frame cuts, the clock check, a time that reappears. Only for timers the finder found, and only in the debug scan report. Phone, video 01: 25 of 25, no false solves or wrong times, 2 min for 21 min of video ([numbers](algorithms.md#3-reading-the-timer)).
 4. ✅ *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix. Tested by the owner on the phone (2026-11-24). Decided (owner, 2026-11-24): the Setup box says CubeCut finds the timer, with *Set up by hand* as a small button; only the place of a found timer is remembered; *Read timer here* only after a setup by hand; *Find it by itself again* drops that setup; *Couldn't find the timer* shows what to try and a *Set up by hand* button.
 5. ➖ Follow a camera that moves: not built (owner, 2026-11-24). A fixed camera is a requirement, told to the user; small moves are tolerated, measured in [algorithms](algorithms.md#3-reading-the-timer).
-6. ⬜ Times over a minute (the colon). Waiting on the owner's 4x4 footage.
+6. ✅ Times over a minute (the colon, 2026-11-25). The owner's three 4x4 videos: 1 of 1 each, right time, on the frame; the csTimer sessions unchanged ([numbers](algorithms.md#3-reading-the-timer)). Waiting on the phone test.
 7. ⬜ A csTimer-like timer with another font.
 
 Seven-segment timers come after the QiYi baseline.

@@ -13,7 +13,7 @@ Notes on history:
 ## [Unreleased]
 
 ### Added
-- **No timer setup any more for csTimer and other solid digits.** *Find solves* finds the timer by itself, learns how its digits look and reads it: no corners, no typed number. When two numbers run at the same time it asks which one is the timer. QiYi, Stackmat, GAN and other seven-segment timers still need *Set up by hand* (in the Setup box), and a setup by hand always wins.
+- **No timer setup any more for csTimer and other solid digits.** *Find solves* finds the timer by itself, learns how its digits look and reads it, also over a minute (`1:04.42`): no corners, no typed number. When two numbers run at the same time it asks which one is the timer. QiYi, Stackmat, GAN and other seven-segment timers still need *Set up by hand* (in the Setup box), and a setup by hand always wins.
 - **Solves the running timer doesn't confirm** are kept and marked *check*, for example a test tap, or a time misread by a digit. So are solves whose stop was hidden: their cut is worked out from the running time.
 - **1-frame buttons** in the editor's *Edit* window (◂ 1 frame / 1 frame ▸), so a cut can sit exactly on the first frame of the final time. One step is one frame of that video (30 or 60 fps).
 - **Puzzle logos:** a small flat drawing for each puzzle (a grid for 2x2 to 7x7, a pentagon for Megaminx, and so on; a plain cube for *Other*). They show in the viewer's details, on the puzzle buttons of the *Which puzzle is this?* window, in a corner of tagged clip and video pictures in the Gallery, and on the *Puzzle:* line while ticking clips.

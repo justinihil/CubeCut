@@ -33,7 +33,7 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 * Head-mounted, handheld or otherwise moving cameras
 * 4K, HDR / 10-bit video, and frame rates other than 30 and 60 fps
 * csTimer with other fonts and themes than its default, phone timer apps, and other solid digits
-* Penalty marks (+2 / DNF) next to the time, and times of an hour or more. Times over a minute only work with a timer set up by hand
+* Penalty marks (+2 / DNF) next to the time, and times of an hour or more
 * A timer that blanks or resets its display right after the solve. The final time has to stay on screen for about 1.5 s.
 
 ## Requirements

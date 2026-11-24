@@ -150,6 +150,29 @@ class FinderScanTest {
     }
 
     @Test
+    fun timesOverAMinute() {
+        val big = listOf(58.31, 64.42, 187.05)
+        val begin = listOf(10.0, 90.0, 180.0)
+        fun text(s: Double, decimals: Int): String {
+            val rest = "%.${decimals}f".format(Locale.ROOT, s % 60)
+            return if (s < 60) rest else "${(s / 60).toInt()}:${rest.padStart(decimals + 3, '0')}"
+        }
+        val found = scanFoundTimer({ t ->
+            val i = begin.indexOfLast { it <= t }
+            when {
+                i < 0 -> "0.00"
+                t < begin[i] + big[i] - 1e-9 -> text(floor((t - begin[i]) * 10 + 1e-9) / 10, 1)
+                else -> text(big[i], 2)
+            }
+        }, 385.0, 1, 2, frame).solves
+        assertEquals(listOf("58.31", "1:04.42", "3:07.05"), found.map { it.timeText })
+        for (i in big.indices) {
+            assertEquals(begin[i] + big[i], found[i].stopSec, frame + 1e-6)
+            assertEquals("", found[i].note)
+        }
+    }
+
+    @Test
     fun canBeCancelled() {
         try {
             scanFoundTimer({ shown(it) }, duration, 1, 2, frame, isCancelled = { true })

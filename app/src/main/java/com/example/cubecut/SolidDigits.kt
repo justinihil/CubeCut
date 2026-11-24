@@ -59,7 +59,7 @@ const val MIN_LIKENESS = 0.6f
 /** A row steeper than this (height per width) is not a row of digits. */
 private const val MAX_SLOPE = 0.8
 
-/** One time seen in a picture. [text] is as shown, e.g. "12.69"; [height] is the digits' height in pixels. */
+/** One time seen in a picture. [text] is as shown, e.g. "12.69" or "1:04.42"; [height] is the digits' height in pixels. */
 class TimeRow(
     val text: String,
     val likeness: Float,        // of its least certain digit
@@ -69,7 +69,7 @@ class TimeRow(
     val block: Int,             // which of SEARCH_BLOCKS it was found with
     val shapes: List<FloatArray>
 ) {
-    val seconds: Double = text.toDouble()
+    val seconds: Double = shownSeconds(text)
     val decimals: Int = text.length - 1 - text.indexOf('.')
 }
 
@@ -497,7 +497,13 @@ class DigitShapes private constructor(
 // rows of digits
 // ---------------------------------------------------------------------------------------
 
-private val TIME_TEXT = Regex("\\d{1,3}\\.\\d{1,3}")
+private val TIME_TEXT = Regex("(\\d{1,3}|\\d{1,2}:[0-5]\\d)\\.\\d{1,3}")
+
+/** "12.69" -> 12.69, "1:04.42" -> 64.42. Only for texts this reader gave (a zero is allowed, unlike in [parseTimeSeconds]). */
+fun shownSeconds(text: String): Double {
+    val colon = text.indexOf(':')
+    return if (colon < 0) text.toDouble() else text.take(colon).toInt() * 60 + text.drop(colon + 1).toDouble()
+}
 
 /** The slope of the straight line that fits the points best. */
 private fun slopeOf(x: DoubleArray, y: DoubleArray): Double {
@@ -510,7 +516,7 @@ private fun slopeOf(x: DoubleArray, y: DoubleArray): Double {
 }
 
 /**
- * Every time with a decimal point that can be read in [pic] (a colon isn't read yet). [darks]: look for light digits (false), dark ones
+ * Every time with a decimal point that can be read in [pic], with or without minutes. [darks]: look for light digits (false), dark ones
  * (true) or both. The same time is usually found with several [blocks] and is then listed several times; [pickRow] chooses.
  * Boxes and heights are in pixels of the whole frame: [pic] starts at ([offX], [offY]), and is looked at [shrink] times smaller.
  */
@@ -569,16 +575,18 @@ private fun digitRows(digits: List<Blob>): List<List<Blob>> {
     return rows
 }
 
-/** The row as a time, or null: it must have exactly one decimal point, and every blob must look like a digit. */
+/** The row as a time, or null: it must have exactly one decimal point, at most one colon before it, and every blob must look like a digit. */
 private fun readRow(
     blobs: Blobs, row: List<Blob>, dots: List<Blob>, examples: DigitShapes, dark: Boolean, block: Int, minLikeness: Float, offX: Int, offY: Int,
     shrink: Int
 ): TimeRow? {
     var point = -1
+    var colon = -1
     for (i in 0 until row.size - 1) {
-        if (hasPoint(row[i], row[i + 1], dots)) {
-            if (point >= 0) return null
-            point = i + 1
+        when (markBetween(row[i], row[i + 1], dots)) {
+            Mark.POINT -> { if (point >= 0) return null; point = i + 1 }
+            Mark.COLON -> { if (colon >= 0 || point >= 0) return null; colon = i + 1 }
+            Mark.NONE -> {}
         }
     }
     if (point < 0) return null
@@ -590,7 +598,13 @@ private fun readRow(
     for (b in row) shapes.add(digitShape(levelled(blobs.picture(b, (abs(slope) * b.w).toInt() + 2), slope)) ?: return null)
     val read = examples.readRow(shapes)
     if (read.likeness.min() < minLikeness || read.digits.any { it < 0 }) return null
-    val text = read.digits.take(point).joinToString("") + "." + read.digits.drop(point).joinToString("")
+    val text = buildString {
+        for (i in row.indices) {
+            if (i == colon) append(':')
+            if (i == point) append('.')
+            append(read.digits[i])
+        }
+    }
     if (!TIME_TEXT.matches(text)) return null
     val heights = row.map { it.h }.sorted()
     val n = heights.size
@@ -603,8 +617,13 @@ private fun readRow(
     )
 }
 
-/** Is there a decimal point between these two digits: a small blob near the line they stand on? */
-private fun hasPoint(a: Blob, b: Blob, dots: List<Blob>): Boolean {
+private enum class Mark { NONE, POINT, COLON }
+
+/**
+ * What stands between these two digits. A decimal point: a small blob near the line they stand on. A colon: two blobs of the same size
+ * above each other (the lower one can be higher up than a point: some fonts put the colon halfway up).
+ */
+private fun markBetween(a: Blob, b: Blob, dots: List<Blob>): Mark {
     val height = (a.h + b.h) / 2.0
     val from = a.x0 + a.w - 2 - 0.1 * height
     val to = b.x0 + 2 + 0.1 * height
@@ -613,14 +632,22 @@ private fun hasPoint(a: Blob, b: Blob, dots: List<Blob>): Boolean {
     var lo = 0
     var hi = dots.size
     while (lo < hi) { val mid = (lo + hi) / 2; if (dots[mid].x0 < from - 0.3 * height) lo = mid + 1 else hi = mid }
+    val near = ArrayList<Blob>(4)
     while (lo < dots.size && dots[lo].x0 < to) {
         val d = dots[lo++]
         val cx = d.x0 + d.w / 2.0
-        if (cx > from && cx < to && d.h > 0.04 * height && d.h < 0.28 * height && d.w > 0.04 * height && d.w < 0.3 * height &&
-            abs(d.y0 + d.h / 2.0 - base) < 0.28 * height
-        ) return true
+        if (cx > from && cx < to && d.h > 0.04 * height && d.h < 0.28 * height && d.w > 0.04 * height && d.w < 0.3 * height) near.add(d)
     }
-    return false
+    // how far the middle of a dot is above the line, in digit heights
+    fun up(d: Blob) = (base - d.y0 - d.h / 2.0) / height
+    for (low in near) for (high in near) {
+        val apart = up(high) - up(low)
+        if (up(low) > -0.28 && up(low) < 0.45 && up(high) > 0.35 && up(high) < 0.95 && apart > 0.25 && apart < 0.8 &&
+            abs((high.x0 + high.w / 2.0) - (low.x0 + low.w / 2.0)) < (0.08 + 0.5 * apart) * height &&
+            min(low.w, high.w) >= 0.5 * max(low.w, high.w) && min(low.h, high.h) >= 0.5 * max(low.h, high.h)
+        ) return Mark.COLON
+    }
+    return if (near.any { abs(up(it)) < 0.28 }) Mark.POINT else Mark.NONE
 }
 
 /** The reading most blocks agree on (a tie goes to the one that looks most like digits), or null when nothing was read. */

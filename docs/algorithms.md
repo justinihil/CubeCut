@@ -96,7 +96,8 @@ The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](a
 
 **Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A separate reader that needs no display position. *Find solves* uses it on every video without a setup by hand (`analyzeByItself` in `AutoScan.kt`).
 1. Black-and-white by comparing each pixel with the average around it (`SEARCH_BLOCKS`, three sizes), for light and dark digits.
-2. Joined blobs of digit size are chained into rows; a row needs exactly one decimal point.
+2. Joined blobs of digit size are chained into rows; a row needs exactly one decimal point, and may have one colon before it (`1:04.42`).
+   A **colon** is two dots of about the same size above each other, between 0.25 and 0.8 digit heights apart (`markBetween`). It may stand on the line or halfway up. Minutes have one or two digits, seconds after a colon two, below 60. A time with a colon but no decimals (a clock) isn't read. Hours aren't read.
 3. The row's slope is undone, and each blob is scaled to 24 × 28 and compared with example digits. **All digits of a row lean the same way**, so the lean that suits the whole row counts.
 4. `pickRow`: the reading most block sizes agree on.
 
@@ -123,6 +124,11 @@ Measured on the PC with the app's own code (`ReferenceVideoTest`, 2026-11-24, wi
 | `ref_cstimer_old_01` | 25 / 25 | 0 | 0 | 25 | 0.017 s | 3017 |
 | `ref_cstimer_old_02` | 25 / 25 | 0 | 0 | 24 | 0.084 s | 2424 |
 | `ref_cstimer_old_03` | 25 / 25 | 0 | 0 | 25 | 0.017 s | 2424 |
+| `ref_4x4_01` (1:04.42, 30 fps) | 1 / 1 | 0 | 0 | 1 | 0.000 s | 170 |
+| `ref_4x4_02` (1:01.39, 30 fps) | 1 / 1 | 0 | 0 | 1 | 0.000 s | 168 |
+| `ref_4x4_03` (1:01.31) | 1 / 1 | 0 | 0 | 1 | 0.017 s | 178 |
+
+The 4x4 videos (2026-11-25) are 75 to 79 s long with **one solve over a minute** each. Before the colon was read, none was found ("never seen to stop"); finding and learning already worked from the one solve. Real footage covers minute 1 only, csTimer's font only; other fonts, a colon halfway up and times to 10 minutes are covered by drawn pictures (`SolidDigitsTest`).
 
 On 03 it also lists the `0.34` test tap, flagged, which the owner left out of the key. Scanning took 4 to 5 s per video without getting pictures.
 
