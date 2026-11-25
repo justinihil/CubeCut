@@ -39,8 +39,9 @@ class ReferenceVideoTest {
     /** Shown by the timer, but left out of the keys: a test tap (csTimer 03) and a solve deleted on the screen (other timer 01). */
     private val LEFT_OUT = setOf("0.34", "7.480")
 
-    /** The fonts, without the one that looks like csTimer's. */
-    private fun fonts(): DigitShapes = DrawnTime.without("arimo")
+    /** The fonts, without the ones that look like csTimer's, or like flowtimer's (the other timer). */
+    private fun fonts(video: File): DigitShapes =
+        if ("othertimer" in video.name) DrawnTime.without("robotomono", "jetbrainsmono", "roboto") else DrawnTime.without("arimo")
 
     private fun places(video: File) = File(dir, video.name.replace(".mp4", ".places.txt"))
 
@@ -59,7 +60,7 @@ class ReferenceVideoTest {
         for (v in videos()) {
             val video = FfmpegVideo(v)
             val started = System.nanoTime()
-            val r = findTimer({ video.at(it) }, video.duration, fonts())
+            val r = findTimer({ video.at(it) }, video.duration, fonts(v))
             val finding = (System.nanoTime() - started - video.nanos) / 1e9
             println("FINDER ${v.name}: ${if (r.timer != null) "FOUND" else "NOT FOUND"}; ${r.places} places, ${r.wholeFrames} whole frames, ${r.areaReads} area reads; ${"%.1f".format(finding)} s without getting pictures")
             for (n in r.notes) println("   $n")
@@ -117,7 +118,7 @@ class ReferenceVideoTest {
                     }
                 }
             }
-            val r = findTimer({ at(it) }, video.duration, fonts())
+            val r = findTimer({ at(it) }, video.duration, fonts(v))
             val timer = r.timer
             if (timer == null) { println("MOVES $name: NOT FOUND ${r.notes}"); continue }
             val scan = scanFoundTimer(

@@ -41,6 +41,12 @@ private const val HIDDEN_READS = 4
 /** ...and the time was first seen less than this late. */
 private const val HIDDEN_MAX_SEC = 15.0
 
+/** A time that seemed to stay, but then goes on rising with the clock in this many readings, was running (two blended frames read alike). */
+private const val STILL_RUNNING_READS = 3
+
+/** It wasn't hidden when the timer was seen running, as the clock says, this short before the first frame. */
+private const val SEEN_RUNNING_SEC = 0.5
+
 /** The first frame must show the time again within this many seconds: one odd reading isn't the stop. */
 private const val FIRST_AGAIN_SEC = 0.12
 
@@ -59,6 +65,7 @@ private class Stop(val text: String, var sec: Double, val votes: Int, val reads:
     var confirmed: Boolean? = null      // null = no running reading to go by
     var agree = 0                       // how many running readings agree on the start
     var gap = 0.0                       // start to stop, minus the time
+    var start = 0.0                     // when the timer started, by the running readings
     var workedOut = false               // the cut comes from the clock
 }
 
@@ -165,6 +172,12 @@ private class FinderScan(
                 if (lv != null && !isZero(lv) && isStopped(lv)) votes.add(TimeAt(lt, lv))
                 lt += SolveAnalyzer.SCAN_STEP
             }
+            if (stoppedDecimals == runningDecimals && goesOnRising(held[0], votes)) {
+                running.addAll(votes.filter { it.text != v })
+                recent.clear()
+                t += SolveAnalyzer.SCAN_STEP
+                continue
+            }
             val counts = votes.groupingBy { it.text }.eachCount()
             var time = if (counts[v] == counts.values.max()) v else counts.maxByOrNull { it.value }!!.key
             // the clock helps to choose: the time can't be far from start to now
@@ -181,6 +194,12 @@ private class FinderScan(
             recent = ArrayList()
             t += SolveAnalyzer.LOCK_SEC + SolveAnalyzer.SCAN_STEP
         }
+    }
+
+    /** Does the number rise with the clock after [held]? Only asked when a running time looks like a stopped one (as many decimals). */
+    private fun goesOnRising(held: TimeAt, votes: List<TimeAt>): Boolean {
+        val rising = votes.filter { it.text != held.text && abs((it.t - it.seconds) - (held.t - held.seconds)) <= SEEN_RUNNING_SEC }
+        return rising.size >= STILL_RUNNING_READS && rising.size > votes.count { it.text == held.text }
     }
 
     /**
@@ -227,7 +246,8 @@ private class FinderScan(
                 val rough = middle(starts)
                 val near = starts.filter { abs(it - rough) < 0.2 }.ifEmpty { starts }
                 s.agree = near.size
-                s.gap = s.sec - middle(near) - s.seconds
+                s.start = middle(near)
+                s.gap = s.sec - s.start - s.seconds
                 s.confirmed = abs(s.gap) <= CLOCK_SLACK && near.size >= CLOCK_READS
             }
             previous = s.sec
@@ -251,12 +271,24 @@ private class FinderScan(
         return out
     }
 
+    /** Was the timer seen running up to the first frame of [s]? */
+    private fun seenRunningUntil(s: Stop): Boolean {
+        val n = (SEEN_RUNNING_SEC / frameSec).toInt()
+        for (k in 1..n) {
+            val t = s.sec - k * frameSec
+            val v = (if (t >= 0) readAt(t) else null) ?: continue
+            if (v != s.text && abs(t - shownSeconds(v) - s.start) <= SEEN_RUNNING_SEC) return true
+        }
+        return false
+    }
+
     /** A time first seen too late for the clock: the stop itself was hidden. The clock says when it was. */
     private fun workOutHiddenStops(solves: List<Stop>) {
         val usual = solves.filter { it.confirmed == true }.map { it.gap }       // the display's own delay, the same for every solve
         val bias = if (usual.isEmpty()) 0.0 else middle(usual)
         for (s in solves) {
-            if (s.confirmed == false && s.agree >= HIDDEN_READS && s.gap > CLOCK_SLACK && s.gap < HIDDEN_MAX_SEC) {
+            // (a timer with a smart cube corrects the time when it stops: then the clock is off, and the stop wasn't hidden)
+            if (s.confirmed == false && s.agree >= HIDDEN_READS && s.gap > CLOCK_SLACK && s.gap < HIDDEN_MAX_SEC && !seenRunningUntil(s)) {
                 s.sec -= s.gap - bias
                 s.workedOut = true
             }

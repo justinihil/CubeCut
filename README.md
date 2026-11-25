@@ -25,14 +25,14 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 | Phone | **Samsung Galaxy S25 Ultra**, and only that phone |
 | Footage | **1080p at 30 fps and 60 fps** |
 | Camera | **Fixed on a tripod**, with the timer's display in view |
-| Timers | **QiYi Bluetooth Timer** (LCD display) and **csTimer in the "Digital 2" font**, with csTimer's "use small font after decimal point" option **turned off**, both set up by hand. csTimer in its default font, found automatically, on three recordings of one desk |
+| Timers | **QiYi Bluetooth Timer** (LCD display) and **csTimer in the "Digital 2" font**, with csTimer's "use small font after decimal point" option **turned off**, both set up by hand. csTimer in its default font and flowtimer.io, found automatically, on recordings of one desk |
 
 **Not tested** (it may work, it may not)
 
 * Any other phone or Android version
 * Head-mounted, handheld or otherwise moving cameras
 * 4K, HDR / 10-bit video, and frame rates other than 30 and 60 fps
-* csTimer with other fonts and themes than its default, phone timer apps, and other solid digits
+* csTimer with other fonts and themes than its default, phone timer apps, and other solid digits than csTimer and flowtimer.io
 * Penalty marks (+2 / DNF) next to the time, and times of an hour or more
 * A timer that blanks or resets its display right after the solve. The final time has to stay on screen for about 1.5 s.
 

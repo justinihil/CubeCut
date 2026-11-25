@@ -96,7 +96,7 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 
 **Still missing to close 3.3-A:**
 - the phone test of the scan report (build 89c9a3d), so the report itself is proven on a phone;
-- the QiYi baseline (easy and hard, with the manual setup). It must exist before 3.3-C changes anything for seven-segment timers;
+- the QiYi baseline with the manual setup (`ref_qiyi_old_01`, 55 solves, and `_02`, 30: the answer keys exist, 2026-11-25; the owner's phone reports are missing). It must exist before 3.3-C changes anything for seven-segment timers;
 - csTimer videos of another setup: other font or light theme, camera further away, hands over some stops. The three above share one desk, font and theme;
 - phone timer apps, Stackmat and GAN (sets 3 to 5) can follow later; they don't hold up csTimer.
 
@@ -188,7 +188,7 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 4. ✅ *Find solves* uses it; manual setup as the fallback; the `BackHandler` fix. Tested by the owner on the phone (2026-11-24). Decided (owner, 2026-11-24): the Setup box says CubeCut finds the timer, with *Set up by hand* as a small button; only the place of a found timer is remembered; *Read timer here* only after a setup by hand; *Find it by itself again* drops that setup; *Couldn't find the timer* shows what to try and a *Set up by hand* button.
 5. ➖ Follow a camera that moves: not built (owner, 2026-11-24). A fixed camera is a requirement, told to the user; small moves are tolerated, measured in [algorithms](algorithms.md#3-reading-the-timer).
 6. ✅ Times over a minute (the colon, 2026-11-25). The owner's three 4x4 videos: 1 of 1 each, right time, on the frame; the csTimer sessions unchanged ([numbers](algorithms.md#3-reading-the-timer)). Waiting on the phone test.
-7. ⬜ A csTimer-like timer with another font.
+7. ✅ A csTimer-like timer with another font (flowtimer.io, 2026-11-25): 28 of 28 solves in two videos, no false solves or wrong times, every cut on the frame; 7 flagged, because flowtimer changes the time when it stops ([numbers](algorithms.md#3-reading-the-timer)). Waiting on the phone test.
 
 Seven-segment timers come after the QiYi baseline.
 - The per-video timer columns stay for the fallback.

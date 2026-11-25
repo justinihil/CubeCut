@@ -71,6 +71,13 @@ private const val FOLLOW_SEC = 90.0
 private const val MARGIN_ACROSS = 2.0
 private const val MARGIN_DOWN = 1.2
 
+/** To see a run stop, look this far around it instead, in digit heights: some timers show the stopped time somewhere else for a moment. */
+private const val WATCH_ACROSS = 5.0
+private const val WATCH_DOWN = 2.5
+
+/** A number this close to the edge of the timer's area, in digit heights, could go on outside it: it isn't read at all. */
+private const val EDGE = 0.8
+
 /** The whole picture is searched this many times smaller first; only if that finds nothing, at full size. Digits under 24 px need that. */
 private const val SEARCH_SHRINK = 2
 
@@ -117,7 +124,9 @@ private class Seen(val t: Double, val row: TimeRow)
 private typealias Run = List<Seen>
 
 private fun readArea(frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes): TimeRow? =
-    pickRow(areaRows(frame, area, height, dark, examples, MIN_LIKENESS))
+    pickRow(areaRows(frame, area, height, dark, examples, MIN_LIKENESS).filter {
+        (area.left <= 0 || it.left - area.left >= EDGE * height) && (area.right >= frame.w || area.right - it.right >= EDGE * height)
+    })
 
 private fun areaRows(frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes, minLikeness: Float): List<TimeRow> =
     findTimeRows(
@@ -295,16 +304,19 @@ private class TimerSearch(
     }
 
     private fun setArea(rows: List<TimeRow>) {
-        area = Area(
-            max(0, (rows.minOf { it.left } - MARGIN_ACROSS * height).toInt()), max(0, (rows.minOf { it.top } - MARGIN_DOWN * height).toInt()),
-            min(frameW, (rows.maxOf { it.right } + MARGIN_ACROSS * height).toInt()), min(frameH, (rows.maxOf { it.bottom } + MARGIN_DOWN * height).toInt())
-        )
+        area = around(rows, MARGIN_ACROSS, MARGIN_DOWN)
     }
 
-    private fun read(t: Double, examples: DigitShapes): TimeRow? {
+    private fun around(rows: List<TimeRow>, across: Double, down: Double) = Area(
+        max(0, (rows.minOf { it.left } - across * height).toInt()), max(0, (rows.minOf { it.top } - down * height).toInt()),
+        min(frameW, (rows.maxOf { it.right } + across * height).toInt()), min(frameH, (rows.maxOf { it.bottom } + down * height).toInt())
+    )
+
+    /** What [run]'s number shows at second [t], also when it isn't quite at its place any more. */
+    private fun readAround(run: Run, t: Double, examples: DigitShapes): TimeRow? {
         val p = frame(t) ?: return null
         areaReads++
-        return readArea(p, area, height, dark, examples)
+        return readArea(p, around(run.map { it.row }, WATCH_ACROSS, WATCH_DOWN), height, dark, examples)
     }
 
     /** More runs of the same number, at other places, one at a time. */
@@ -334,7 +346,7 @@ private class TimerSearch(
         var miss = 0
         var t = last + RUN_STEP
         while (t < duration && miss < 4 && held.size < 3 && t - last < FOLLOW_SEC) {
-            val r = read(t, fonts)
+            val r = readAround(run, t, fonts)
             when {
                 r == null -> miss++
                 r.decimals == run[0].row.decimals && abs(t - start - r.seconds) < 0.16 -> { running.add(Seen(t, r)); miss = 0; held = ArrayList() }
@@ -358,7 +370,7 @@ private class TimerSearch(
             var held = ArrayList<Seen>()
             var t = last.t + RUN_STEP
             while (t < min(duration, last.t + 60) && held.size < 3) {
-                val r = read(t, learned)
+                val r = readAround(run, t, learned)
                 if (r != null) {
                     if (abs(t - start - r.seconds) < 0.2 && r.decimals == run[0].row.decimals) held = ArrayList()
                     else if (r.seconds >= last.row.seconds) { if (held.isNotEmpty() && held.last().row.text != r.text) held = ArrayList(); held.add(Seen(t, r)) }

@@ -37,9 +37,9 @@ object DrawnTime {
 
         /**
          * [text] in [style], starting at ([x], [y]): 44 px digits times [scale]. [slope] tilts the line, [lean] the digits.
-         * ':' is a colon that stands on the line, ';' draws one halfway up (some fonts do that).
+         * [pointWidth]: how wide a point, a colon or a space is, at 44 px digits. ':' is a colon that stands on the line, ';' draws one halfway up (some fonts do that).
          */
-        fun put(text: String, style: String, x: Double, y: Double, scale: Double, slope: Double = 0.0, lean: Double = 0.0): Canvas {
+        fun put(text: String, style: String, x: Double, y: Double, scale: Double, slope: Double = 0.0, lean: Double = 0.0, pointWidth: Double = 11.0): Canvas {
             val s = styles.first { it.name == style }
             val n = s.size
             var pen = x
@@ -48,10 +48,10 @@ object DrawnTime {
                     // square dots: a point stands on the line the digits stand on
                     val bottom = (0 until n).last { r -> (0 until n).any { q -> ink(s.digits[0], r * n + q) > 127 } }
                     val dot = ByteArray(n * n)
-                    for (up in when (c) { ':' -> listOf(0, 26); ';' -> listOf(8, 29); else -> listOf(0) })
+                    for (up in when (c) { ':' -> listOf(0, 26); ';' -> listOf(8, 29); ' ' -> emptyList(); else -> listOf(0) })
                         for (r in bottom - up - 5..bottom - up) for (q in 2..7) dot[r * n + q] = -1
-                    stamp(dot, n, 0, 10, pen, x, y, scale, slope, lean)
-                    pen += 11 * scale
+                    stamp(dot, n, 0, 10, pen + (pointWidth - 11) / 2 * scale, x, y, scale, slope, lean)
+                    pen += pointWidth * scale
                 } else {
                     val g = s.digits[c - '0']
                     val cols = (0 until n).filter { q -> (0 until n).any { r -> ink(g, r * n + q) > 127 } }

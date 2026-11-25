@@ -149,6 +149,31 @@ class FinderScanTest {
         for (f in found) assertEquals("", f.note)
     }
 
+    /** Three decimals all the time, like flowtimer. [corrected]: the stopped time minus the running one (a smart cube knows better). */
+    private fun threeDecimals(t: Double, corrected: Double = 0.0): String {
+        val i = floor(t / cycle).toInt().coerceIn(times.indices)
+        val s = t - i * cycle
+        return "%.3f".format(Locale.ROOT, if (s < 10) 0.0 else if (t < stop(i) - 1e-9) floor((t - start(i)) * 1000 + 1e-9) / 1000 else times[i] + corrected)
+    }
+
+    @Test
+    fun runningReadingsThatLookAlike_areNoStop() {
+        // in the third solve two readings half a second apart come out the same
+        val found = scanFoundTimer({ t -> if (t > start(2) + 4.9 && t < start(2) + 5.6) "5.308" else threeDecimals(t) }, duration, 3, 3, frame).solves
+        assertEquals(times.map { "%.3f".format(Locale.ROOT, it) }, found.map { it.timeText })
+        for (i in times.indices) assertEquals(stop(i), found[i].stopSec, frame + 1e-6)
+    }
+
+    @Test
+    fun aTimeCorrectedWhenItStops_keepsItsCut_andIsFlagged() {
+        val found = scanFoundTimer({ t -> threeDecimals(t, -0.62) }, duration, 3, 3, frame).solves
+        assertEquals(times.map { "%.3f".format(Locale.ROOT, it - 0.62) }, found.map { it.timeText })
+        for (i in times.indices) {
+            assertEquals(stop(i), found[i].stopSec, frame + 1e-6)
+            assertEquals(CLOCK_NOTE, found[i].note)
+        }
+    }
+
     @Test
     fun timesOverAMinute() {
         val big = listOf(58.31, 64.42, 187.05)

@@ -137,6 +137,32 @@ class TimerFinderTest {
         assertEquals("1:04.42", r.timer!!.read(draw("1:04.42"))?.text)
     }
 
+    /** For 3 s after the stop the time shows further left (a panel opens next to it), as in flowtimer. */
+    @Test
+    fun aStoppedTimeThatShowsElsewhereForAMoment_isInTheArea() {
+        fun at(text: String, x: Double) = pictures.getOrPut("$text at $x") { DrawnTime.Canvas(520, 240).put(text, "roboto Regular", x, 60.0, 1.0).pic() }
+        val r = findTimer({ t ->
+            val i = (t / cycle).toInt().coerceIn(times.indices)
+            val after = t - i * cycle - 10 - times[i]
+            at(shown(t), if (after >= 0 && after < 3) 90.0 else 260.0)
+        }, duration, fonts)
+        val timer = r.timer
+        assertNotNull("${r.notes}", timer)
+        for (t in times) for (x in listOf(90.0, 260.0)) {
+            val text = "%.2f".format(Locale.ROOT, t)
+            assertEquals("at $x", text, timer!!.read(at(text, x))?.text)
+        }
+    }
+
+    @Test
+    fun aNumberAtTheEdgeOfTheArea_isNotHalfRead() {
+        val p = DrawnTime.Canvas(420, 240).put("16.25", "roboto Regular", 60.0, 60.0, 1.0).pic()
+        fun timer(left: Int) = FoundTimer(Area(left, 20, 400, 160), Area(left, 60, 200, 110), 44.0, false, 1, 2, fonts)
+        assertEquals("16.25", timer(10).read(p)?.text)
+        assertEquals("16.25", timer(0).read(p.crop(20, 0, 420, 240))?.text)       // (the edge of the picture is no reason)
+        for (left in 50..90 step 4) assertTrue("$left", timer(left).read(p).let { it == null || it.text == "16.25" })
+    }
+
     @Test
     fun noPicture_isNotFound() {
         assertNull(findTimer({ null }, 60.0, fonts).timer)

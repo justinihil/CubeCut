@@ -56,6 +56,12 @@ private const val HOPELESS = 0.35f
 /** Below this likeness (1 = identical) a blob is not called a digit, and its row is dropped. */
 const val MIN_LIKENESS = 0.6f
 
+/** Two neighbouring digits are at most this far apart, in digit heights... */
+private const val MAX_GAP = 0.75
+
+/** ...or this far, when a decimal point or a colon stands between them: in fixed-width fonts those are as wide as a digit. */
+private const val MAX_GAP_WITH_MARK = 1.2
+
 /** A row steeper than this (height per width) is not a row of digits. */
 private const val MAX_SLOPE = 0.8
 
@@ -540,23 +546,25 @@ fun findTimeRows(
         }.sortedBy { it.x0 }
         if (digits.size < 2) continue
         val dots = blobs.list.filter { it.h >= 2 && it.h < 0.28 * most && it.w < 0.3 * most }.sortedBy { it.x0 }
-        for (row in digitRows(digits)) readRow(blobs, row, dots, examples, dark, block, minLikeness, offX, offY, shrink)?.let { out.add(it) }
+        for (row in digitRows(digits, dots)) readRow(blobs, row, dots, examples, dark, block, minLikeness, offX, offY, shrink)?.let { out.add(it) }
     }
     return out
 }
 
 /** Chains digit-sized blobs, left to right: the next one is close, about as tall and about as high up. */
-private fun digitRows(digits: List<Blob>): List<List<Blob>> {
+private fun digitRows(digits: List<Blob>, dots: List<Blob>): List<List<Blob>> {
     val next = IntArray(digits.size) { -1 }
     val hasPrevious = BooleanArray(digits.size)
     for (i in digits.indices) {
         val a = digits[i]
         for (j in i + 1 until digits.size) {
             val b = digits[j]
-            if (b.x0 - a.x0 > a.w + 0.75 * 1.4 * a.h) break       // sorted by left edge: nothing further right is close enough
+            if (b.x0 - a.x0 > a.w + MAX_GAP_WITH_MARK * 1.4 * a.h) break       // sorted by left edge: nothing further right is close enough
             val gap = b.x0 - (a.x0 + a.w)
-            if (b.x0 > a.x0 && gap > -0.35 * a.h && gap < 0.75 * max(a.h, b.h) && b.h > 0.55 * a.h && b.h < 1.4 * a.h &&
-                abs((b.y0 + b.h / 2.0) - (a.y0 + a.h / 2.0)) < 0.6 * a.h
+            val tall = max(a.h, b.h)
+            if (b.x0 > a.x0 && gap > -0.35 * a.h && gap < MAX_GAP_WITH_MARK * tall && b.h > 0.55 * a.h && b.h < 1.4 * a.h &&
+                abs((b.y0 + b.h / 2.0) - (a.y0 + a.h / 2.0)) < (if (gap < MAX_GAP * tall) 0.6 else 0.75) * a.h &&
+                (gap < MAX_GAP * tall || markBetween(a, b, dots) != Mark.NONE)
             ) {
                 next[i] = j
                 hasPrevious[j] = true

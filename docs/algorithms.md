@@ -96,7 +96,7 @@ The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](a
 
 **Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A separate reader that needs no display position. *Find solves* uses it on every video without a setup by hand (`analyzeByItself` in `AutoScan.kt`).
 1. Black-and-white by comparing each pixel with the average around it (`SEARCH_BLOCKS`, three sizes), for light and dark digits.
-2. Joined blobs of digit size are chained into rows; a row needs exactly one decimal point, and may have one colon before it (`1:04.42`).
+2. Joined blobs of digit size are chained into rows: neighbours at most 0.75 digit heights apart, or 1.2 when a point or colon stands between them (fixed-width fonts); a row needs exactly one decimal point, and may have one colon before it (`1:04.42`).
    A **colon** is two dots of about the same size above each other, between 0.25 and 0.8 digit heights apart (`markBetween`). It may stand on the line or halfway up. Minutes have one or two digits, seconds after a colon two, below 60. A time with a colon but no decimals (a clock) isn't read. Hours aren't read.
 3. The row's slope is undone, and each blob is scaled to 24 × 28 and compared with example digits. **All digits of a row lean the same way**, so the lean that suits the whole row counts.
 4. `pickRow`: the reading most block sizes agree on.
@@ -105,7 +105,7 @@ The examples come from 11 open fonts, or only from the video itself once all ten
 
 **Finding the timer** (`TimerFinder.kt`, 3.3-C). Pure logic over "the picture at second t":
 1. **Search** places spread over the video, halving the gaps. A run is 4 pictures 0.5 s apart in which a number rises by 0.5 each time. After 3 runs of the same number it stops; the **biggest** running number is the timer. If a second number at least 0.6 times as tall ran next to it at two places, CubeCut asks (`FinderResult.choices`); the answer comes back as `near`. The whole picture is searched at half size first, then, if nothing runs, at full size at fewer places.
-2. **Watch** those runs to their end: where the number freezes, and with how many decimals.
+2. **Watch** those runs to their end: where the number freezes, and with how many decimals. This looks in a wider area (`WATCH_ACROSS`), because some timers show the stopped time elsewhere for a moment; the area then covers both places. A number near the area's edge (`EDGE`) isn't read at all, so `16.259` is never half-read as `6.259`.
 3. **Learn:** the same runs again at 12 pictures a second. The exact start is the phase that makes the tenths' shapes most alike within each label, then the whole tenth that agrees best with the readings. The clock then names every digit. Shapes that look more like another digit are left out. Used only when all ten digits were seen at least 4 times.
 
 On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 47 to 66 whole pictures, 273 to 344 area reads, 2.2 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). On the owner's phone (debug build, before the speed-up below) video 01 gave the same result in 48 s: 6 s for pictures, 42 s for searching and reading, 36 ms per area read. Since then pictures are looked at at half size and fonts are compared roughly first, which makes it 3.3 times faster on the PC; the phone isn't measured again yet.
@@ -115,7 +115,8 @@ On the PC, the app's own code found and learned csTimer in all three videos (15 
 - **Start to stop:** the running readings give the start, and stop minus start must be the time within 0.2 s. Not confirmed, or never seen running: the solve is kept with `CLOCK_NOTE` and needs a check. It exposes wrong whole numbers and tenths, not hundredths. The clock also chooses between competing readings in the vote.
 - **The cut is searched frame by frame** in the last half second, with each frame's own time (`GraySource.lastFrameSec`). Halving the gap is misled by frames in which the phone blended two numbers.
 - **A time that shows again without having run** is the same hold (the timer was covered).
-- **A hidden stop** (first seen too late for the clock) is worked out from the start, with `HIDDEN_STOP_NOTE`.
+- **A hidden stop** (first seen too late for the clock) is worked out from the start, with `HIDDEN_STOP_NOTE`. Not when the timer was seen running up to the first frame: then the timer itself changed the time (flowtimer with a smart cube), the cut stays, and the solve gets `CLOCK_NOTE`.
+- **As many decimals running as stopped:** two blended running frames can read alike. A time that goes on rising with the clock in 3 readings (`STILL_RUNNING_READS`) was running.
 
 Measured on the PC with the app's own code (`ReferenceVideoTest`, 2026-11-24, without csTimer's look-alike font):
 
@@ -127,6 +128,10 @@ Measured on the PC with the app's own code (`ReferenceVideoTest`, 2026-11-24, wi
 | `ref_4x4_01` (1:04.42, 30 fps) | 1 / 1 | 0 | 0 | 1 | 0.000 s | 170 |
 | `ref_4x4_02` (1:01.39, 30 fps) | 1 / 1 | 0 | 0 | 1 | 0.000 s | 168 |
 | `ref_4x4_03` (1:01.31) | 1 / 1 | 0 | 0 | 1 | 0.017 s | 178 |
+| `ref_othertimer_01` (flowtimer.io, 7:56) | 16 / 16 | 0 | 0 | 16 | 0.017 s | 1365 |
+| `ref_othertimer_02` (flowtimer.io, 6:02) | 12 / 12 | 0 | 0 | 12 | 0.017 s | 1021 |
+
+The flowtimer videos (2026-11-25) have a fixed-width font with a marked zero, blue on dark blue, three decimals running and stopped, 51 px digits. Measured without Roboto, Roboto Mono and JetBrains Mono, the bundled fonts it resembles; the result with them is the same. **Before** the four rules for it above, they gave 3 / 16 and 2 / 12 (no false solves or wrong times). Those rules were made on these two videos, so there is no untouched flowtimer video. 7 of the 28 solves are flagged: the stopped time differs from the last running one, by 0.62 s in the one case looked at closely. The `7.480` the owner deleted on the screen is found and left out of the key.
 
 The 4x4 videos (2026-11-25) are 75 to 79 s long with **one solve over a minute** each. Before the colon was read, none was found ("never seen to stop"); finding and learning already worked from the one solve. Real footage covers minute 1 only, csTimer's font only; other fonts, a colon halfway up and times to 10 minutes are covered by drawn pictures (`SolidDigitsTest`).
 

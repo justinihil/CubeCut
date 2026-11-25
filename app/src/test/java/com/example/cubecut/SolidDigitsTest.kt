@@ -30,8 +30,9 @@ class SolidDigitsTest {
     private fun without(vararg families: String) = DrawnTime.without(*families)
 
     private fun draw(
-        text: String, style: String, scale: Double = 2.0, slope: Double = 0.0, lean: Double = 0.0, paper: Int = 30, pen: Int = 230, noise: Int = 0
-    ): GrayPic = DrawnTime.Canvas(900, 500).put(text, style, 120.0, 220.0, scale, slope, lean).pic(paper, pen, noise)
+        text: String, style: String, scale: Double = 2.0, slope: Double = 0.0, lean: Double = 0.0, paper: Int = 30, pen: Int = 230, noise: Int = 0,
+        pointWidth: Double = 11.0
+    ): GrayPic = DrawnTime.Canvas(900, 500).put(text, style, 120.0, 220.0, scale, slope, lean, pointWidth).pic(paper, pen, noise)
 
     private fun read(p: GrayPic, examples: DigitShapes, dark: Boolean = false): String? = pickRow(findTimeRows(p, examples, listOf(dark)))?.text
 
@@ -95,6 +96,14 @@ class SolidDigitsTest {
         for (scale in listOf(0.6, 1.0, 2.5)) assertEquals("scale $scale", "1:04.42", read(draw("1:04.42", "arimo Regular", scale), r))
         assertEquals("light theme", "1:04.42", read(draw("1:04.42", "arimo Regular", 1.5, paper = 220, pen = 40), r, dark = true))
         assertEquals("noisy", "1:04.42", read(draw("1:04.42", "arimo Regular", 1.5, noise = 20), r))
+    }
+
+    @Test
+    fun fixedWidthFonts_wherePointsAreAsWideAsDigits() {
+        val r = without("robotomono")
+        for (t in listOf("10.161", "11.681", "7.480", "1:04.423")) assertEquals(t, read(draw(t, "robotomono Regular", 1.2, pointWidth = 38.0), r))
+        // without a point in between, numbers that far apart stay two numbers
+        assertNull(read(draw("11 681", "robotomono Regular", 1.2, pointWidth = 38.0), r))
     }
 
     @Test
