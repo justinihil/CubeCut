@@ -247,13 +247,21 @@ The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or 
 
 So the late cuts come from unreadable frames, and misreads add none. The few early ones also happen without noise: a running frame shortly before the stop can differ from the final time by one 1↔4 or 1↔7, which `similar` accepts. Part of the late error can't be avoided when the first frame itself is unreadable. (An earlier version of this page blamed misreads for all of them. That was never measured and was wrong.)
 
-**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. One row per video, from its report; a timer that isn't found counts as 0 found. The csTimer rows are **not phone runs**: today's app can't search for a timer, and csTimer's font can't be set up by hand, so the result is known without running it. TODO(owner): QiYi baseline (not recorded yet, 2026-11-24).
+**Real-footage baseline.** Owner priority: csTimer on a PC, then phone timer apps, then Stackmat, then GAN / QiYi. One row per video, from its report; a timer that isn't found counts as 0 found. The csTimer rows are **not phone runs**: today's app can't search for a timer, and csTimer's font can't be set up by hand, so the result is known without running it. The QiYi rows are phone runs (2026-11-25).
 
 | Video (timer) | Timer found | Reading: right / wrong / unreadable | Expected | Found | Missed | False | Wrong time | On the frame | Readable | Scan time | Build |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `ref_cstimer_old_01.mp4` (csTimer; 21:10, dim room, scramble PDF shown over it) | no | – | 25 | 0 | 25 | 0 | 0 | – | – | – | 89c9a3d, not run |
 | `ref_cstimer_old_02.mp4` (csTimer; 19:12, brighter) | no | – | 25 | 0 | 25 | 0 | 0 | – | – | – | 89c9a3d, not run |
 | `ref_cstimer_old_03.mp4` (csTimer; 18:45, brighter) | no | – | 25 | 0 | 25 | 0 | 0 | – | – | – | 89c9a3d, not run |
+| `ref_qiyi_old_01.mp4` (QiYi; 28:35) | by hand | 279 / 36 / 15 | 55 | 55 | 0 | 13 | 3 | 26 (45 within 0.1 s, worst 1.348 s) | 76 % | 169.2 s | 6bd0cfc |
+| `ref_qiyi_old_02.mp4` (QiYi; 17:03, steeper) | by hand | 110 / 32 / 38 | 30 | 28 | 2 | 6 | 2 | 7 (23 within 0.1 s, worst 0.755 s) | 66 % | 108.1 s | 6bd0cfc |
+| Both QiYi videos | by itself: no | – | 55 + 30 | 0 | 85 | – | – | – | – | 93.6 s and 116.8 s to say so | 6bd0cfc |
+
+What the QiYi rows show (checked against the keys, 2026-11-25):
+- **All 19 false solves come after a real one, 1 to 20 s into its display:** 13 show exactly its time, 6 look like a misread of it. On 02, the two *missed* solves are two of these false ones: found, but 2.4 and 3.4 s late, more than the report's 2 s limit for the same solve. So no solve is lost completely, and 17 of the 19 are truly extra.
+- **Wrong times are dropped or confused strokes:** a leading 1 lost (14.025 as 4.025, 12.393 as 2.393), 3 as 8 (13.704 as 8.704) and 7 as 1 (11.517 as 11.511, 15.837 as 15.831). 7 as 1 is the most common misread on 02.
+- **Cuts are mostly late** (44 of the 50 off by more than 0.02 s; 6 early, all on 02). The key itself is ±1 frame, because the LCD is slow. Video 02 is 30 fps, so one frame (0.033 s) is already more than the report's 0.02 s: its 7 *on the frame* is too strict, and 22 of 28 are within 0.05 s. *Within 0.1 s* is the fairer number for QiYi.
 
 **How it works.** An answer key says what a video should give, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
 1. **Timer:** was it found? CubeCut looks by itself (3.3-C), with no setup and nothing from the answer key. If the video also has a setup by hand, that is tried from scratch and graded first, the old way. *NOT FOUND* is a result, and the report still runs.
