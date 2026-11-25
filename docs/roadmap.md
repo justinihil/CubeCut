@@ -210,8 +210,14 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 
 **Steps in the app** (owner's go 2026-11-25; each with its own commit and phone test):
 1. ✅ Reader and finder (`SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`), only in the debug scan report ([how](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-25): both QiYis found, in 8.6 s and 5.3 s.
-2. 🟡 Following and scanning (`SegmentTracker.kt`), only in the scan report. PC: 55 / 55 and 30 / 30, no false solves or wrong times, worst cut 0.033 s. Waiting for the owner's phone test, with the answer key **files**.
+2. ✅ Following and scanning (`SegmentTracker.kt`), only in the scan report. Tested by the owner on the phone (2026-11-25): 55 / 55 and 30 / 30, no false solves or wrong times, one cut 0.27 s late (fixed since).
 3. ⬜ *Find solves* uses it. Owner's decisions: seven-segment is tried only when no solid number runs; a **seven-segment setup by hand switches to the new way by itself** at the next *Find solves* (the two ways share no reading code), solid ones set up by hand stay. Proposed: the corners are kept and used if the new way doesn't find the timer.
+**After QiYi: timers that don't show a running time with decimals** (owner's request, 2026-11-25). Neither is found today, because the finder needs a number with a decimal point that rises with the clock.
+- ⬜ **Whole seconds while running**, decimals only when stopped. Whole numbers still rise with the clock, and the moment each second changes gives the start, so the clock check can stay. The inspection countdown must not count.
+- ⬜ **Running time hidden** ("solve", "..."). Nothing rises: look for a big time that appears, stays and changes after each solve. No clock check, so more solves to check; a tap to choose the timer may be needed.
+- A QiYi in view of such a video must not be taken for the timer.
+- Needed first: one short video of each (5 to 10 solves) with csTimer's list as the answer key.
+
 - The per-video timer columns stay for the fallback.
 
 ### 3.3-E Penalty marks and long times on the display ⬜

@@ -38,6 +38,10 @@ private const val SURE = 0.55f
 /** ...and a place is empty when it has less contrast than this share of the others. */
 private const val EMPTY = 0.4f
 
+/** Two digits that fit a place this nearly alike are a close call: then the place is also moved by this many pixels, to all sides. */
+private const val CLOSE_CALL = 0.06f
+private const val NUDGE = 2
+
 /** How many digits a display can have: two before the minutes' colon would be 7, but those aren't read yet. */
 private const val MOST_DIGITS = 6
 
@@ -141,28 +145,49 @@ data class SegmentGrid(
 
     /** What the last [digits] places show, the last one first. */
     fun read(g: GrayPic, digits: Int = MOST_DIGITS): List<PlaceRead> {
-        val level = Level(g, digits, 0)
+        val level = Level(g, digits, NUDGE)
         val p = FloatArray(PLACE)
+        val likes = FloatArray(10)
         return List(digits) { i ->
-            val from = floor(level.starts[i]).toInt()
-            val f = (level.starts[i] - from).toFloat()
-            for (y in 0 until PLACE_H) for (x in 0 until PLACE_W) {
-                val k = y * level.w + min(level.w - 1, from + x)
-                val k2 = y * level.w + min(level.w - 1, from + x + 1)
-                p[y * PLACE_W + x] = level.d[k] * (1 - f) + level.d[k2] * f
+            /** Fills [likes] for the place moved by ([dx], [dy]), and gives its contrast. */
+            fun look(dx: Int, dy: Int): Float {
+                val start = level.starts[i] + NUDGE + dx
+                val from = floor(start).toInt()
+                val f = (start - from).toFloat()
+                for (y in 0 until PLACE_H) {
+                    val row = (y + NUDGE + dy) * level.w
+                    for (x in 0 until PLACE_W) {
+                        val k = row + min(level.w - 1, from + x)
+                        val k2 = row + min(level.w - 1, from + x + 1)
+                        p[y * PLACE_W + x] = level.d[k] * (1 - f) + level.d[k2] * f
+                    }
+                }
+                var mean = 0f
+                for (v in p) mean += v
+                mean /= PLACE
+                var sum = 0f
+                for (v in p) sum += (v - mean) * (v - mean)
+                val some = evenOut(p)
+                likes.fill(-1f)
+                if (some) for (s in PLACE_SHAPES.indices) {
+                    val d = SEGMENT_DIGITS[s].first
+                    likes[d] = max(likes[d], likeness(p, PLACE_SHAPES[s]))
+                }
+                return sqrt(sum / PLACE)
             }
-            var mean = 0f
-            for (v in p) mean += v
-            mean /= PLACE
-            var sum = 0f
-            for (v in p) sum += (v - mean) * (v - mean)
-            var digit = -1
-            var best = -1f
-            if (evenOut(p)) for (s in PLACE_SHAPES.indices) {
-                val l = likeness(p, PLACE_SHAPES[s])
-                if (l > best) { best = l; digit = SEGMENT_DIGITS[s].first }
+
+            val contrast = look(0, 0)
+            var digit = likes.indices.maxByOrNull { likes[it] }!!
+            var best = likes[digit]
+            val second = likes.indices.filter { it != digit }.maxOf { likes[it] }
+            // two digits fit nearly as well (7 and 1, 6 and 5): the one that fits better with the place moved a little is it
+            if (best >= SURE && best - second < CLOSE_CALL) {
+                for (dy in -NUDGE..NUDGE step NUDGE) for (dx in -NUDGE..NUDGE step NUDGE) if (dx != 0 || dy != 0) {
+                    look(dx, dy)
+                    for (d in likes.indices) if (likes[d] > best) { best = likes[d]; digit = d }
+                }
             }
-            PlaceRead(digit, best, sqrt(sum / PLACE))
+            PlaceRead(digit, best, contrast)
         }
     }
 

@@ -95,7 +95,7 @@ class ReferenceVideoTest {
         assertTrue("$problems", problems.isEmpty())
     }
 
-    /** The seven-segment finder: the QiYi videos have such a timer, all others must give nothing. */
+    /** The seven-segment finder: the QiYi videos have such a timer. The 4x4 videos have a small real one in view, which may be found too; all others must give nothing. */
     @Test
     fun findsOnlyTheSevenSegmentTimers() {
         val wanted = System.getenv("CUBECUT_REF_VIDEOS").orEmpty()
@@ -110,7 +110,7 @@ class ReferenceVideoTest {
                         "${r.places} places, ${r.checked} rows checked; seconds: ${"%.1f".format(r.rowsSec)} rows, ${"%.1f".format(r.checkSec)} checks, ${"%.1f".format(r.fitSec)} fit, ${"%.1f".format(video.nanos / 1e9)} pictures"
             )
             if (f != null) println("   slope ${f.grid.slope} lean ${f.grid.lean} pitch/h ${f.grid.pitch / f.grid.height} gap/h ${f.grid.gap / f.grid.height} w/h ${f.grid.digitWidth / f.grid.height} decimals ${f.grid.decimals}")
-            if ((f != null) != ("qiyi" in v.name)) problems.add(v.name)
+            if ("4x4" !in v.name && (f != null) != ("qiyi" in v.name)) problems.add(v.name)
             video.close()
         }
         assertTrue("$problems", problems.isEmpty())

@@ -72,6 +72,9 @@ private class Stop(val text: String, var sec: Double, val votes: Int, val reads:
 
 private fun decimalsOf(text: String): Int = text.length - 1 - text.indexOf('.')
 
+/** As long as each other, and at most one digit differs. */
+private fun alike(a: String, b: String): Boolean = a.length == b.length && a.indices.count { a[it] != b[it] } <= 1
+
 private fun middle(v: List<Double>): Double {
     val s = v.sorted()
     return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2
@@ -225,7 +228,7 @@ private class FinderScan(
         while (t > lowest - 1e-6 + 1e-9) {
             val v = read(t)
             if (v == time) { earliest = t; others = 0; other = Double.NaN }
-            else if (v != null) {
+            else if (v != null && !(tenths != null && alike(v, time))) {        // (one digit misread on a display that blurs is no other time)
                 others++
                 if (others == 1) other = t
                 if (others >= 2) break
@@ -273,9 +276,8 @@ private class FinderScan(
             if (p != null) {
                 val ran = running.count { it.t > p.sec && it.t < s.sec }
                 val same = s.text == p.text
-                val alike = s.text.length == p.text.length && s.text.indices.count { s.text[it] != p.text[it] } <= 1
                 if (same && (ran < 2 || s.confirmed != true)) continue
-                if (alike && ran < 2 && s.confirmed != true) continue
+                if (alike(s.text, p.text) && ran < 2 && s.confirmed != true) continue
             }
             out.add(s)
         }

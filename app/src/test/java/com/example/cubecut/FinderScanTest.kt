@@ -194,6 +194,14 @@ class FinderScanTest {
     }
 
     @Test
+    fun blurredDecimals_oneDigitMisreadAfterTheStop_doesntMoveTheCut() {
+        // the first pictures after the stop of no. 2 (14.070) read as 11.070 now and then
+        val found = scanBlurred { t -> blurred(t).let { if (it.first == "14.070" && t < stop(1) + 1 && floor(t * 2) == t * 2) Pair("11.070", 11.0) else it } }
+        assertEquals(times.map { "%.3f".format(Locale.ROOT, it) }, found.map { it.timeText })
+        assertEquals(stop(1), found[1].stopSec, frame + 1e-6)
+    }
+
+    @Test
     fun blurredDecimals_aHiddenStopComesFromTheClock() {
         val found = scanBlurred { t -> if (t > stop(1) - 0.3 && t < stop(1) + 3) Pair(null, null) else blurred(t) }
         assertEquals(times.map { "%.3f".format(Locale.ROOT, it) }, found.map { it.timeText })
