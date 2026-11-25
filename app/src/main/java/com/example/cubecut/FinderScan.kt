@@ -101,6 +101,7 @@ private class FinderScan(
     private val stops = ArrayList<Stop>()
     private val running = ArrayList<TimeAt>()
     private val memo = HashMap<Long, String?>()
+    private val seen = ArrayList<SeenAt>()
     private var total = 0
     private var readable = 0
 
@@ -116,6 +117,7 @@ private class FinderScan(
         val v = read(t)
         total++
         if (v != null) readable++
+        seen.add(SeenAt(t, v, v != null))
         return v
     }
 
@@ -128,7 +130,10 @@ private class FinderScan(
         val solves = sameHoldsMerged()
         workOutHiddenStops(solves)
         onProgress(100, 100)
-        return ScanResult(solves.map { found(it) }.sortedBy { it.stopSec }, if (total > 0) readable.toDouble() / total else 0.0)
+        return ScanResult(
+            solves.map { found(it) }.sortedBy { it.stopSec }, if (total > 0) readable.toDouble() / total else 0.0,
+            ScanTrace(seen, running.map { RunningAt(it.t, it.seconds) }, duration)
+        )
     }
 
     private fun found(s: Stop): FoundSolve {
@@ -154,7 +159,10 @@ private class FinderScan(
             if (percent != lastPercent) { lastPercent = percent; onProgress(percent, 100) }
             val v = counted(t)
             if (v == null) {
-                tenths?.invoke(t)?.let { running.add(TimeAt(t, "", it)) }
+                tenths?.invoke(t)?.let {
+                    running.add(TimeAt(t, "", it))
+                    seen[seen.size - 1] = SeenAt(t, null, true)
+                }
                 t += SolveAnalyzer.SCAN_STEP
                 continue
             }

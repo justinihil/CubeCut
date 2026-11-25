@@ -43,6 +43,17 @@ class ReferenceVideoTest {
     private fun fonts(video: File): DigitShapes =
         if ("othertimer" in video.name) DrawnTime.without("robotomono", "jetbrainsmono", "roboto") else DrawnTime.without("arimo")
 
+    /** What the scan saw goes to a file, for MissedSolvesTest. */
+    private fun writeTrace(video: File, scan: ScanResult) {
+        File(dir, "traces").mkdirs()
+        File(dir, "traces/" + video.name.replace(".mp4", ".trace.txt")).printWriter().use { w ->
+            w.println("D ${scan.trace.durationSec}")
+            for (x in scan.trace.seen) w.println("S ${x.t} ${x.text} ${x.readable}")
+            for (x in scan.trace.running) w.println("R ${x.t} ${x.seconds}")
+            for (x in scan.solves) w.println("F ${x.stopSec} ${x.timeText} ${x.include}")
+        }
+    }
+
     private fun places(video: File) = File(dir, video.name.replace(".mp4", ".places.txt"))
 
     private fun videos(): List<File> {
@@ -75,6 +86,7 @@ class ReferenceVideoTest {
                 video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { t -> video.frameTime(t) }
             )
             val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
+            writeTrace(v, scan)
             val key = places(v).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
                 .map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
             val c = compareScan(key, scan.solves.filter { it.timeText !in LEFT_OUT })
@@ -138,6 +150,7 @@ class ReferenceVideoTest {
             val scanning = System.nanoTime()
             val scan = scanSegments(timer, video.duration, video.frameSec, { t -> video.frameTime(t) })
             val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
+            writeTrace(v, scan)
             val expected = key(v).readLines().filter { it.isNotBlank() && it[0].isDigit() }.map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
             val c = compareScan(expected, scan.solves.filter { it.include })
             println(

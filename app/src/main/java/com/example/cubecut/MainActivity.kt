@@ -89,6 +89,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -401,6 +402,16 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     fun freezeList(warnings: Map<Int, String>) {
         frozen = cuts.indices.filter { cuts[it].noteNeedsCheck() || warnings.containsKey(it) }.toSet()
     }
+    // (3.3-C) where a solve may be missing (MissedSolves.kt), also the dismissed ones; the list shows [shownHints] between the solves
+    var hints by remember { mutableStateOf<List<MissedHint>>(emptyList()) }
+    val shownHints by remember { derivedStateOf { hintsToShow(hints, cuts.toList()) } }
+    var undoHint by remember { mutableStateOf<MissedHint?>(null) }          // the hint just dismissed, for Undo
+    LaunchedEffect(undoHint) {
+        if (undoHint != null) {
+            delay(8000)
+            undoHint = null
+        }
+    }
     var analyzing by remember { mutableStateOf(false) }
     var analysisStatus by remember { mutableStateOf("") }
     var editIndex by remember { mutableStateOf(-1) }             // which cut is open in the edit window (-1 = none)
@@ -561,6 +572,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         timerNotFound = false
         thumbs = emptyList()
         cuts.clear()
+        hints = emptyList()
+        undoHint = null
         frozen = emptySet()
         rowBoxes.clear()
         selectedCut = -1
@@ -604,6 +617,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     afterPad = opened.footage.afterPad
                     scrambleAll = opened.footage.scrambleAll
                     cuts.addAll(opened.cuts)
+                    hints = withContext(Dispatchers.IO) { try { SessionStore.loadHints(context, opened.footage.id) } catch (e: Exception) { emptyList() } }
                     scanned = opened.footage.lastScanMs > 0
                     if (opened.cuts.isNotEmpty()) {
                         setupExpanded = false
@@ -918,6 +932,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     footageId?.let { id ->
                         withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
                     }
+                    // (3.3-C) where a solve may be missing; what was dismissed before stays away
+                    hints = mergeHints(hints, hintsOf(report))
+                    undoHint = null
+                    footageId?.let { id ->
+                        val now = hints
+                        withContext(Dispatchers.IO) { try { SessionStore.saveHints(context, id, now) } catch (e: Exception) { } }
+                    }
+                    val maybeMissed = hintsToShow(hints, merged.cuts).size
                     val seconds = (System.currentTimeMillis() - started) / 1000
                     // counted exactly like the list: every real solve, and every cut the "Only solves to check" switch would show
                     // (the scan's notes AND the timing checks, after the merge)
@@ -926,9 +948,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     val toCheck = merged.cuts.indices.count { merged.cuts[it].noteNeedsCheck() || nowChecks.warnings.containsKey(it) }
                     freezeList(nowChecks.warnings)      // (3.1-D) the cuts were replaced: the filtered list is picked again
                     analysisStatus = if (saved.isEmpty()) {
-                        "Done in ${seconds}s: $solveCount solves, $toCheck to check"
+                        "Done in ${seconds}s: $solveCount solves, $toCheck to check" + (if (maybeMissed > 0) ", $maybeMissed maybe missed" else "")
                     } else {
-                        (if (firstScan) "Done" else "Re-scan done") + " in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "")
+                        (if (firstScan) "Done" else "Re-scan done") + " in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "") +
+                                (if (maybeMissed > 0) ". $maybeMissed maybe missed" else "")
                     }
                     if (withBackup) analysisStatus += ". Read with your backup setup."
                     finishedText = analysisStatus
@@ -984,6 +1007,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             } finally {
                 analyzing = false
             }
+        }
+    }
+
+    // ---- (3.3-C) hints where a solve may be missing ----
+    fun setHintDismissed(hint: MissedHint, dismissed: Boolean) {
+        hints = hints.map { if (it.seekSec == hint.seekSec) it.copy(dismissed = dismissed) else it }
+        undoHint = if (dismissed) hint else null
+        footageId?.let { id ->
+            scope.launch { withContext(Dispatchers.IO) { try { SessionStore.setHintDismissed(context, id, hint, dismissed) } catch (e: Exception) { } } }
         }
     }
 
@@ -1513,6 +1545,19 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     TextButton(onClick = { undoDelete() }) { Text("Undo") }
                 }
             }
+            val dismissedHint = undoHint
+            if (dismissedHint != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Nothing there: the hint is gone.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { setHintDismissed(dismissedHint, false) }) { Text("Undo") }
+                }
+            }
             Spacer(Modifier.height(4.dp))
 
             // ################ always at hand: Add a missed solve and the two switches ################
@@ -1917,6 +1962,19 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     }
                 }
 
+                val hintCard = @Composable { h: MissedHint ->
+                    key(h.seekSec) {
+                        MissedHintCard(
+                            h, enabled = !analyzing,
+                            onGoThere = {
+                                exoPlayer.pause()
+                                seekToSec(h.seekSec)
+                            },
+                            onNothing = { setHintDismissed(h, true) }
+                        )
+                    }
+                }
+                if (cuts.isEmpty()) shownHints.forEach { hintCard(it) }
                 if (cuts.isNotEmpty()) {
                     // every check marked as looked at in one go (on its own line, apart from the filter switch)
                     val canClear = cuts.indices.count { needsCheck(it) && !cuts[it].reviewed }
@@ -1939,13 +1997,17 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 "Red bin: delete a cut that isn't a solve. Undo brings it back.",
                                 "Check: needs a look. Fix it, or tap It's fine.",
                                 "Only solves to check: fixed solves stay, marked ✓, until you switch it off.",
+                                "Maybe a missed solve? Go there, find the final time, tap Add a missed solve.",
                                 "To export, choose clips in the Gallery."
                             )
                         )
                     }
                     // one row per cut: tap the row to jump there, Edit to fix or delete it, Gallery to see its clip
+                    // (3.3-C) and before it the hints where a solve may be missing, whatever the filter
+                    var nextHint = 0
                     cuts.forEachIndexed { index, item ->
                         if (!inList(index)) return@forEachIndexed
+                        while (nextHint < shownHints.size && shownHints[nextHint].seekSec < item.stopSec) hintCard(shownHints[nextHint++])
                         val clip = clipByCut[index]
                         val isSelected = index == selectedCut
                         // the row slides away when it is deleted (It's fine keeps it, see checkCut)
@@ -2137,6 +2199,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             }
                         }
                     }
+                    while (nextHint < shownHints.size) hintCard(shownHints[nextHint++])
                     val unknownCount = clips.count { it.timeText.isBlank() }
                     if (unknownCount > 0) {
                         Text(

@@ -52,8 +52,8 @@ The owner then merges `dev → main` and tags the release by hand ([release step
 
 | Version | Branch | Theme | DB |
 |---|---|---|---|
-| **3.3** | `dev-v3.3.0` | Better Find solves: no timer setup, more fonts, more accurate | — |
-| **4.0** | `dev-v4.0.0` | Find solves runs in the background after import | v8 |
+| **3.3** | `dev-v3.3.0` | Better Find solves: no timer setup, more fonts, more accurate | v8 (missed-solve hints) |
+| **4.0** | `dev-v4.0.0` | Find solves runs in the background after import | v9 |
 
 The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in two so that the quick wins, which need no database change, ship first. The owner's "v3.2" (Find solves) became 3.3.
 
@@ -212,13 +212,13 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 1. ✅ Reader and finder (`SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`), only in the debug scan report ([how](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-25): both QiYis found, in 8.6 s and 5.3 s.
 2. ✅ Following and scanning (`SegmentTracker.kt`), only in the scan report. Tested by the owner on the phone (2026-11-25): 55 / 55 and 30 / 30, no false solves or wrong times, one cut 0.27 s late (fixed since).
 3. ✅ *Find solves* uses it. Decided (owner, 2026-11-25, [ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)): the new way goes first on **every** video, also those set up by hand before; seven-segment is tried only when no solid number runs; a setup by hand is used only when no timer is found, and is a small *Backup* part of the Setup box. Tested by the owner on the phone (2026-11-25).
-4. ⬜ **Hints where a solve may be missing** (owner, 2026-11-25; brought forward from 4.0-D). Between two solves in the editor's list: where, why, *Go there* (the playhead jumps to where the timer was last seen running; then *Add a missed solve*) and *Nothing here* (gone for good, also after a re-scan). Strongest reason first:
+4. 🟡 **Hints where a solve may be missing** (owner, 2026-11-25; brought forward from 4.0-D). Drawing approved; reasons 1 to 3 only, so a long gap alone gives no hint; saved with the video (DB v8); hints never become clips. Built ([how](algorithms.md#3-reading-the-timer)); waiting for the owner's phone test. Between two solves in the editor's list: where, why, *Go there* (the playhead jumps to where the timer was last seen running; then *Add a missed solve*) and *Nothing here* (gone for good, also after a re-scan). Strongest reason first:
    1. the timer ran, but no final time was found;
    2. it ran and then showed 0.000;
    3. it couldn't be read for a long stretch;
    4. the gap is much longer than usual in this session.
 
-   The owner approves a drawing of the hint first. Check it with the reference videos: no hint where nothing is missing, one where a solve is taken out.
+   Built with 4.0 in mind: finding, saving and the card don't depend on the editor. Check it with the reference videos: no hint where nothing is missing, one where a solve is taken out.
 
 **After QiYi: timers that don't show a running time with decimals** (owner's request, 2026-11-25). Neither is found today, because the finder needs a number with a decimal point that rises with the clock.
 - ⬜ **Whole seconds while running**, decimals only when stopped. Whole numbers still rise with the clock, and the moment each second changes gives the start, so the clock check can stay. The inspection countdown must not count.
@@ -259,22 +259,20 @@ Owner, 2026-11-25 ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md))
 - Engine ownership (`startUsing` / `stopUsing` / `retireEngine`) moves with the scan.
 
 ### 4.0-B Import starts the scan ⬜
-- Importing queues a scan, and the app stays on Clips.
-- A slim progress bar shows on the Gallery while the rest of the app stays usable.
+- Importing a video starts *Find solves* by itself, in the background. The editor doesn't open, and the app stays navigable (owner, 2026-11-25).
+- **Progress** (owner, 2026-11-25): a discreet section somewhere in the app that the user can expand to see how each imported video is doing. Collapsed, it is a slim bar. Several videos queue.
 - Only the actions that would disturb the scan are disabled.
 - A notification says when the scan is done.
 
 ### 4.0-C "New" badge ⬜
-DB v8 (`cuts.seen_ms`). Recommended, to confirm:
+DB v9 (`cuts.seen_ms`). Recommended, to confirm:
 - The badge goes away when the clip is opened in the viewer or exported, or with *Mark all as seen*.
 - Add a *New* filter chip.
 
 ### 4.0-D Review possible missed solves ⬜
-Finding the stretches and the hints in the editor come earlier, in 3.3-C step 4. Left for 4.0, where importing no longer opens the editor:
-- The footage card says "Might have missed N".
-- Its review list shows a still for each stretch, with two choices:
-  - *Add here* opens the editor at that time;
-  - *Not a solve* dismisses it.
+The hints themselves come earlier, in 3.3-C step 4: they are found without the editor and saved with the video, and a hint's card is its own composable. Left for 4.0, where importing no longer opens the editor:
+- When a background scan has hints, they appear as a **popup** (owner, 2026-11-25). Only if the user takes one up does the editor open, at that place. *Nothing here* works from the popup too.
+- To decide: how the popup waits when the user is busy elsewhere in the app, and where hints the user didn't take up can be found again (for example "Might have missed N" on the footage card).
 
 ### 4.0-E The editor as manual mode ⬜
 - What CubeCut can't read is added here by hand (owner, 2026-11-25): no setup by hand any more.

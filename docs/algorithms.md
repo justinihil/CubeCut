@@ -145,6 +145,13 @@ PC, the app's own code (`scansTheSevenSegmentTimers`, 2026-11-25); keys ±1 fram
 - **A hidden stop** (first seen too late for the clock) is worked out from the start, with `HIDDEN_STOP_NOTE`. Not when the timer was seen running up to the first frame: then the timer itself changed the time (flowtimer with a smart cube), the cut stays, and the solve gets `CLOCK_NOTE`.
 - **As many decimals running as stopped:** two blended running frames can read alike. A time that goes on rising with the clock in 3 readings (`STILL_RUNNING_READS`) was running.
 
+**Hints where a solve may be missing** (`MissedSolves.kt`, 3.3-C). The scan keeps what it saw (`ScanTrace`); after the solves are known, three things give a hint:
+1. **The timer ran, no final time:** at least 4 running readings over 2 s agree on a start, and no found solve lies there. *Go there* is the last running reading. Not when the video ends while the timer runs.
+2. **It ran and was reset:** the same, and it shows 0.000 within 1.5 s of the last running reading.
+3. **It couldn't be read:** for 15 s or more (up to the start of the next found solve), and that is 1.3 usual solves (stop to stop), or 0.5 when the gap between the solves around it is 1.6 times the usual one; 2 usual solves at the start or end of the video; 60 s when there are fewer than three solves to tell. Not when the same time shows before and after.
+
+A long gap alone gives no hint (owner): it could be a break. The limits were chosen on the ten reference videos (193 solves): no hint in any of them, where nothing is missing. With one final time after the other made unreadable, 191 of 193 were told; with a whole solve made unreadable, 177 of 193 (the first and last solves of a video mostly aren't). 10 s or 1.1 solves gave false hints (`MissedSolvesTest`).
+
 Measured on the PC with the app's own code (`ReferenceVideoTest`, 2026-11-24, without csTimer's look-alike font):
 
 | Video | Found | False | Wrong time | On the frame | Worst cut | Reads |

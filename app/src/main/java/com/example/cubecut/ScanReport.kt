@@ -313,6 +313,9 @@ private fun byItselfReport(
         val flagged = scan.solves.filter { it.note.isNotEmpty() }
         if (flagged.isNotEmpty()) how.add("Flagged for checking:")
         for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+        val hints = hintsOf(scan)
+        if (hints.isNotEmpty()) how.add("Maybe missed:")
+        for (h in hints) how.add("${videoPlace(h.fromSec)} - ${videoPlace(h.toSec)}: ${h.text}")
 
         val text = if (truth.timesOnly.isNotEmpty()) {
             timesReportText(truth, videoName, true, found, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
@@ -384,6 +387,9 @@ private fun segmentReport(
     val flagged = scan.solves.filter { it.note.isNotEmpty() }
     if (flagged.isNotEmpty()) how.add("Flagged for checking:")
     for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+    val hints = hintsOf(scan)
+    if (hints.isNotEmpty()) how.add("Maybe missed:")
+    for (h in hints) how.add("${videoPlace(h.fromSec)} - ${videoPlace(h.toSec)}: ${h.text}")
 
     val b = timer.grid.box(timer.decimals + 2)
     val where = "Found by itself: seven-segment, x ${b.left}-${b.right}, y ${b.top}-${b.bottom} at first, digits ${timer.grid.height.toInt()} px, ${if (timer.grid.dark) "dark" else "light"}, ${timer.decimals} decimals."
