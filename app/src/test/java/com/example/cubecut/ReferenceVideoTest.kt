@@ -128,7 +128,7 @@ class ReferenceVideoTest {
         assertTrue("$problems", problems.isEmpty())
     }
 
-    /** The seven-segment timers found, followed and scanned, against the keys (.frames.txt: time, first frame in seconds). */
+    /** The seven-segment timers found, followed and scanned, against the keys (.frames.txt: time, first frame in seconds; "hint" = reset at once, a hint will do). */
     @Test
     fun scansTheSevenSegmentTimers() {
         val wanted = System.getenv("CUBECUT_REF_VIDEOS").orEmpty()
@@ -151,8 +151,12 @@ class ReferenceVideoTest {
             val scan = scanSegments(timer, video.duration, video.frameSec, { t -> video.frameTime(t) })
             val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
             writeTrace(v, scan)
-            val expected = key(v).readLines().filter { it.isNotBlank() && it[0].isDigit() }.map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
+            val lines = key(v).readLines().filter { it.isNotBlank() && it[0].isDigit() }.map { it.split(" ") }
+            val expected = lines.map { ExpectedSolve(it[1].toDouble(), it[0]) }
+            val hintWillDo = lines.filter { it.getOrNull(3) == "hint" }.map { it[0] }
             val c = compareScan(expected, scan.solves.filter { it.include })
+            val hints = hintsOf(scan)
+            val missed = c.missed.filter { m -> m.time !in hintWillDo || hints.none { m.stopSec > it.fromSec && m.stopSec <= it.toSec + 1 } }
             println(
                 "SCAN ${v.name}: expected ${c.expectedCount}, found ${c.matches.size}, missed ${c.missed.size}, false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}; " +
                         "${c.onFrame} on the frame, ${c.matches.count { abs(it.offsetSec) <= 0.05 }} within 0.05 s, ${c.close} within 0.1 s, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
@@ -160,10 +164,11 @@ class ReferenceVideoTest {
             )
             for (f in scan.solves.filter { it.note.isNotEmpty() }) println("   flagged: ${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
             for (f in c.falseSolves) println("   false: ${videoPlace(f.stopSec)} ${f.timeText}")
-            for (m in c.missed) println("   missed: ${videoPlace(m.stopSec)} ${m.time}")
+            for (m in c.missed) println("   missed: ${videoPlace(m.stopSec)} ${m.time}${if (m in missed) "" else " (a hint tells)"}")
+            for (h in hints) println("   hint: ${videoPlace(h.fromSec)} - ${videoPlace(h.toSec)} ${h.text}")
             for (m in c.wrongTime) println("   wrong: ${m.expected.time} as ${m.found.timeText}")
             for (m in c.matches.filter { abs(it.offsetSec) > 0.05 }) println("   cut off: ${m.expected.time} by ${"%+.3f".format(m.offsetSec)} s")
-            if (c.missed.isNotEmpty() || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty() || c.close < c.matches.size) problems.add(v.name)
+            if (missed.isNotEmpty() || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty() || c.close < c.matches.size) problems.add(v.name)
             video.close()
         }
         assertTrue("$problems", problems.isEmpty())

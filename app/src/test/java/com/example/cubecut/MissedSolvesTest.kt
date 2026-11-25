@@ -139,9 +139,12 @@ class MissedSolvesTest {
 
     private class Trace(val name: String, val trace: ScanTrace, val solves: List<Pair<Double, Double>>)
 
-    private fun traces(): List<Trace> {
+    /** Filmed to test the hints: four stops are hidden or reset at once (and one whole solve is covered). */
+    private val WITH_HIDDEN_STOPS = "ref_qiyi_old_03"
+
+    private fun traces(hidden: Boolean = false): List<Trace> {
         val dir = File(File(System.getenv("CUBECUT_REF") ?: "D:/CubeCutRef"), "traces")
-        val files = dir.listFiles { f -> f.name.endsWith(".trace.txt") }.orEmpty().sortedBy { it.name }
+        val files = dir.listFiles { f -> f.name.endsWith(".trace.txt") && f.name.startsWith(WITH_HIDDEN_STOPS) == hidden }.orEmpty().sortedBy { it.name }
         assumeTrue("no traces on this PC", files.isNotEmpty())
         return files.map { f ->
             val seen = ArrayList<SeenAt>()
@@ -166,6 +169,14 @@ class MissedSolvesTest {
         val all = traces().associate { it.name to findMissedSolves(it.trace, it.solves) }
         for ((name, h) in all) for (x in h) println("HINT $name: ${videoPlace(x.fromSec)} - ${videoPlace(x.toSec)} ${x.text}")
         assertEquals("$all", emptyList<String>(), all.filter { it.value.isNotEmpty() }.keys.toList())
+    }
+
+    @Test
+    fun hiddenStops_areTold() {
+        val t = traces(hidden = true).single()
+        val h = findMissedSolves(t.trace, t.solves)
+        assertEquals("$h", listOf(HintReason.RAN, HintReason.RESET, HintReason.RAN, HintReason.RESET), h.map { it.reason })
+        for ((x, stop) in h.zip(listOf(139.5, 220.05, 254.25, 292.04))) assertTrue("$x", stop > x.fromSec && stop < x.toSec)
     }
 
     /** Every solve is taken out in turn: its final time can't be read ([alsoRunning]: the running time neither). */

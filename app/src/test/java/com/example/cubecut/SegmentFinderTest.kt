@@ -24,6 +24,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.random.Random
 
@@ -158,8 +159,13 @@ class SegmentFinderTest {
 
     /** Against the definition, pixel by pixel: grow by the circle, then take back what isn't grown all around. */
     /** Two solves; the display is hit and jumps while it shows the first one, and is covered for a while in the second hold. */
-    @Test
-    fun followsAndScans() {
+    @Test fun followsAndScans() = followsAndScans(34.0, -22.0)
+
+    /** Pushed 2.4 digit heights down, as by a thumb on the reset button. */
+    @Test fun followsAFarPush() = followsAndScans(-20.0, 105.0)
+
+    private fun followsAndScans(jumpX: Double, jumpY: Double) {
+        pictures.clear()
         val look = Look(lean = -0.1)
         fun picture(t: Double): GrayPic {
             val running = t in 4.0..13.437 || t in 30.0..42.345
@@ -173,7 +179,7 @@ class SegmentFinderTest {
             if (t in 46.0..49.0) return GrayPic(w, h, ByteArray(w * h) { 90 })
             val jumped = t >= 20
             val text = "%.3f".format(Locale.ROOT, shown)
-            return pictures.getOrPut("$text $running $jumped") { draw(text, look, if (jumped) 34.0 else 0.0, if (jumped) -22.0 else 0.0, blurred = running && shown > 0) }
+            return pictures.getOrPut("$text $running $jumped") { draw(text, look, if (jumped) jumpX else 0.0, if (jumped) jumpY else 0.0, blurred = running && shown > 0) }
         }
         val duration = 58.0
         val found = findSegments({ picture(it) }, duration).found
@@ -186,8 +192,8 @@ class SegmentFinderTest {
         assertEquals(42.345, solves[1].stopSec, 2 * frame)
         for (s in solves) assertEquals("", s.note)
         val (across, down) = timer.moved()
-        assertEquals(34.0, across, 4.0)
-        assertEquals(22.0, down, 4.0)
+        assertEquals(abs(jumpX), across, 4.0)
+        assertEquals(abs(jumpY), down, 4.0)
     }
 
     @Test

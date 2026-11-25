@@ -139,6 +139,12 @@ class SegmentTracker private constructor(private val pic: PicAt, private val dur
                         val (p2, f2) = near.foundAgain(g)
                         if (f2 > fits + 0.03f) { place = p2; fits = f2 }
                     }
+                    // lost: covered, or pushed further than that
+                    if (fits < PLACE_FITS) {
+                        farLooks++
+                        val (p3, f3) = near.foundFarAway(g)
+                        if (f3 >= GOOD_FIT) { place = p3; fits = f3 }
+                    }
                     if (fits >= PLACE_FITS && !place.isCutOff(g.w, g.h)) { near = place; places[t] = place }
                     if (fits >= GOOD_FIT) good[t] = cut(g, place)
                 }

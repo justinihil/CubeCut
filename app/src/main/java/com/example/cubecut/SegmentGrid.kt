@@ -52,11 +52,17 @@ private const val OFF_GRID = 0.09
 private const val FAR = 0.0006f
 private const val FAR_PUSHED = 0.00002f
 
+/** The furthest place of a look for a timer that was lost counts this much less. */
+private const val FAR_LOST = 0.07f
+
 /** A reach longer than this is looked at at half size first. */
 private const val ROUGH_FROM = 4
 
 /** How far a pushed timer is looked for, in pixels of the level picture: 1.5 digit heights. Further away it is looked for at half size. */
 private const val PUSHED = 60
+
+/** The same for a timer that was lost: 6 digit heights up and down, 10 digit widths sideways. Sixteen times the work, so only for the rough track. */
+private const val LOST = 240
 
 private val PLACE_SHAPES: List<FloatArray> by lazy {
     SEGMENT_DIGITS.map { (_, s) ->
@@ -198,6 +204,10 @@ data class SegmentGrid(
 
     /** The same for a timer that was pushed away: a quick look further around, then a proper one there. */
     fun foundAgain(g: GrayPic): Pair<SegmentGrid, Float> = searched(g, PUSHED / 2, decimals + 1, 2, 4 * FAR_PUSHED).first.searched(g, 4, decimals + 1, 1, FAR)
+
+    /** The same, much further around: a push on the reset button can move a timer by 2 digit heights. Only believe a place that fits well. */
+    fun foundFarAway(g: GrayPic): Pair<SegmentGrid, Float> =
+        searched(g, LOST / 2, decimals + 1, 2, FAR_LOST / (LOST / 2 * (LOST / 2))).first.searched(g, 4, decimals + 1, 1, FAR)
 
     private fun searched(g: GrayPic, reach: Int, digits: Int, by: Int, far: Float): Pair<SegmentGrid, Float> {
         val level = Level(g, digits, reach, by)
