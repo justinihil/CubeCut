@@ -41,7 +41,7 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 | | |
 |---|---|
 | Phone | **Android 11 or newer**, **64-bit (arm64)** |
-| Timer | **Solid digits**, such as csTimer, and **seven-segment displays**, such as QiYi Smart Timer: found automatically. The running time must be shown, with a decimal point. Stackmat, GAN and LED displays are not tested |
+| Timer | **Solid digits**, such as csTimer, and **seven-segment displays**, such as QiYi Smart Timer: found automatically. A solid-digit timer may hide its running time or show whole seconds (at least three different times in the video). Stackmat, GAN and LED displays are not tested |
 | Footage | A fixed camera works best, with the display in view and the final time held for about 1.5 s or more |
 
 ## Install

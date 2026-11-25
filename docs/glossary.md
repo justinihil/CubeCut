@@ -51,6 +51,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Hold** | The stretch during which a stopped timer keeps showing its final time |
 | **Look-alike** | Two readings of the same length that differ in one digit by 1↔4 or 1↔7, the reader's known errors (`confusable`) |
 | **Reader** | Turns a straightened black-and-white picture of the display into digits. `DisplayReader`; `SegmentReader` (seven-segment). Solid digits are read without one: `SolidDigits.kt` |
+| **Held timer** | A timer found by its final times, because it shows no running time with decimals. `FoundTimer.held` |
 | **Finder** | Finds the timer by itself: a number that rises with the clock, then freezes. `TimerFinder.kt` |
 | **Grid** | Where the digits of a seven-segment number stand: slope, lean, distances. `SegmentGrid` |
 | **Hint** | A stretch of the video where a solve may be missing, and why. Never a clip. `MissedHint` |

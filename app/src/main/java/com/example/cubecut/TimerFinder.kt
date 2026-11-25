@@ -21,6 +21,7 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 // (3.3-C) Finds the timer in a video by itself: no corners, no typed number. Many things in a picture look like a number (averages, a
@@ -75,6 +76,9 @@ private const val FOLLOW_SEC = 90.0
 private const val MARGIN_ACROSS = 2.0
 private const val MARGIN_DOWN = 1.2
 
+/** Whole seconds are about as tall as the digits of a final time, or taller. Smaller ones are something else. */
+private const val WHOLE_HEIGHT = 0.7
+
 /** To see a run stop, look this far around it instead, in digit heights: some timers show the stopped time somewhere else for a moment. */
 private const val WATCH_ACROSS = 5.0
 private const val WATCH_DOWN = 2.5
@@ -104,11 +108,24 @@ class FoundTimer(
     val dark: Boolean,                  // dark digits on a light background
     val runningDecimals: Int,
     val stoppedDecimals: Int,
-    val examples: DigitShapes           // learned from this video when possible, else the fonts
+    val examples: DigitShapes,          // learned from this video when possible, else the fonts
+    val held: Boolean = false           // found by its final times (HeldFinder.kt): it shows no running time with decimals
 ) {
     /** What the timer shows in a whole frame, or null. */
     fun read(frame: GrayPic): TimeRow? = readArea(frame, area, digitHeight, dark, examples)
+
+    /** The same for a [held] timer: a final time, or whole seconds. */
+    fun readHeld(frame: GrayPic): HeldShown {
+        val rows = areaRows(frame, area, digitHeight, dark, examples, MIN_LIKENESS, whole = true, shrink = max(1, (digitHeight / READ_HEIGHT).roundToInt())).filter { isInside(it, area, digitHeight, frame) }
+        val time = pickRow(rows.filter { '.' in it.text && it.decimals == stoppedDecimals })
+        if (time != null) return HeldShown(time.text, null)
+        val whole = pickRow(rows.filter { '.' !in it.text && it.height > WHOLE_HEIGHT * digitHeight })
+        return HeldShown(null, whole?.let { shownSeconds(it.text).toInt() })
+    }
 }
+
+/** What a timer without running decimals shows: a final time ([text]), [whole] seconds, or neither. */
+class HeldShown(val text: String?, val whole: Int?)
 
 /** One number that could be the timer: where it is in the picture at second [t]. */
 class TimerChoice(val t: Double, val box: Area)
@@ -127,16 +144,28 @@ class FinderResult(
 private class Seen(val t: Double, val row: TimeRow)
 private typealias Run = List<Seen>
 
-private fun readArea(frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes): TimeRow? =
-    pickRow(areaRows(frame, area, height, dark, examples, MIN_LIKENESS).filter {
-        (area.left <= 0 || it.left - area.left >= EDGE * height) && (area.right >= frame.w || area.right - it.right >= EDGE * height)
-    })
+private fun isInside(r: TimeRow, area: Area, height: Double, frame: GrayPic): Boolean =
+    (area.left <= 0 || r.left - area.left >= EDGE * height) && (area.right >= frame.w || area.right - r.right >= EDGE * height)
 
-private fun areaRows(frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes, minLikeness: Float): List<TimeRow> =
+private fun readArea(frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes): TimeRow? =
+    pickRow(areaRows(frame, area, height, dark, examples, MIN_LIKENESS).filter { isInside(it, area, height, frame) })
+
+/** A timer's area: its numbers with room around them, inside a [w] x [h] frame. */
+fun roomAround(rows: List<TimeRow>, height: Double, w: Int, h: Int): Area = roomAround(rows, height, MARGIN_ACROSS, MARGIN_DOWN, w, h)
+
+private fun roomAround(rows: List<TimeRow>, height: Double, across: Double, down: Double, w: Int, h: Int) = Area(
+    max(0, (rows.minOf { it.left } - across * height).toInt()), max(0, (rows.minOf { it.top } - down * height).toInt()),
+    min(w, (rows.maxOf { it.right } + across * height).toInt()), min(h, (rows.maxOf { it.bottom } + down * height).toInt())
+)
+
+private fun areaRows(
+    frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes, minLikeness: Float, whole: Boolean = false,
+    shrink: Int = max(1, (height / READ_HEIGHT).toInt())
+): List<TimeRow> =
     findTimeRows(
         frame.crop(area.left, area.top, min(frame.w, area.right), min(frame.h, area.bottom)), examples, listOf(dark),
         minHeight = 0.55 * height, maxHeight = 1.6 * height, minLikeness = minLikeness, offX = area.left, offY = area.top,
-        shrink = max(1, (height / READ_HEIGHT).toInt())
+        shrink = shrink, whole = whole
     )
 
 private fun median(v: List<Double>): Double {
@@ -192,6 +221,7 @@ private class TimerSearch(
     private var frameW = 0
     private var frameH = 0
     private var searchShrink = SEARCH_SHRINK
+    private val sightings = ArrayList<Sighting>()       // every number seen, for a timer that doesn't show its running time
 
     private fun frame(t: Double): GrayPic? {
         if (isCancelled()) throw ScanCancelled()
@@ -210,17 +240,23 @@ private class TimerSearch(
         if (otherKind != null) {
             hits = search(half, EARLY_PLACES)
             if (half.runs.isEmpty()) hits = search(full, EARLY_PLACES_FULL_SIZE)
-            if (half.runs.isEmpty() && full.runs.isEmpty() && otherKind.invoke()) return result(null)
+            if (half.runs.isEmpty() && full.runs.isEmpty()) {
+                heldTimer()?.let { return result(it) }
+                if (otherKind.invoke()) return result(null)
+            }
         }
         if (hits.isEmpty() && choices.isEmpty()) hits = search(half)
         if (hits.isEmpty() && choices.isEmpty()) hits = search(full)
-        if (hits.isEmpty()) return result(null)
+        if (hits.isEmpty()) return result(if (choices.isEmpty()) heldTimer() else null)
         val rows = hits.flatMap { h -> h.map { it.row } }
         dark = mostCommon(rows.map { it.dark })!!
         height = median(rows.map { it.height })
         setArea(rows)
         return result(learn(hits))
     }
+
+    /** A timer without running decimals, by its final times. Not when the user chose a number: that one was seen running. */
+    private fun heldTimer(): FoundTimer? = if (near != null) null else findHeldTimer(sightings, { frame(it) }, fonts, notes)
 
     // ---- 1. search ----
 
@@ -232,6 +268,7 @@ private class TimerSearch(
             wholeFrames++
             val rows = findTimeRows(p, fonts, listOf(false, true), shrink = searchShrink)
             if (rows.isEmpty()) return emptyList()
+            sightings.addAll(sightingsOf(t + k * RUN_STEP, rows))
             seen.add(rows)
         }
         val out = ArrayList<Run>()
@@ -333,10 +370,7 @@ private class TimerSearch(
         area = around(rows, MARGIN_ACROSS, MARGIN_DOWN)
     }
 
-    private fun around(rows: List<TimeRow>, across: Double, down: Double) = Area(
-        max(0, (rows.minOf { it.left } - across * height).toInt()), max(0, (rows.minOf { it.top } - down * height).toInt()),
-        min(frameW, (rows.maxOf { it.right } + across * height).toInt()), min(frameH, (rows.maxOf { it.bottom } + down * height).toInt())
-    )
+    private fun around(rows: List<TimeRow>, across: Double, down: Double) = roomAround(rows, height, across, down, frameW, frameH)
 
     /** What [run]'s number shows at second [t], also when it isn't quite at its place any more. */
     private fun readAround(run: Run, t: Double, examples: DigitShapes): TimeRow? {

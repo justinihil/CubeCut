@@ -77,6 +77,8 @@ class TimeRow(
 ) {
     val seconds: Double = shownSeconds(text)
     val decimals: Int = text.length - 1 - text.indexOf('.')
+
+    fun withoutShapes(): TimeRow = TimeRow(text, likeness, height, left, top, right, bottom, dark, block, emptyList())
 }
 
 /** A grey picture: one byte per pixel, row by row. */
@@ -518,6 +520,7 @@ class DigitShapes private constructor(
 // rows of digits
 // ---------------------------------------------------------------------------------------
 
+private val WHOLE_TEXT = Regex("\\d{1,3}|\\d{1,2}:[0-5]\\d")
 private val TIME_TEXT = Regex("(\\d{1,3}|\\d{1,2}:[0-5]\\d)\\.\\d{1,3}")
 
 /** "12.69" -> 12.69, "1:04.42" -> 64.42. Only for texts this reader gave (a zero is allowed, unlike in [parseTimeSeconds]). */
@@ -537,14 +540,14 @@ private fun slopeOf(x: DoubleArray, y: DoubleArray): Double {
 }
 
 /**
- * Every time with a decimal point that can be read in [pic], with or without minutes. [darks]: look for light digits (false), dark ones
+ * Every time with a decimal point ([whole]: also whole seconds) that can be read in [pic], with or without minutes. [darks]: look for light digits (false), dark ones
  * (true) or both. The same time is usually found with several [blocks] and is then listed several times; [pickRow] chooses.
  * Boxes and heights are in pixels of the whole frame: [pic] starts at ([offX], [offY]), and is looked at [shrink] times smaller.
  */
 fun findTimeRows(
     pic: GrayPic, examples: DigitShapes, darks: List<Boolean>, blocks: IntArray = SEARCH_BLOCKS,
     minHeight: Double = 12.0, maxHeight: Double = 400.0, minLikeness: Float = MIN_LIKENESS, offX: Int = 0, offY: Int = 0,
-    shrink: Int = 1
+    shrink: Int = 1, whole: Boolean = false
 ): List<TimeRow> {
     val out = ArrayList<TimeRow>()
     val small = pic.shrunk(shrink)
@@ -559,15 +562,19 @@ fun findTimeRows(
             val r = b.w.toDouble() / b.h
             b.h >= least && b.h <= most && r > 0.12 && r < 1.4 && b.area > 0.1 * b.w * b.h
         }.sortedBy { it.x0 }
-        if (digits.size < 2) continue
+        if (digits.size < (if (whole) 1 else 2)) continue
         val dots = blobs.list.filter { it.h >= 2 && it.h < 0.28 * most && it.w < 0.3 * most }.sortedBy { it.x0 }
-        for (row in digitRows(digits, dots)) readRow(blobs, row, dots, examples, dark, block, minLikeness, offX, offY, shrink)?.let { out.add(it) }
+        for (row in digitRows(digits, dots, whole)) {
+            fun read(r: List<Blob>) = readRow(blobs, r, dots, examples, dark, block, minLikeness, offX, offY, shrink, whole)
+            val time = read(row) ?: if (whole) withoutFarEnds(row)?.let { read(it) } else null
+            if (time != null) out.add(time)
+        }
     }
     return out
 }
 
 /** Chains digit-sized blobs, left to right: the next one is close, about as tall and about as high up. */
-private fun digitRows(digits: List<Blob>, dots: List<Blob>): List<List<Blob>> {
+private fun digitRows(digits: List<Blob>, dots: List<Blob>, single: Boolean): List<List<Blob>> {
     val next = IntArray(digits.size) { -1 }
     val hasPrevious = BooleanArray(digits.size)
     for (i in digits.indices) {
@@ -593,15 +600,24 @@ private fun digitRows(digits: List<Blob>, dots: List<Blob>): List<List<Blob>> {
         val row = ArrayList<Blob>()
         var k = i
         while (k >= 0) { row.add(digits[k]); k = next[k] }
-        if (row.size in 2..8) rows.add(row)
+        if (row.size in (if (single) 1 else 2)..8) rows.add(row)
     }
     return rows
 }
 
-/** The row as a time, or null: it must have exactly one decimal point, at most one colon before it, and every blob must look like a digit. */
+/** [row] without a first or last blob that only belongs to it because something like a point is in the wide gap; null = it has none. */
+private fun withoutFarEnds(row: List<Blob>): List<Blob>? {
+    fun far(a: Blob, b: Blob) = b.x0 - (a.x0 + a.w) > MAX_GAP * max(a.h, b.h)
+    var r = row
+    if (r.size > 1 && far(r[0], r[1])) r = r.drop(1)
+    if (r.size > 1 && far(r[r.size - 2], r[r.size - 1])) r = r.dropLast(1)
+    return if (r.size < row.size) r else null
+}
+
+/** The row as a time, or null: it must have exactly one decimal point ([whole]: or none), at most one colon before it, and every blob must look like a digit. */
 private fun readRow(
     blobs: Blobs, row: List<Blob>, dots: List<Blob>, examples: DigitShapes, dark: Boolean, block: Int, minLikeness: Float, offX: Int, offY: Int,
-    shrink: Int
+    shrink: Int, whole: Boolean
 ): TimeRow? {
     var point = -1
     var colon = -1
@@ -612,7 +628,7 @@ private fun readRow(
             Mark.NONE -> {}
         }
     }
-    if (point < 0) return null
+    if (point < 0 && !whole) return null
     val middles = DoubleArray(row.size) { row[it].x0 + row[it].w / 2.0 }
     val slope = (slopeOf(middles, DoubleArray(row.size) { (row[it].y0 + row[it].h).toDouble() }) +
             slopeOf(middles, DoubleArray(row.size) { row[it].y0.toDouble() })) / 2
@@ -628,7 +644,7 @@ private fun readRow(
             append(read.digits[i])
         }
     }
-    if (!TIME_TEXT.matches(text)) return null
+    if (!(if (point < 0) WHOLE_TEXT else TIME_TEXT).matches(text)) return null
     val heights = row.map { it.h }.sorted()
     val n = heights.size
     val height = if (n % 2 == 1) heights[n / 2].toDouble() else (heights[n / 2 - 1] + heights[n / 2]) / 2.0

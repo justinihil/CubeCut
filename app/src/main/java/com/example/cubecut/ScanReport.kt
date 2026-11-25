@@ -288,20 +288,22 @@ private fun byItselfReport(
         val timer = r.timer ?: return noTimerText(truth, videoName, if (r.choices.isEmpty()) "CubeCut didn't find one by itself." else "Two numbers run at the same time, CubeCut would ask which one.", app) + how.joinToString("\n", "\n")
         val a = timer.area
         val found = "Found by itself at x ${a.left}-${a.right}, y ${a.top}-${a.bottom}, digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}, " +
-                "decimals ${timer.runningDecimals} running and ${timer.stoppedDecimals} stopped, " + (if (timer.examples.isLearned) "digits learned." else "digits NOT learned.")
+                (if (timer.held) "by its final times (${timer.stoppedDecimals} decimals, no running time with decimals), " else "decimals ${timer.runningDecimals} running and ${timer.stoppedDecimals} stopped, ") + (if (timer.examples.isLearned) "digits learned." else "digits NOT learned.")
 
         pictures = 0
         inPictures = 0L
         var inReading = 0L
-        fun read(t: Double): String? {
+        fun <T> timed(t: Double, look: (GrayPic) -> T?): T? {
             val p = pic.at(t) ?: return null
             val s = System.nanoTime()
-            val text = timer.read(p)?.text
-            inReading += System.nanoTime() - s
-            return text
+            return look(p).also { inReading += System.nanoTime() - s }
         }
+        fun read(t: Double): String? = if (timer.held) timed(t) { timer.readHeld(it).text } else timed(t) { timer.read(it)?.text }
         val scanStart = System.nanoTime()
-        val scan = scanFoundTimer(
+        val scan = if (timer.held) scanHeldTimer(
+            { t -> timed(t) { timer.readHeld(it) } }, durationSec, videoFrameSec(context, uri),
+            { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
+        ) else scanFoundTimer(
             ::read, durationSec, timer.runningDecimals, timer.stoppedDecimals, videoFrameSec(context, uri),
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
         )

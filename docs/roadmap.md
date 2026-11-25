@@ -212,7 +212,7 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 1. ✅ Reader and finder (`SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`), only in the debug scan report ([how](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-25): both QiYis found, in 8.6 s and 5.3 s.
 2. ✅ Following and scanning (`SegmentTracker.kt`), only in the scan report. Tested by the owner on the phone (2026-11-25): 55 / 55 and 30 / 30, no false solves or wrong times, one cut 0.27 s late (fixed since).
 3. ✅ *Find solves* uses it. Decided (owner, 2026-11-25, [ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)): the new way goes first on **every** video, also those set up by hand before; seven-segment is tried only when no solid number runs; a setup by hand is used only when no timer is found, and is a small *Backup* part of the Setup box. Tested by the owner on the phone (2026-11-25).
-4. ✅ **Hints where a solve may be missing** (owner, 2026-11-25; brought forward from 4.0-D). Drawing approved; reasons 1 to 3 only, so a long gap alone gives no hint; saved with the video (DB v8); hints never become clips. Built ([how](algorithms.md#3-reading-the-timer)); tested by the owner on the phone (2026-11-25): "the hints work great"; a solve covered from start to reset gets none, which is fine. The test video showed a first solve lost to a push of the timer (fixed: a lost timer is looked for further away). Between two solves in the editor's list: where, why, *Go there* (the playhead jumps to where the timer was last seen running; then *Add a missed solve*) and *Nothing here* (gone for good, also after a re-scan). Strongest reason first:
+4. ✅ **Hints where a solve may be missing** (owner, 2026-11-25; brought forward from 4.0-D). Drawing approved; reasons 1 to 3 only, so a long gap alone gives no hint; saved with the video (DB v8); hints never become clips. Built ([how](algorithms.md#3-reading-the-timer)); tested by the owner on the phone (2026-11-25): "the hints work great"; a solve covered from start to reset gets none, which is fine. The test video showed a first solve lost to a push of the timer (fixed: a lost timer is looked for further away; tested by the owner on the phone, 2026-11-25). Between two solves in the editor's list: where, why, *Go there* (the playhead jumps to where the timer was last seen running; then *Add a missed solve*) and *Nothing here* (gone for good, also after a re-scan). Strongest reason first:
    1. the timer ran, but no final time was found;
    2. it ran and then showed 0.000;
    3. it couldn't be read for a long stretch;
@@ -220,11 +220,11 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 
    Built with 4.0 in mind: finding, saving and the card don't depend on the editor. Check it with the reference videos: no hint where nothing is missing, one where a solve is taken out.
 
-**After QiYi: timers that don't show a running time with decimals** (owner's request, 2026-11-25). Neither is found today, because the finder needs a number with a decimal point that rises with the clock.
-- ⬜ **Whole seconds while running**, decimals only when stopped. Whole numbers still rise with the clock, and the moment each second changes gives the start, so the clock check can stay. The inspection countdown must not count.
-- ⬜ **Running time hidden** ("solve", "..."). Nothing rises: look for a big time that appears, stays and changes after each solve. No clock check, so more solves to check; a tap to choose the timer may be needed.
+**After QiYi: timers that don't show a running time with decimals** (owner's request, 2026-11-25). Built for both: found by their final times ([how, and numbers](algorithms.md#3-reading-the-timer)); waiting for the owner's phone test. Owner: a time that can't be confirmed is kept and marked *check*. Still open: csTimer's own "solve" screen (a short video).
+- 🟡 **Whole seconds while running**, decimals only when stopped. Whole numbers still rise with the clock, and the moment each second changes gives the start, so the clock check can stay. The inspection countdown must not count (it doesn't agree with any time).
+- 🟡 **Running time hidden** ("solve", "..."). Nothing rises: look for a big time that appears, stays and changes after each solve. No clock check, so more solves to check; a tap to choose the timer may be needed.
 - A QiYi in view of such a video must not be taken for the timer.
-- Needed first: one short video of each (5 to 10 solves) with csTimer's list as the answer key.
+- Videos (owner, 2026-11-25): flowtimer with "..." (6 solves), and a friend's TikTok clip of csTimer with whole seconds (5 solves). The old csTimer videos with their running time ignored are the third test.
 
 - The per-video timer columns stay for the backup.
 

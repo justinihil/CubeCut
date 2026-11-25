@@ -102,7 +102,10 @@ fun analyzeByItself(
             return AutoScanResult(scan, timer.numbers(), emptyList())
         }
         val timer = found.timer ?: return AutoScanResult(null, null, found.choices)
-        val scan = scanFoundTimer(
+        val scan = if (timer.held) scanHeldTimer(
+            { t -> pic.at(t)?.let { timer.readHeld(it) } }, durationSec, frameSec,
+            { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
+        ) else scanFoundTimer(
             { t -> pic.at(t)?.let { timer.read(it)?.text } }, durationSec, timer.runningDecimals, timer.stoppedDecimals, frameSec,
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
         )

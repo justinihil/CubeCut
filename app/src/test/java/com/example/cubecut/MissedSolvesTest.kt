@@ -180,7 +180,7 @@ class MissedSolvesTest {
     }
 
     /** Every solve is taken out in turn: its final time can't be read ([alsoRunning]: the running time neither). */
-    private fun takenOut(alsoRunning: Boolean): Map<String, Pair<Int, Int>> = traces().associate { t ->
+    private fun takenOut(alsoRunning: Boolean): Map<String, Pair<Int, Int>> = traces().filter { "hidden" !in it.name && "seconds" !in it.name }.associate { t ->
         var told = 0
         for ((i, s) in t.solves.withIndex()) {
             val (stop, sec) = s

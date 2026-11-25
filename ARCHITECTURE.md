@@ -23,7 +23,7 @@ flowchart TB
   end
   subgraph Domain["Pure logic (no Android UI)"]
     SA["SolveAnalyzer.kt<br/>scan · vote · first frame"]
-    TF["SolidDigits.kt · TimerFinder.kt · FinderScan.kt<br/>find, learn, scan without a setup"]
+    TF["SolidDigits.kt · TimerFinder.kt · FinderScan.kt · HeldFinder.kt · HeldScan.kt<br/>find, learn, scan without a setup"]
     SF["SegmentRows.kt · SegmentGrid.kt · SegmentFinder.kt · SegmentTracker.kt<br/>seven-segment timers"]
     MS["MissedSolves.kt<br/>where a solve may be missing"]
     RM["RescanMerge.kt<br/>merge · checks"]
@@ -148,6 +148,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | How digits are read; supported fonts | Found timers: `SolidDigits.kt`, `SegmentGrid.kt`. Set up by hand (backup): `TimerVision` in `TimerReader.kt`, `DisplayReaders.kt` |
 | Hints where a solve may be missing | `MissedSolves.kt` (pure), `MissedHintCard.kt` (the card); `SessionStore.saveHints` / `setHintDismissed`; `hints` / `hintCard` in `EditorScreen` |
 | Finding, following and scanning a seven-segment timer | `SegmentFinder.kt`, `SegmentTracker.kt`, `SegmentGrid.kt`, `SegmentRows.kt`; the scan itself is `FinderScan.kt` |
+| A timer that hides its running time or shows whole seconds | `HeldFinder.kt`, `HeldScan.kt`; `FoundTimer.readHeld` |
 | Finding the timer without a setup; the question which one | `TimerFinder.kt`, `FinderScan.kt`; `AutoScan.kt` (glue and dialog); `SessionStore.saveFoundTimer` / `timerPlaceOf` |
 | Timer setup screen and learning | `TimerSetupScreen.kt` (UI); `TimerVision.createSetup` (learning); `SessionStore.saveTimerSetup` / `timerCornersOf` (persistence) |
 | Where frames come from, decoder speed | `FrameSource.kt` (`openFrameSource`, `calibrate`) |

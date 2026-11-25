@@ -41,7 +41,7 @@ class ReferenceVideoTest {
 
     /** The fonts, without the ones that look like csTimer's, or like flowtimer's (the other timer). */
     private fun fonts(video: File): DigitShapes =
-        if ("othertimer" in video.name) DrawnTime.without("robotomono", "jetbrainsmono", "roboto") else DrawnTime.without("arimo")
+        if ("othertimer" in video.name || "flowtimer" in video.name) DrawnTime.without("robotomono", "jetbrainsmono", "roboto") else DrawnTime.without("arimo")
 
     /** What the scan saw goes to a file, for MissedSolvesTest. */
     private fun writeTrace(video: File, scan: ScanResult) {
@@ -71,7 +71,7 @@ class ReferenceVideoTest {
         for (v in videos()) {
             val video = FfmpegVideo(v)
             val started = System.nanoTime()
-            val r = findTimer({ video.at(it) }, video.duration, fonts(v))
+            val r = findTimer({ video.at(it) }, video.duration, fonts(v), otherKind = { false })
             val finding = (System.nanoTime() - started - video.nanos) / 1e9
             println("FINDER ${v.name}: ${if (r.timer != null) "FOUND" else "NOT FOUND"}; ${r.places} places, ${r.wholeFrames} whole frames, ${r.areaReads} area reads; ${"%.1f".format(finding)} s without getting pictures")
             for (n in r.notes) println("   $n")
@@ -81,7 +81,9 @@ class ReferenceVideoTest {
             video.nanos = 0
             val scanning = System.nanoTime()
             var reads = 0
-            val scan = scanFoundTimer(
+            val scan = if (timer.held) scanHeldTimer(
+                { t -> reads++; video.at(t)?.let { timer.readHeld(it) } }, video.duration, video.frameSec, { t -> video.frameTime(t) }
+            ) else scanFoundTimer(
                 { t -> reads++; video.at(t)?.let { timer.read(it)?.text } },
                 video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { t -> video.frameTime(t) }
             )
@@ -96,12 +98,67 @@ class ReferenceVideoTest {
                         "readable ${(scan.readableFraction * 100).toInt()}%; $reads reads, ${"%.1f".format(seconds)} s without getting pictures"
             )
             for (f in scan.solves.filter { it.note.isNotEmpty() }) println("   flagged: ${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+            for (h in hintsOf(scan)) println("   hint: ${videoPlace(h.fromSec)} - ${videoPlace(h.toSec)} ${h.text}")
             for (f in c.falseSolves) println("   false: ${videoPlace(f.stopSec)} ${f.timeText}")
             for (f in scan.solves.filter { it.timeText in LEFT_OUT }) println("   left out: ${videoPlace(f.stopSec)} ${f.timeText}")
             for (m in c.missed) println("   missed: ${videoPlace(m.stopSec)} ${m.time}")
             for (m in c.wrongTime) println("   wrong: ${m.expected.time} as ${m.found.timeText}")
             for (m in c.matches.filter { abs(it.offsetSec) > CUT_FRAME_SEC }) println("   cut off: ${m.expected.time} by ${"%+.3f".format(m.offsetSec)} s")
             if (c.missed.isNotEmpty() || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty() || c.close < c.matches.size) problems.add(v.name)
+            video.close()
+        }
+        assertTrue("$problems", problems.isEmpty())
+    }
+
+    /**
+     * csTimer's videos as if it didn't show its running time, or only whole seconds: the reader's running times are thrown away, or cut off.
+     * (What csTimer writes instead, "solve", is not in the picture.) The videos with a seven-segment timer must have no such timer.
+     */
+    @Test
+    fun findsTimersByTheirFinalTimes() {
+        val problems = ArrayList<String>()
+        val wanted = System.getenv("CUBECUT_REF_VIDEOS").orEmpty()
+        assumeTrue("set CUBECUT_REF_VIDEOS=1 to run", wanted.isNotEmpty())
+        val all = dir.listFiles { f -> f.name.endsWith(".mp4") && ("cstimer_old" in f.name || "qiyi" in f.name) && (wanted == "1" || wanted in f.name) }
+        for (v in all.orEmpty().sortedBy { it.name }) {
+            val video = FfmpegVideo(v)
+            val qiyi = "qiyi" in v.name
+            // the places of the search: spread over the video, halving the gaps; half size first, then full size
+            val seen = ArrayList<Sighting>()
+            for (shrink in listOf(2, 1)) for (i in 0 until (if (qiyi) 96 else if (shrink == 2) 40 else 16)) {
+                val n = if (qiyi) 96 else if (shrink == 2) 40 else 16
+                for (k in 0 until 4) {
+                    val t = Math.round(video.duration * (2 * i + 1) / (2 * n) * 2) / 2.0 + 0.5 * k
+                    val rows = findTimeRows(video.at(t) ?: break, fonts(v), listOf(false, true), shrink = shrink)
+                    if (rows.isEmpty()) break
+                    seen.addAll(sightingsOf(t, rows.filter { qiyi || it.decimals == 2 }))
+                }
+            }
+            val notes = ArrayList<String>()
+            val timer = findHeldTimer(seen, { video.at(it) }, fonts(v), notes)
+            println("HELD ${v.name}: ${if (timer == null) "none" else "${timer.numbers}, digits ${timer.digitHeight.toInt()} px"} $notes")
+            if ((timer == null) != qiyi) problems.add("${v.name}: $notes")
+            val looked = HashMap<Double, Pair<String?, Int?>?>()         // (getting a picture is slow, and both ways ask for mostly the same)
+            if (timer != null && !qiyi) for (wholeSeconds in listOf(false, true)) {
+                val scan = scanHeldTimer(
+                    { t ->
+                        looked.getOrPut(t) {
+                            video.at(t)?.let { p ->
+                                val text = timer.readHeld(p).text
+                                Pair(text, if (text == null) timer.read(p)?.takeIf { it.decimals == 1 }?.seconds?.toInt() else null)
+                            }
+                        }?.let { (text, running) -> HeldShown(text, if (wholeSeconds) running else null) }
+                    }, video.duration, video.frameSec, { t -> video.frameTime(t) }
+                )
+                val key = places(v).readLines().filter { !it.startsWith("#") && it.isNotBlank() }.map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
+                val c = compareScan(key, scan.solves.filter { it.include && it.timeText !in LEFT_OUT })
+                println(
+                    "HELD ${v.name} ${if (wholeSeconds) "whole seconds" else "hidden"}: expected ${c.expectedCount}, found ${c.matches.size}, false ${c.falseSolves.map { it.timeText }}, " +
+                            "wrong time ${c.wrongTime.map { "${it.expected.time} as ${it.found.timeText}" }}; missed ${c.missed.map { it.time }}; ${c.onFrame} on the frame, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
+                            "flagged ${scan.solves.filter { it.note.isNotEmpty() }.map { it.timeText + " " + it.note }}; hints ${hintsOf(scan).map { videoPlace(it.fromSec) + " " + it.text }}"
+                )
+                if (c.matches.size < c.expectedCount || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty()) problems.add(v.name)
+            }
             video.close()
         }
         assertTrue("$problems", problems.isEmpty())
@@ -230,7 +287,7 @@ class ReferenceVideoTest {
     /** Pictures of a video through ffmpeg: half-second steps from one running decode, frame by frame from short bursts, the rest by seeking. */
     private class FfmpegVideo(private val file: File) {
         private val w = 1080
-        private val h = 1920
+        private val h = if ("cstimer_seconds" in file.name) 2340 else 1920       // (a screen recording)
         private val times: DoubleArray = text(
             "ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0", file.path
         ).split(Regex("[,\\s]+")).mapNotNull { it.toDoubleOrNull() }.sorted().toDoubleArray()
@@ -270,8 +327,8 @@ class ReferenceVideoTest {
             val walking = i - lastFrame in 0..2                 // frame by frame: get a burst
             lastFrame = i
             kept[i]?.let { return it }
-            for ((j, p) in frames(i, if (walking) 40 else 1).withIndex()) kept[i + j] = p
-            while (kept.size > 90) kept.remove(kept.keys.first())
+            for ((j, p) in frames(i, if (walking) 20 else 1).withIndex()) kept[i + j] = p
+            while (kept.size > 50) kept.remove(kept.keys.first())
             return kept[i]
         }
 
