@@ -1839,7 +1839,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             Spacer(Modifier.height(6.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "You can switch apps. A notification shows progress.",
+                                    "You can use other apps meanwhile. A notification shows progress.",
                                     style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -2246,8 +2246,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         LeadAndBullets(
                             "CubeCut finds the timer and reads it along the whole video. About $estMin min (an estimate).",
                             listOf(
-                                "You can switch apps. A notification shows progress.",
-                                "Don't swipe CubeCut away until it's done.",
+                                "You can use other apps meanwhile. A notification shows progress.",
+                                "Don't close CubeCut from your recent apps. That stops it.",
                                 "You can cancel any time."
                             )
                         )

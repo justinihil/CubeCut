@@ -24,6 +24,7 @@ Notes on history:
 
 ### Changed
 - The Setup box says *CubeCut finds the timer by itself*. The setup by hand (four dots and a typed number) is in a small *Backup* part under it, and is only used when no timer is found; *Remove the backup* drops it. The *Edit* window zooms onto a found timer too.
+- The *Find solves* window says more clearly that you can use other apps meanwhile, but closing CubeCut from the recent apps stops it.
 - The estimated time before *Find solves* is lower.
 - The About window names the open fonts behind the new digit reader.
 - The viewer's details (swipe up) are sorted into groups: the time and anything that needs a look first, then *Export* / *Editor* / *Delete file* with the export status under them, then **Solve** (puzzle, penalty), **Clip** (scramble, extra time), **Note and sharing**, and the video it comes from. *Reconnect video* moved from the bottom to the top. The clip's start and end times in the video are no longer listed.
