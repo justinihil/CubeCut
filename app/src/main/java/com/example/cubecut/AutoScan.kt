@@ -51,8 +51,8 @@ import kotlin.math.abs
 // (3.3-C) Find solves without a timer setup: the glue between the real video and the pure parts (TimerFinder.kt, FinderScan.kt), and the
 // window that asks which number is the timer when CubeCut isn't sure.
 
-/** What came of it: [scan] and [timer] when the timer was found; else [choices] = the numbers to ask about (empty = no timer found). */
-class AutoScanResult(val scan: ScanResult?, val timer: FoundTimer?, val choices: List<TimerChoice>)
+/** What came of it: [scan] and [numbers] (the box around the timer's numbers) when it was found; else [choices] = the numbers to ask about (empty = no timer found). */
+class AutoScanResult(val scan: ScanResult?, val numbers: Area?, val choices: List<TimerChoice>)
 
 /** Find solves can't go on by itself: the timer wasn't found, or the user has to choose. [message] is the status line. */
 class NeedsUser(message: String) : Exception(message)
@@ -71,7 +71,8 @@ fun loadDigitFonts(context: Context): DigitShapes = DigitShapes.from(context.ass
 fun frameTimeOf(source: GraySource, t: Double): Double = source.lastFrameSec().takeIf { abs(it - t) < 0.05 } ?: t
 
 /**
- * Finds the timer and then the solves. [near]: the number the user chose, or null. [onProgress] gets (finding the timer?, percent).
+ * Finds the timer and then the solves. Solid digits first (csTimer); a seven-segment timer (QiYi) only when none of those was seen running.
+ * [near]: the number the user chose, or null. [onProgress] gets (finding the timer?, percent).
  * Blocking; run it on Dispatchers.Default. [isCancelled] is polled; true stops it with [ScanCancelled].
  */
 fun analyzeByItself(
@@ -86,13 +87,26 @@ fun analyzeByItself(
             val gray = source.gray(t)
             if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
         }
-        val found = findTimer(pic, durationSec, fonts, near, { onProgress(true, it / 10) }, isCancelled)
+        var segments: FoundSegments? = null
+        val otherKind = {
+            segments = findSegments(pic, durationSec, { onProgress(true, 5 + it / 20) }, isCancelled).found
+            segments != null
+        }
+        // (a number the user chose is a solid one)
+        val found = findTimer(pic, durationSec, fonts, near, { onProgress(true, it / 10) }, isCancelled, if (near == null) otherKind else null)
+        segments?.let { s ->
+            val timer = SegmentTracker.follow(s, pic, durationSec, { onProgress(true, 10 + it / 10) }, isCancelled)
+            val scan = scanSegments(
+                timer, durationSec, frameSec, { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 20 + 80 * done / total) }, isCancelled
+            )
+            return AutoScanResult(scan, timer.numbers(), emptyList())
+        }
         val timer = found.timer ?: return AutoScanResult(null, null, found.choices)
         val scan = scanFoundTimer(
             { t -> pic.at(t)?.let { timer.read(it)?.text } }, durationSec, timer.runningDecimals, timer.stoppedDecimals, frameSec,
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
         )
-        return AutoScanResult(scan, timer, emptyList())
+        return AutoScanResult(scan, timer.numbers, emptyList())
     } finally {
         source.close()
     }

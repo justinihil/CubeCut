@@ -262,7 +262,6 @@ private fun byItselfReport(
         val segments = ArrayList<String>()
         var segmentSec = 0.0
         var segmentTimer: FoundSegments? = null
-        // (a seven-segment timer is only scanned for this report; Find solves doesn't use it yet)
         val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled) {
             val before = pictures
             val beforeNanos = inPictures
@@ -332,7 +331,7 @@ private fun byItselfReport(
 
 /** What the seven-segment finder did, and how long it took on this phone. */
 private fun segmentNotes(s: SegmentResult, seconds: Double, pictures: Int, pictureSec: Double): List<String> {
-    val out = arrayListOf("", if (s.found == null) "Seven-segment timer: NOT FOUND" else "Seven-segment timer: FOUND (Find solves doesn't use it yet)")
+    val out = arrayListOf("", if (s.found == null) "Seven-segment timer: NOT FOUND" else "Seven-segment timer: FOUND")
     if (s.found != null) {
         val g = s.found.grid
         val b = g.box(g.decimals + 2)

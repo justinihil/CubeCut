@@ -67,14 +67,20 @@ class SegmentTracker private constructor(private val pic: PicAt, private val dur
         private set
     var farLooks = 0
         private set
-    val decimals: Int get() = places.firstEntry().value.decimals
-    val grid: SegmentGrid get() = places.firstEntry().value
+    val decimals: Int get() = grid.decimals
+    val grid: SegmentGrid get() = places.values.first()
 
     /** How far the timer moved across and down, as far as it was followed. */
     fun moved(): Pair<Double, Double> {
         val x = places.values.map { it.middleX }
         val y = places.values.map { it.middleY }
         return Pair(x.max() - x.min(), y.max() - y.min())
+    }
+
+    /** The box around its numbers, wherever they were, in frame pixels. */
+    fun numbers(): Area {
+        val boxes = places.values.map { it.box(it.decimals + 2) }
+        return Area(max(0, boxes.minOf { it.left }), max(0, boxes.minOf { it.top }), boxes.maxOf { it.right }, boxes.maxOf { it.bottom })
     }
 
     private fun frame(t: Double): GrayPic? {

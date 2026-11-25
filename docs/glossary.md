@@ -53,7 +53,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Reader** | Turns a straightened black-and-white picture of the display into digits. `DisplayReader`; `SegmentReader` (seven-segment). Solid digits are read without one: `SolidDigits.kt` |
 | **Finder** | Finds the timer by itself: a number that rises with the clock, then freezes. `TimerFinder.kt` |
 | **Grid** | Where the digits of a seven-segment number stand: slope, lean, distances. `SegmentGrid` |
-| **Set up by hand** | A timer marked with four dots and a typed number. It always wins over the finder |
+| **Set up by hand** | The backup: a timer marked with four dots and a typed number, used only when the finder finds none (until 4.0). `TimerReader.kt` |
 | **Confirmed by the clock** | Start to stop, from the running readings, equals the time on the display. `FinderScan.checkClock`, `CLOCK_NOTE` |
 | **Verified / unverified setup** | Verified means the learned layout reproduces the typed number exactly. Unverified means the closest layout was saved with a warning |
 | **Fixed-camera mode** | Setup for plain screens: the saved corners are used without shape tracking (`TimerSetup.fixedPosition`) |

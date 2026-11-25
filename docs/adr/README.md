@@ -22,3 +22,4 @@ To add a new one, copy [0000-template.md](0000-template.md) to the next number. 
 | [0014](0014-display-reader-seam.md) | Digit reading behind a `DisplayReader` seam; seven-segment only for now | Accepted |
 | [0015](0015-user-saved-backup-file.md) | A backup file the user saves (no videos); restore merges, the phone wins; bulk reconnect by picking files | Accepted |
 | [0016](0016-find-the-timer-without-ml.md) | Find and read solid-digit timers without ML, from example digits of open fonts | Accepted |
+| [0017](0017-finder-first-setup-by-hand-as-backup.md) | The finder comes first; the setup by hand is a backup and goes in 4.0 | Accepted |

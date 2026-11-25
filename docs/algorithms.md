@@ -94,7 +94,7 @@ For each frame:
 
 The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](adr/0014-display-reader-seam.md)). `SegmentReader` (id `"segment"`) is the only reader behind it.
 
-**Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A separate reader that needs no display position. *Find solves* uses it on every video without a setup by hand (`analyzeByItself` in `AutoScan.kt`).
+**Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A separate reader that needs no display position. *Find solves* uses it first on every video (`analyzeByItself` in `AutoScan.kt`).
 1. Black-and-white by comparing each pixel with the average around it (`SEARCH_BLOCKS`, three sizes), for light and dark digits.
 2. Joined blobs of digit size are chained into rows: neighbours at most 0.75 digit heights apart, or 1.2 when a point or colon stands between them (fixed-width fonts); a row needs exactly one decimal point, and may have one colon before it (`1:04.42`).
    A **colon** is two dots of about the same size above each other, between 0.25 and 0.8 digit heights apart (`markBetween`). It may stand on the line or halfway up. Minutes have one or two digits, seconds after a colon two, below 60. A time with a colon but no decimals (a clock) isn't read. Hours aren't read.
@@ -110,12 +110,12 @@ The examples come from 11 open fonts, or only from the video itself once all ten
 
 On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 47 to 66 whole pictures, 273 to 344 area reads, 2.2 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). On the owner's phone (debug build, before the speed-up below) video 01 gave the same result in 48 s: 6 s for pictures, 42 s for searching and reading, 36 ms per area read. Since then pictures are looked at at half size and fonts are compared roughly first, which makes it 3.3 times faster on the PC; the phone isn't measured again yet.
 
-**Seven-segment timers** (QiYi; `SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`, 3.3-C). Only in the debug scan report so far; *Find solves* still needs these timers set up by hand. Pure logic, nothing is learned.
+**Seven-segment timers** (QiYi; `SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`, 3.3-C). Pure logic, nothing is learned.
 1. **Rows.** Black-and-white at four sizes (`BLOCKS`) against a limit that goes with the brightness; gaps between strokes are closed with circles of three sizes; digit-sized blobs are chained and compared with drawn digits for 23 leans. All of it along three directions, 0° and ±30° (`ROW_TURNS`): the blobs are turned, not the picture, which costs almost nothing.
 2. **Grid.** The right edges of 4 or more digits must be evenly spaced, with one wider gap at the decimal point. From then on every place is compared with the ten digits (13 shapes), so a missing stroke no longer breaks a digit.
 3. **Clock.** Seconds and tenths must rise with the clock in 6 pictures 0.5 s apart; the last two decimals blur while it runs and aren't used. The first grid that does is the timer, and is made to fit those pictures better.
 
-**Order** (`otherKind` of `findTimer`): solid digits first. If nothing runs after 40 places at half size and 16 at full size, seven-segment is tried; if that finds nothing either, the solid search goes on with the rest of its places. So a csTimer video with a QiYi in view stays csTimer. *Find solves* doesn't pass `otherKind` yet and searches as before.
+**Order** (`otherKind` of `findTimer`): solid digits first. If nothing runs after 40 places at half size and 16 at full size, seven-segment is tried; if that finds nothing either, the solid search goes on with the rest of its places. So a csTimer video with a QiYi in view stays csTimer.
 
 Measured on the PC with the app's own code (`ReferenceVideoTest.findsOnlyTheSevenSegmentTimers`, 2026-11-25): `ref_qiyi_old_01` found after 21 places, `ref_qiyi_old_02` after 34. In the other eight reference videos (csTimer, 4x4, flowtimer), 160 places each, only one thing was ever found: the real QiYi in view of `ref_4x4_02` (22 px digits, since close calls are looked at twice). csTimer is found first in that video, so it isn't used. 0.1 to 0.25 s per place on 12 threads, plus checking. Both QiYi videos were used while developing the method. On the owner's phone (2026-11-25): found after 7 places in 8.6 s and after 11 places in 5.3 s, and the numbers it saw agree with the answer keys within 0.02 s; with the solid search before it 46.9 s and 26.9 s, where giving up took 93.6 s and 116.8 s before. No false find in csTimer 01. The solid finder and scan give the results below, as before.
 

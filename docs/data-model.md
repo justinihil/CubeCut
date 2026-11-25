@@ -115,7 +115,7 @@ On a match it refreshes the stored uri, name and size, and returns `isNew = fals
 
 ## The timer columns
 
-`timer_corners` with a typed number is a setup **by hand**: it is set up again when the video is opened (`timerCornersOf`). `timer_corners` with an empty `timer_typed` and `timer_frame_ms` −1 is where CubeCut **found** the timer by itself (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` never overwrites a setup by hand. What the finder learned isn't stored; every scan learns it again.
+`timer_corners` with a typed number is a setup **by hand**, the backup ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)): it is set up again when the video is opened (`timerCornersOf`). `timer_corners` with an empty `timer_typed` and `timer_frame_ms` −1 is where CubeCut **found** the timer by itself (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` never overwrites a setup by hand. What the finder learned isn't stored; every scan learns it again.
 
 ## How exports link to cuts
 

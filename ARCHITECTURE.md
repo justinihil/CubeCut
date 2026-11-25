@@ -24,7 +24,7 @@ flowchart TB
   subgraph Domain["Pure logic (no Android UI)"]
     SA["SolveAnalyzer.kt<br/>scan · vote · first frame"]
     TF["SolidDigits.kt · TimerFinder.kt · FinderScan.kt<br/>find, learn, scan without a setup"]
-    SF["SegmentRows.kt · SegmentGrid.kt · SegmentFinder.kt · SegmentTracker.kt<br/>seven-segment timers (scan report only)"]
+    SF["SegmentRows.kt · SegmentGrid.kt · SegmentFinder.kt · SegmentTracker.kt<br/>seven-segment timers "]
     RM["RescanMerge.kt<br/>merge · checks"]
     CE1["ClipExporter.kt<br/>CutItem · computeClips"]
   end
@@ -84,7 +84,7 @@ The Gallery and Editor both open `AboutDialog` from the credit line. The Gallery
 ## Data flow
 
 ### Find solves
-This is the way with a timer set up **by hand**. Without one, `runFindSolves` calls `analyzeByItself` (`AutoScan.kt`) instead: `findTimer` → `scanFoundTimer` on one frame source, no engine. It can end with a question (`TimerQuestionDialog`) or *Couldn't find the timer* (`NeedsUser`). From `mergeRescan` on both ways are the same.
+`runFindSolves` first calls `analyzeByItself` (`AutoScan.kt`): `findTimer` → `scanFoundTimer`, or for a seven-segment timer `findSegments` → `SegmentTracker.follow` → `scanSegments`, on one frame source, no engine. Only when that finds no timer, or two numbers run, is a setup **by hand** used, the way drawn below ([ADR-0017](docs/adr/0017-finder-first-setup-by-hand-as-backup.md)). Without one it can end with a question (`TimerQuestionDialog`) or *Couldn't find the timer* (`NeedsUser`). From `mergeRescan` on both ways are the same.
 ```mermaid
 sequenceDiagram
   participant E as EditorScreen.runFindSolves
@@ -144,8 +144,8 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | I want to change… | Look at |
 |---|---|
 | How solves are detected, voting, first-frame search | `SolveAnalyzer.scan` / `pickWinner` / `firstAppearance`; constants at the top of `SolveAnalyzer.kt`. Background in [algorithms](docs/algorithms.md#1-finding-solves) |
-| How digits are read; supported fonts | Found timers: `SolidDigits.kt`. Set up by hand: `TimerVision` in `TimerReader.kt`, `DisplayReaders.kt` |
-| Finding, following and scanning a seven-segment timer (scan report only, for now) | `SegmentFinder.kt`, `SegmentTracker.kt`, `SegmentGrid.kt`, `SegmentRows.kt`; the scan itself is `FinderScan.kt` |
+| How digits are read; supported fonts | Found timers: `SolidDigits.kt`, `SegmentGrid.kt`. Set up by hand (backup): `TimerVision` in `TimerReader.kt`, `DisplayReaders.kt` |
+| Finding, following and scanning a seven-segment timer  | `SegmentFinder.kt`, `SegmentTracker.kt`, `SegmentGrid.kt`, `SegmentRows.kt`; the scan itself is `FinderScan.kt` |
 | Finding the timer without a setup; the question which one | `TimerFinder.kt`, `FinderScan.kt`; `AutoScan.kt` (glue and dialog); `SessionStore.saveFoundTimer` / `timerPlaceOf` |
 | Timer setup screen and learning | `TimerSetupScreen.kt` (UI); `TimerVision.createSetup` (learning); `SessionStore.saveTimerSetup` / `timerCornersOf` (persistence) |
 | Where frames come from, decoder speed | `FrameSource.kt` (`openFrameSource`, `calibrate`) |

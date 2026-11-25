@@ -112,7 +112,7 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 - Start: [algorithms §1–4](algorithms.md); `SolveAnalyzer.kt`.
 
 ### 3.3-C Find and read the timer by itself 🔶
-**Goal (owner, 2026-11-24):** import raw footage, and CubeCut finds the timer, learns how it looks and reads it. Borders, font, angle and place must not matter. No corners, no typed number. `TimerSetupScreen` stays only as a manual fallback.
+**Goal (owner, 2026-11-24):** import raw footage, and CubeCut finds the timer, learns how it looks and reads it. Borders, font, angle and place must not matter. No corners, no typed number. `TimerSetupScreen` stays only as a backup, until 4.0-0.
 
 **Planned method:**
 1. **Search:** find every number-like row in frames spread over the video.
@@ -211,14 +211,22 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 **Steps in the app** (owner's go 2026-11-25; each with its own commit and phone test):
 1. ✅ Reader and finder (`SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`), only in the debug scan report ([how](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-25): both QiYis found, in 8.6 s and 5.3 s.
 2. ✅ Following and scanning (`SegmentTracker.kt`), only in the scan report. Tested by the owner on the phone (2026-11-25): 55 / 55 and 30 / 30, no false solves or wrong times, one cut 0.27 s late (fixed since).
-3. ⬜ *Find solves* uses it. Owner's decisions: seven-segment is tried only when no solid number runs; a **seven-segment setup by hand switches to the new way by itself** at the next *Find solves* (the two ways share no reading code), solid ones set up by hand stay. Proposed: the corners are kept and used if the new way doesn't find the timer.
+3. 🟡 *Find solves* uses it. Decided (owner, 2026-11-25, [ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)): the new way goes first on **every** video, also those set up by hand before; seven-segment is tried only when no solid number runs; a setup by hand is used only when no timer is found, and is a small *Backup* part of the Setup box. Built; waiting for the owner's phone test.
+4. ⬜ **Hints where a solve may be missing** (owner, 2026-11-25; brought forward from 4.0-D). Between two solves in the editor's list: where, why, *Go there* (the playhead jumps to where the timer was last seen running; then *Add a missed solve*) and *Nothing here* (gone for good, also after a re-scan). Strongest reason first:
+   1. the timer ran, but no final time was found;
+   2. it ran and then showed 0.000;
+   3. it couldn't be read for a long stretch;
+   4. the gap is much longer than usual in this session.
+
+   The owner approves a drawing of the hint first. Check it with the reference videos: no hint where nothing is missing, one where a solve is taken out.
+
 **After QiYi: timers that don't show a running time with decimals** (owner's request, 2026-11-25). Neither is found today, because the finder needs a number with a decimal point that rises with the clock.
 - ⬜ **Whole seconds while running**, decimals only when stopped. Whole numbers still rise with the clock, and the moment each second changes gives the start, so the clock check can stay. The inspection countdown must not count.
 - ⬜ **Running time hidden** ("solve", "..."). Nothing rises: look for a big time that appears, stays and changes after each solve. No clock check, so more solves to check; a tap to choose the timer may be needed.
 - A QiYi in view of such a video must not be taken for the timer.
 - Needed first: one short video of each (5 to 10 solves) with csTimer's list as the answer key.
 
-- The per-video timer columns stay for the fallback.
+- The per-video timer columns stay for the backup.
 
 ### 3.3-E Penalty marks and long times on the display ⬜
 - Read +2 and DNF marks next to the time, and times of one hour or more.
@@ -236,6 +244,13 @@ Also phone-test **backup and restore** from 3.2 in the full pass. The owner move
 **Prerequisite:** 3.3 has been measured as reliable on several fonts.
 
 The app already opens on the Gallery (Clips). What changes is that **importing no longer opens the editor**.
+
+### 4.0-0 Remove the setup by hand ⬜
+Owner, 2026-11-25 ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). First in 4.0: 4.0-A then has no engine to move.
+- **Only when** timers that hide their running time are read (3.3-C), the hints of 3.3-C step 4 work, and another seven-segment timer than the owner's QiYi was tried if one can be had.
+- Goes: `TimerSetupScreen`, `TimerReader`, `DisplayReaders`, the scan in `SolveAnalyzer` (its constants move to `FinderScan`), *Read timer here*, the *Backup* part of the Setup box, the "by hand" half of the scan report.
+- Stays: the solves found with it; the timer columns, for the place of a found timer.
+- Check whether OpenCV can go too. It is probably most of the app's size, and the new readers don't use it; `FrameSource` hands out its pictures.
 
 ### 4.0-A Background analysis (ADR and refactor) ⬜
 - Move Find solves out of `EditorScreen` (`runFindSolves`) into an app-wide analysis queue: a Kotlin `object` whose work runs in the foreground service.
@@ -255,17 +270,14 @@ DB v8 (`cuts.seen_ms`). Recommended, to confirm:
 - Add a *New* filter chip.
 
 ### 4.0-D Review possible missed solves ⬜
-- `ScanResult` keeps the stretches that may hide a solve:
-  - a running timer seen but no stop found;
-  - long unreadable stretches;
-  - gaps much longer than the session's usual rhythm.
+Finding the stretches and the hints in the editor come earlier, in 3.3-C step 4. Left for 4.0, where importing no longer opens the editor:
 - The footage card says "Might have missed N".
 - Its review list shows a still for each stretch, with two choices:
   - *Add here* opens the editor at that time;
   - *Not a solve* dismisses it.
-- This changes the scan, so check it with the 3.3 harness.
 
 ### 4.0-E The editor as manual mode ⬜
+- What CubeCut can't read is added here by hand (owner, 2026-11-25): no setup by hand any more.
 - The editor stays, for clipping by hand. It is reached from Footage ⋮ *Open in editor*.
 - It is offered when a scan finds nothing, or when the timer isn't visible.
 
