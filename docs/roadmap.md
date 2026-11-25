@@ -192,7 +192,26 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 6. ✅ Times over a minute (the colon, 2026-11-25). The owner's three 4x4 videos: 1 of 1 each, right time, on the frame; the csTimer sessions unchanged ([numbers](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-25).
 7. ✅ A csTimer-like timer with another font (flowtimer.io, 2026-11-25): 28 of 28 solves in two videos, no false solves or wrong times, every cut on the frame; 7 flagged, because flowtimer changes the time when it stops ([numbers](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-25).
 
-Seven-segment timers are next: the QiYi baseline exists since 2026-11-25. Prototype outside the app first (owner's go, 2026-11-25): developed on 01, 02 kept for the final check.
+**Seven-segment prototype (2026-11-25)**, outside the app, on the two old QiYi sessions; no corners, no typed number, no ML. Numbers against the answer keys (±1 frame), PC:
+
+| Video | Found | Missed | False | Wrong time | Within 0.1 s | Worst cut | Set up by hand, on the phone |
+|---|---|---|---|---|---|---|---|
+| 01 (developed on) | 55 / 55 | 0 | 0 | 0 | 55 | 0.067 s | 55 found, 13 false, 3 wrong, 45 within 0.1 s |
+| 02 (see below) | 30 / 30 | 0 | 0 | 0 | 30 | 0.033 s | 28 found, 6 false, 2 wrong, 23 within 0.1 s |
+
+- **02 was not found by the version frozen before it was looked at.** Its display is turned about 33°, and the search only knew small slopes. One change fixed it: searching the picture turned by −30° and +30° too. So 02 is a clean test of reading and scanning, which didn't change, but not of the search.
+- **How it reads:** joined strokes give a first row of digits; from it comes a **grid** of digit places (slope, lean, spacing, the point's gap). Then each place is compared with the ten seven-segment shapes, so a faint or missing stroke no longer breaks a digit. Seconds and tenths rising with the clock in 6 pictures make it the timer; the last two decimals blur while it runs.
+- **The QiYi slides** (up to 73 × 92 px in 01) and jumps when it is hit, so its place is followed, only where the digits fit well. A grid half a digit too low read `0.000` as a held `4.444` before that rule. One grid for the whole video is refined from 24 pictures; starting from one place alone read 7 as 1.
+- **No false finds** in csTimer 01 and 02, flowtimer 01 and 02 and 4x4 01 (160 places per search; the plain search was only run again on csTimer 01 and flowtimer 01 after the last change). The small QiYi in csTimer's videos isn't picked up.
+- **Altered copies of 01**, all 55 found with nothing false or wrong: 30 fps, 25 % brightness, washed out, inverted, noise 10, blur 1.5 px, 0.7 and double size, turned ±15° and +25°, sheared, and five other starting places. Squeezed to 60 % height: 54 (a solve whose stop was covered). **Not found:** 12 % brightness, half size (19 px digits), blur 2.5 px, motion blur 9 px.
+- **Not tested:** any other seven-segment timer (Stackmat, GAN), times over a minute on one, LED digits in real footage, two timers in view, the phone's speed.
+
+The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `frozen_q2` the version measured).
+
+**Steps in the app** (owner's go 2026-11-25; each with its own commit and phone test):
+1. 🟡 Reader and finder (`SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`), only in the debug scan report ([how](algorithms.md#3-reading-the-timer)). Waiting for the owner's phone test: its speed there.
+2. ⬜ Following and scanning, only in the scan report, against the two "before" reports.
+3. ⬜ *Find solves* uses it. Owner's decisions: seven-segment is tried only when no solid number runs; a **seven-segment setup by hand switches to the new way by itself** at the next *Find solves* (the two ways share no reading code), solid ones set up by hand stay. Proposed: the corners are kept and used if the new way doesn't find the timer.
 - The per-video timer columns stay for the fallback.
 
 ### 3.3-E Penalty marks and long times on the display ⬜

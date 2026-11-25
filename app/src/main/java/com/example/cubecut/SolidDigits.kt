@@ -158,7 +158,7 @@ fun standsOut(p: GrayPic, block: Int, dark: Boolean): BooleanArray {
 }
 
 /** A joined blob: its box, its number of pixels, and the horizontal runs it is made of (start, end, y). */
-private class Blob(val first: Int) {
+class Blob(val first: Int) {
     var x0 = Int.MAX_VALUE
     var y0 = Int.MAX_VALUE
     var x1 = -1
@@ -169,7 +169,7 @@ private class Blob(val first: Int) {
 }
 
 /** The blobs of a black-and-white picture (pixels that touch, also at a corner, are joined). Works on runs, which is much faster than pixels. */
-private class Blobs(on: BooleanArray, w: Int, h: Int) {
+class Blobs(on: BooleanArray, w: Int, h: Int) {
     private var runs = IntArray(3 * 4096)       // start, end (included), y
     private var parent = IntArray(4096)
     private var count = 0
@@ -235,6 +235,21 @@ private class Blobs(on: BooleanArray, w: Int, h: Int) {
         val x = find(a)
         val y = find(b)
         if (x != y) { if (x < y) parent[y] = x else parent[x] = y }
+    }
+
+    /** The runs of [b], one after the other: start, end (included), y. */
+    fun runsOf(b: Blob): IntArray {
+        var n = 0
+        var k = b.first
+        while (k >= 0) { n++; k = nextOfBlob[k] }
+        val out = IntArray(3 * n)
+        n = 0
+        k = b.first
+        while (k >= 0) {
+            for (i in 0..2) out[n++] = runs[3 * k + i]
+            k = nextOfBlob[k]
+        }
+        return out
     }
 
     /** The blob alone, 255 on 0, with [pad] empty rows above and below. */

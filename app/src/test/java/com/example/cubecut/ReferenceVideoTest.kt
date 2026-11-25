@@ -95,6 +95,27 @@ class ReferenceVideoTest {
         assertTrue("$problems", problems.isEmpty())
     }
 
+    /** The seven-segment finder: the QiYi videos have such a timer, all others must give nothing. */
+    @Test
+    fun findsOnlyTheSevenSegmentTimers() {
+        val wanted = System.getenv("CUBECUT_REF_VIDEOS").orEmpty()
+        assumeTrue("set CUBECUT_REF_VIDEOS=1 to run", wanted.isNotEmpty())
+        val problems = ArrayList<String>()
+        for (v in dir.listFiles { f -> f.name.startsWith("ref_") && f.name.endsWith(".mp4") && (wanted == "1" || wanted in f.name) }.orEmpty().sortedBy { it.name }) {
+            val video = FfmpegVideo(v)
+            val r = findSegments({ video.at(it) }, video.duration)
+            val f = r.found
+            println(
+                "SEGMENTS ${v.name}: ${if (f == null) "none" else "at ${f.t} s, ${f.grid.box(f.grid.decimals + 2)}, digits ${f.grid.height.toInt()} px, shown ${f.shown}, fit ${"%.3f".format(f.fit)}"}; " +
+                        "${r.places} places, ${r.checked} rows checked; seconds: ${"%.1f".format(r.rowsSec)} rows, ${"%.1f".format(r.checkSec)} checks, ${"%.1f".format(r.fitSec)} fit, ${"%.1f".format(video.nanos / 1e9)} pictures"
+            )
+            if (f != null) println("   slope ${f.grid.slope} lean ${f.grid.lean} pitch/h ${f.grid.pitch / f.grid.height} gap/h ${f.grid.gap / f.grid.height} w/h ${f.grid.digitWidth / f.grid.height} decimals ${f.grid.decimals}")
+            if ((f != null) != ("qiyi" in v.name)) problems.add(v.name)
+            video.close()
+        }
+        assertTrue("$problems", problems.isEmpty())
+    }
+
     /** The whole chain on the first video, with the picture moved after a third and again after two thirds of it. */
     @Test
     fun smallCameraMoves() {

@@ -110,6 +110,15 @@ The examples come from 11 open fonts, or only from the video itself once all ten
 
 On the PC, the app's own code found and learned csTimer in all three videos (15 to 19 places, 47 to 66 whole pictures, 273 to 344 area reads, 2.2 s without getting pictures), and the learned digits then read 150 of 150 held times (`ReferenceVideoTest`, without csTimer's look-alike font). On the owner's phone (debug build, before the speed-up below) video 01 gave the same result in 48 s: 6 s for pictures, 42 s for searching and reading, 36 ms per area read. Since then pictures are looked at at half size and fonts are compared roughly first, which makes it 3.3 times faster on the PC; the phone isn't measured again yet.
 
+**Seven-segment timers** (QiYi; `SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`, 3.3-C). Only in the debug scan report so far; *Find solves* still needs these timers set up by hand. Pure logic, nothing is learned.
+1. **Rows.** Black-and-white at four sizes (`BLOCKS`) against a limit that goes with the brightness; gaps between strokes are closed with circles of three sizes; digit-sized blobs are chained and compared with drawn digits for 23 leans. All of it along three directions, 0° and ±30° (`ROW_TURNS`): the blobs are turned, not the picture, which costs almost nothing.
+2. **Grid.** The right edges of 4 or more digits must be evenly spaced, with one wider gap at the decimal point. From then on every place is compared with the ten digits (13 shapes), so a missing stroke no longer breaks a digit.
+3. **Clock.** Seconds and tenths must rise with the clock in 6 pictures 0.5 s apart; the last two decimals blur while it runs and aren't used. The first grid that does is the timer, and is made to fit those pictures better.
+
+**Order** (`otherKind` of `findTimer`): solid digits first. If nothing runs after 40 places at half size and 16 at full size, seven-segment is tried; if that finds nothing either, the solid search goes on with the rest of its places. So a csTimer video with a QiYi in view stays csTimer. *Find solves* doesn't pass `otherKind` yet and searches as before.
+
+Measured on the PC with the app's own code (`ReferenceVideoTest.findsOnlyTheSevenSegmentTimers`, 2026-11-25): `ref_qiyi_old_01` found after 21 places, `ref_qiyi_old_02` after 34. **Nothing** in the other eight reference videos (csTimer, 4x4, flowtimer), 160 places each; the small QiYi in csTimer's videos isn't picked up. 0.1 to 0.25 s per place on 12 threads, plus checking. Both QiYi videos were used while developing the method; the phone's speed is not measured yet. The solid finder and scan give the results below, as before.
+
 **Scanning a found timer** (`FinderScan.kt`, 3.3-C). The idea and the constants of [§ 1](#1-finding-solves), with these differences:
 - A text with fewer decimals than a stopped time is a *running* time, and is kept.
 - **Start to stop:** the running readings give the start, and stop minus start must be the time within 0.2 s. Not confirmed, or never seen running: the solve is kept with `CLOCK_NOTE` and needs a check. It exposes wrong whole numbers and tenths, not hundredths. The clock also chooses between competing readings in the vote.
@@ -124,7 +133,7 @@ Measured on the PC with the app's own code (`ReferenceVideoTest`, 2026-11-24, wi
 |---|---|---|---|---|---|---|
 | `ref_cstimer_old_01` | 25 / 25 | 0 | 0 | 25 | 0.017 s | 3017 |
 | `ref_cstimer_old_02` | 25 / 25 | 0 | 0 | 24 | 0.084 s | 2424 |
-| `ref_cstimer_old_03` | 25 / 25 | 0 | 0 | 25 | 0.017 s | 2424 |
+| `ref_cstimer_old_03` | 25 / 25 | 0 | 0 | 25 | 0.017 s | 2427 |
 | `ref_4x4_01` (1:04.42, 30 fps) | 1 / 1 | 0 | 0 | 1 | 0.000 s | 170 |
 | `ref_4x4_02` (1:01.39, 30 fps) | 1 / 1 | 0 | 0 | 1 | 0.000 s | 168 |
 | `ref_4x4_03` (1:01.31) | 1 / 1 | 0 | 0 | 1 | 0.017 s | 178 |

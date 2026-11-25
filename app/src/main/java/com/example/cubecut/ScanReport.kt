@@ -259,8 +259,21 @@ private fun byItselfReport(
         }
 
         val start = System.nanoTime()
-        val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled)
-        val finding = (System.nanoTime() - start) / 1e9
+        val segments = ArrayList<String>()
+        var segmentSec = 0.0
+        // (a seven-segment timer is only looked for and reported; Find solves doesn't use it yet)
+        val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled) {
+            val before = pictures
+            val beforeNanos = inPictures
+            val from = System.nanoTime()
+            val s = findSegments(pic, durationSec, { onProgress(it, 100) }, isCancelled)
+            segmentSec = (System.nanoTime() - from) / 1e9
+            segments.addAll(segmentNotes(s, segmentSec, pictures - before, (inPictures - beforeNanos) / 1e9))
+            pictures = before
+            inPictures = beforeNanos
+            s.found != null
+        }
+        val finding = (System.nanoTime() - start) / 1e9 - segmentSec
         val how = ArrayList<String>()
         how.add("")
         how.add("How it was found:")
@@ -269,6 +282,7 @@ private fun byItselfReport(
             "Took ${"%.1f".format(finding)} s: ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, ${"%.1f".format(finding - inPictures / 1e9)} s " +
                     "for ${r.wholeFrames} whole-picture searches and ${r.areaReads} area reads"
         )
+        how.addAll(segments)
         val timer = r.timer ?: return noTimerText(truth, videoName, if (r.choices.isEmpty()) "CubeCut didn't find one by itself." else "Two numbers run at the same time, CubeCut would ask which one.", app) + how.joinToString("\n", "\n")
         val a = timer.area
         val found = "Found by itself at x ${a.left}-${a.right}, y ${a.top}-${a.bottom}, digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}, " +
@@ -311,6 +325,25 @@ private fun byItselfReport(
     } finally {
         source.close()
     }
+}
+
+/** What the seven-segment finder did, and how long it took on this phone. */
+private fun segmentNotes(s: SegmentResult, seconds: Double, pictures: Int, pictureSec: Double): List<String> {
+    val out = arrayListOf("", if (s.found == null) "Seven-segment timer: NOT FOUND" else "Seven-segment timer: FOUND (not used for the solves yet)")
+    if (s.found != null) {
+        val g = s.found.grid
+        val b = g.box(g.decimals + 2)
+        out.add(
+            "At ${videoPlace(s.found.t)}, x ${b.left}-${b.right}, y ${b.top}-${b.bottom}, digits ${g.height.toInt()} px, ${if (g.dark) "dark" else "light"}, " +
+                    "${g.decimals} decimals, fit ${"%.2f".format(s.found.fit)}"
+        )
+        out.add("It showed, half a second apart (without tens): " + s.found.shown.joinToString(" ") { "%.1f".format(it % 10) })
+    }
+    out.add(
+        "Took ${"%.1f".format(seconds)} s for ${s.places} places: ${"%.1f".format(pictureSec)} s for $pictures pictures, ${"%.1f".format(s.rowsSec)} s looking for rows, " +
+                "the rest for checking ${s.checked} rows"
+    )
+    return out
 }
 
 private fun byHandReport(

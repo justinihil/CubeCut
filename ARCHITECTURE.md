@@ -24,6 +24,7 @@ flowchart TB
   subgraph Domain["Pure logic (no Android UI)"]
     SA["SolveAnalyzer.kt<br/>scan · vote · first frame"]
     TF["SolidDigits.kt · TimerFinder.kt · FinderScan.kt<br/>find, learn, scan without a setup"]
+    SF["SegmentRows.kt · SegmentGrid.kt · SegmentFinder.kt<br/>seven-segment timers (scan report only)"]
     RM["RescanMerge.kt<br/>merge · checks"]
     CE1["ClipExporter.kt<br/>CutItem · computeClips"]
   end
@@ -144,6 +145,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 |---|---|
 | How solves are detected, voting, first-frame search | `SolveAnalyzer.scan` / `pickWinner` / `firstAppearance`; constants at the top of `SolveAnalyzer.kt`. Background in [algorithms](docs/algorithms.md#1-finding-solves) |
 | How digits are read; supported fonts | Found timers: `SolidDigits.kt`. Set up by hand: `TimerVision` in `TimerReader.kt`, `DisplayReaders.kt` |
+| Finding a seven-segment timer (scan report only, for now) | `SegmentFinder.kt`, `SegmentGrid.kt`, `SegmentRows.kt` |
 | Finding the timer without a setup; the question which one | `TimerFinder.kt`, `FinderScan.kt`; `AutoScan.kt` (glue and dialog); `SessionStore.saveFoundTimer` / `timerPlaceOf` |
 | Timer setup screen and learning | `TimerSetupScreen.kt` (UI); `TimerVision.createSetup` (learning); `SessionStore.saveTimerSetup` / `timerCornersOf` (persistence) |
 | Where frames come from, decoder speed | `FrameSource.kt` (`openFrameSource`, `calibrate`) |
