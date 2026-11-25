@@ -164,6 +164,43 @@ class FinderScanTest {
         for (i in times.indices) assertEquals(stop(i), found[i].stopSec, frame + 1e-6)
     }
 
+    /** Three decimals all the time, the last two blurred while running: then a full text is often missing or wrong, the tenths are right. */
+    private fun blurred(t: Double): Pair<String?, Double?> {
+        val i = floor(t / cycle).toInt().coerceIn(times.indices)
+        val runs = t - i * cycle >= 10 && t < stop(i) - 1e-9
+        val shown = threeDecimals(t)
+        val tenths = floor(shown.toDouble() * 10 + 1e-6) / 10
+        if (!runs) return Pair(shown, tenths)
+        val odd = (t * 2).toInt() % 5
+        return Pair(if (odd < 2) "%.1f88".format(Locale.ROOT, tenths) else null, tenths)
+    }
+
+    private fun scanBlurred(read: (Double) -> Pair<String?, Double?>) =
+        scanFoundTimer({ read(it).first }, duration, 3, 3, frame) { read(it).second }.solves
+
+    @Test
+    fun blurredDecimals_runningTimesComeFromTheTenths() {
+        val found = scanBlurred { blurred(it) }
+        assertEquals(times.map { "%.3f".format(Locale.ROOT, it) }, found.map { it.timeText })
+        for (i in times.indices) { assertEquals(stop(i), found[i].stopSec, frame + 1e-6); assertEquals("", found[i].note) }
+    }
+
+    @Test
+    fun blurredDecimals_aRunningTimeReadTwice_isNoStop() {
+        // in the third solve two readings come out the same, and the ones after them can be read in full
+        val from = start(2) + 4.9
+        val found = scanBlurred { t -> if (t > from && t < from + 0.7) Pair("5.388", 5.3) else if (t >= from && t < start(2) + 9) Pair(threeDecimals(t), blurred(t).second) else blurred(t) }
+        assertEquals(times.map { "%.3f".format(Locale.ROOT, it) }, found.map { it.timeText })
+    }
+
+    @Test
+    fun blurredDecimals_aHiddenStopComesFromTheClock() {
+        val found = scanBlurred { t -> if (t > stop(1) - 0.3 && t < stop(1) + 3) Pair(null, null) else blurred(t) }
+        assertEquals(times.map { "%.3f".format(Locale.ROOT, it) }, found.map { it.timeText })
+        assertEquals(stop(1), found[1].stopSec, 0.15)
+        assertEquals(HIDDEN_STOP_NOTE, found[1].note)
+    }
+
     @Test
     fun aTimeCorrectedWhenItStops_keepsItsCut_andIsFlagged() {
         val found = scanFoundTimer({ t -> threeDecimals(t, -0.62) }, duration, 3, 3, frame).solves

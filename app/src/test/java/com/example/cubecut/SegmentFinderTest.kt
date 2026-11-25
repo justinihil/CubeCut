@@ -17,6 +17,7 @@
 package com.example.cubecut
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -57,7 +58,14 @@ class SegmentFinderTest {
         val pitch = 0.75 * look.size
         val thick = 0.055 * look.size
         fun line(x0: Double, y0: Double, x1: Double, y1: Double, amount: Float) {
-            for (py in 0 until h) for (px in 0 until w) {
+            // only the part of the picture around the stroke
+            fun px(x: Double, y: Double) = cos * (x + look.lean * y) - sin * y + w / 2.0 + dx
+            fun py(x: Double, y: Double) = sin * (x + look.lean * y) + cos * y + h / 2.0 + dy
+            val room = 2 * thick + 3
+            val xs = listOf(px(x0, y0), px(x1, y1))
+            val ys = listOf(py(x0, y0), py(x1, y1))
+            for (py in maxOf(0, (ys.min() - room).toInt())..minOf(h - 1, (ys.max() + room).toInt()))
+                for (px in maxOf(0, (xs.min() - room).toInt())..minOf(w - 1, (xs.max() + room).toInt())) {
                 val ux = px - w / 2.0 - dx
                 val uy = py - h / 2.0 - dy
                 val y = -sin * ux + cos * uy
@@ -149,6 +157,47 @@ class SegmentFinderTest {
     }
 
     /** Against the definition, pixel by pixel: grow by the circle, then take back what isn't grown all around. */
+    /** Two solves; the display is hit and jumps while it shows the first one, and is covered for a while in the second hold. */
+    @Test
+    fun followsAndScans() {
+        val look = Look(lean = -0.1)
+        fun picture(t: Double): GrayPic {
+            val running = t in 4.0..13.437 || t in 30.0..42.345
+            val shown = when {
+                t < 4 || (t >= 24 && t < 30) -> 0.0
+                t < 13.437 -> floor((t - 4) * 1000 + 1e-6) / 1000
+                t < 24 -> 9.437
+                t < 42.345 -> floor((t - 30) * 1000 + 1e-6) / 1000
+                else -> 12.345
+            }
+            if (t in 46.0..49.0) return GrayPic(w, h, ByteArray(w * h) { 90 })
+            val jumped = t >= 20
+            val text = "%.3f".format(Locale.ROOT, shown)
+            return pictures.getOrPut("$text $running $jumped") { draw(text, look, if (jumped) 34.0 else 0.0, if (jumped) -22.0 else 0.0, blurred = running && shown > 0) }
+        }
+        val duration = 58.0
+        val found = findSegments({ picture(it) }, duration).found
+        assertNotNull(found)
+        val timer = SegmentTracker.follow(found!!, { picture(it) }, duration)
+        val frame = 1.0 / 30
+        val solves = scanSegments(timer, duration, frame).solves
+        assertEquals(listOf("9.437", "12.345"), solves.map { it.timeText })
+        assertEquals(13.437, solves[0].stopSec, 2 * frame)
+        assertEquals(42.345, solves[1].stopSec, 2 * frame)
+        for (s in solves) assertEquals("", s.note)
+        val (across, down) = timer.moved()
+        assertEquals(34.0, across, 4.0)
+        assertEquals(22.0, down, 4.0)
+    }
+
+    @Test
+    fun aDisplayCutOffByTheEdge_isNotRead() {
+        val look = Look()
+        val f = findSegments({ t -> at(t, look) }, duration).found!!
+        assertFalse(f.grid.isCutOff(w, h))
+        assertTrue(f.grid.moved(w / 2.0, 0.0).isCutOff(w, h))
+    }
+
     @Test
     fun closing() {
         val rnd = Random(1)

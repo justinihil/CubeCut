@@ -261,7 +261,8 @@ private fun byItselfReport(
         val start = System.nanoTime()
         val segments = ArrayList<String>()
         var segmentSec = 0.0
-        // (a seven-segment timer is only looked for and reported; Find solves doesn't use it yet)
+        var segmentTimer: FoundSegments? = null
+        // (a seven-segment timer is only scanned for this report; Find solves doesn't use it yet)
         val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled) {
             val before = pictures
             val beforeNanos = inPictures
@@ -271,6 +272,7 @@ private fun byItselfReport(
             segments.addAll(segmentNotes(s, segmentSec, pictures - before, (inPictures - beforeNanos) / 1e9))
             pictures = before
             inPictures = beforeNanos
+            segmentTimer = s.found
             s.found != null
         }
         val finding = (System.nanoTime() - start) / 1e9 - segmentSec
@@ -283,6 +285,7 @@ private fun byItselfReport(
                     "for ${r.wholeFrames} whole-picture searches and ${r.areaReads} area reads"
         )
         how.addAll(segments)
+        segmentTimer?.let { return segmentReport(context, uri, durationSec, it, source, truth, videoName, app, how, onProgress, isCancelled) }
         val timer = r.timer ?: return noTimerText(truth, videoName, if (r.choices.isEmpty()) "CubeCut didn't find one by itself." else "Two numbers run at the same time, CubeCut would ask which one.", app) + how.joinToString("\n", "\n")
         val a = timer.area
         val found = "Found by itself at x ${a.left}-${a.right}, y ${a.top}-${a.bottom}, digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}, " +
@@ -329,7 +332,7 @@ private fun byItselfReport(
 
 /** What the seven-segment finder did, and how long it took on this phone. */
 private fun segmentNotes(s: SegmentResult, seconds: Double, pictures: Int, pictureSec: Double): List<String> {
-    val out = arrayListOf("", if (s.found == null) "Seven-segment timer: NOT FOUND" else "Seven-segment timer: FOUND (not used for the solves yet)")
+    val out = arrayListOf("", if (s.found == null) "Seven-segment timer: NOT FOUND" else "Seven-segment timer: FOUND (Find solves doesn't use it yet)")
     if (s.found != null) {
         val g = s.found.grid
         val b = g.box(g.decimals + 2)
@@ -344,6 +347,54 @@ private fun segmentNotes(s: SegmentResult, seconds: Double, pictures: Int, pictu
                 "the rest for checking ${s.checked} rows"
     )
     return out
+}
+
+/** A seven-segment timer followed and scanned, graded like the others. */
+private fun segmentReport(
+    context: Context, uri: Uri, durationSec: Double, found: FoundSegments, source: GraySource, truth: GroundTruth, videoName: String, app: String,
+    how: MutableList<String>, onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
+): String {
+    var pictures = 0
+    var inPictures = 0L
+    val pic = PicAt { t ->
+        val start = System.nanoTime()
+        val gray = source.gray(t)
+        val p = if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
+        pictures++
+        inPictures += System.nanoTime() - start
+        p
+    }
+    val followStart = System.nanoTime()
+    val timer = SegmentTracker.follow(found, pic, durationSec, { onProgress(10 + it / 10, 100) }, isCancelled)
+    how.add(
+        "Followed: ${"%.1f".format((System.nanoTime() - followStart) / 1e9)} s, ${"%.1f".format(inPictures / 1e9)} s of it for $pictures pictures; " +
+                "grid refined with ${timer.refinedWith} pictures, fit ${"%.3f".format(timer.fit)}"
+    )
+    pictures = 0
+    inPictures = 0L
+    val scanStart = System.nanoTime()
+    val scan = scanSegments(
+        timer, durationSec, videoFrameSec(context, uri), { t -> frameTimeOf(source, t) }, { done, total -> onProgress(20 + 80 * done / total, 100) }, isCancelled
+    )
+    val seconds = (System.nanoTime() - scanStart) / 1e9
+    val (across, down) = timer.moved()
+    how.add(
+        "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, the rest reading " +
+                "(${"%.1f".format((seconds * 1e3 - inPictures / 1e6) / maxOf(1, pictures))} ms each); ${timer.farLooks} looks further away; it moved ${across.toInt()} x ${down.toInt()} px"
+    )
+    val flagged = scan.solves.filter { it.note.isNotEmpty() }
+    if (flagged.isNotEmpty()) how.add("Flagged for checking:")
+    for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+
+    val b = timer.grid.box(timer.decimals + 2)
+    val where = "Found by itself: seven-segment, x ${b.left}-${b.right}, y ${b.top}-${b.bottom} at first, digits ${timer.grid.height.toInt()} px, ${if (timer.grid.dark) "dark" else "light"}, ${timer.decimals} decimals."
+    val text = if (truth.timesOnly.isNotEmpty()) {
+        timesReportText(truth, videoName, true, where, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
+    } else {
+        val reading = gradeReading(truth.solves, timer.decimals, durationSec) { t -> timer.shown(t).text?.filter { it.isDigit() } }
+        scanReportText(truth, videoName, true, where, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
+    }
+    return text + how.joinToString("\n", "\n")
 }
 
 private fun byHandReport(

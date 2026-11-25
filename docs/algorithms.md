@@ -117,7 +117,20 @@ On the PC, the app's own code found and learned csTimer in all three videos (15 
 
 **Order** (`otherKind` of `findTimer`): solid digits first. If nothing runs after 40 places at half size and 16 at full size, seven-segment is tried; if that finds nothing either, the solid search goes on with the rest of its places. So a csTimer video with a QiYi in view stays csTimer. *Find solves* doesn't pass `otherKind` yet and searches as before.
 
-Measured on the PC with the app's own code (`ReferenceVideoTest.findsOnlyTheSevenSegmentTimers`, 2026-11-25): `ref_qiyi_old_01` found after 21 places, `ref_qiyi_old_02` after 34. **Nothing** in the other eight reference videos (csTimer, 4x4, flowtimer), 160 places each; the small QiYi in csTimer's videos isn't picked up. 0.1 to 0.25 s per place on 12 threads, plus checking. Both QiYi videos were used while developing the method; the phone's speed is not measured yet. The solid finder and scan give the results below, as before.
+Measured on the PC with the app's own code (`ReferenceVideoTest.findsOnlyTheSevenSegmentTimers`, 2026-11-25): `ref_qiyi_old_01` found after 21 places, `ref_qiyi_old_02` after 34. **Nothing** in the other eight reference videos (csTimer, 4x4, flowtimer), 160 places each; the small QiYi in csTimer's videos isn't picked up. 0.1 to 0.25 s per place on 12 threads, plus checking. Both QiYi videos were used while developing the method. On the owner's phone (2026-11-25): found after 7 places in 8.6 s and after 11 places in 5.3 s, and the numbers it saw agree with the answer keys within 0.02 s; with the solid search before it 46.9 s and 26.9 s, where giving up took 93.6 s and 116.8 s before. No false find in csTimer 01. The solid finder and scan give the results below, as before.
+
+**Following and reading it** (`SegmentTracker.kt`). A timer on a mat slides and jumps when it is hit (75 × 96 px in 01).
+- **Rough track:** a picture every 10 s, outwards from where it was found. A place counts only where the digits fit at least 0.7, or a grid half a digit too low reads `0.000` as `4.444`.
+- **One grid for the whole video** is fitted to up to 24 pictures of that track. Where the tens show a sure digit, they count too: a grid fitted to the last four digits only is least exact at the first one, and dropped its `1`.
+- **Every read** looks around the nearest known place, then further (10 px of the level picture), then, not too often, 1.5 digit heights around at half size (`foundAgain`). What fits under 0.66, or is cut off by the edge of the picture, isn't read.
+- **The scan is the one below**, with two changes for displays whose last digits blur while running: running times come from the tenths (`tenths`), and a time that seems to stay but goes on rising within 0.3 s of the clock was running.
+
+| Video | Found | False | Wrong time | On the frame | Within 0.1 s | Worst cut | Reads |
+|---|---|---|---|---|---|---|---|
+| `ref_qiyi_old_01` | 55 / 55 | 0 | 0 | 54 | 55 | 0.033 s | 4147 |
+| `ref_qiyi_old_02` (30 fps; the display turned 33°) | 30 / 30 | 0 | 0 | 21 | 30 | 0.033 s | 1887 |
+
+PC, the app's own code (`scansTheSevenSegmentTimers`, 2026-11-25); keys ±1 frame (slow LCD). Nothing is flagged but the time already on the timer when 02 began. Same solves from three other starting places each (worst cut 0.067 s), and for 01 at 25 % brightness, turned ±20°, at 0.7 and 1.2 size (worst 0.1 s). At 1.5 size the timer left the picture, so that says nothing. Set up by hand on the phone: 55 and 28 found, 13 and 6 false, 3 and 2 wrong times, 45 and 23 within 0.1 s ([§ 8](#8-reference-measurements)). Compare with the **file**: the list's cuts were made by the old scan, so *Compare with the list* grades that scan against itself.
 
 **Scanning a found timer** (`FinderScan.kt`, 3.3-C). The idea and the constants of [§ 1](#1-finding-solves), with these differences:
 - A text with fewer decimals than a stopped time is a *running* time, and is kept.

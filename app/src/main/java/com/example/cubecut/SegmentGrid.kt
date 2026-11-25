@@ -16,6 +16,7 @@
  */
 package com.example.cubecut
 
+import java.util.stream.IntStream
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
@@ -43,8 +44,15 @@ private const val MOST_DIGITS = 6
 /** Right edges of a first row may be off a grid by at most this, in digit heights. */
 private const val OFF_GRID = 0.09
 
-/** Looking for the best place, far ones count a little less: per squared pixel of the level picture. */
+/** Looking for the best place, far ones count a little less: per squared pixel of the level picture. Less so when it was pushed away. */
 private const val FAR = 0.0006f
+private const val FAR_PUSHED = 0.00002f
+
+/** A reach longer than this is looked at at half size first. */
+private const val ROUGH_FROM = 4
+
+/** How far a pushed timer is looked for, in pixels of the level picture: 1.5 digit heights. Further away it is looked for at half size. */
+private const val PUSHED = 60
 
 private val PLACE_SHAPES: List<FloatArray> by lazy {
     SEGMENT_DIGITS.map { (_, s) ->
@@ -52,6 +60,14 @@ private val PLACE_SHAPES: List<FloatArray> by lazy {
         val a = FloatArray(PLACE)
         for (y in 0 until SEG_H) for (x in 0 until SEG_W) a[(y + ROOM) * PLACE_W + x + ROOM] = digit[y * SEG_W + x]
         softened(a, PLACE_W, PLACE_H, 1.6).also { evenOut(it) }
+    }
+}
+
+/** The same at half size, for a quick look around. */
+private val SMALL_SHAPES: List<FloatArray> by lazy {
+    PLACE_SHAPES.map { s ->
+        val w = PLACE_W / 2
+        FloatArray(PLACE / 4) { val i = (it / w) * 2 * PLACE_W + (it % w) * 2; s[i] + s[i + 1] + s[i + PLACE_W] + s[i + PLACE_W + 1] }.also { evenOut(it) }
     }
 }
 
@@ -84,6 +100,9 @@ data class SegmentGrid(
         return Area(floor(xs.min()).toInt(), floor(ys.min()).toInt(), xs.max().toInt() + 1, ys.max().toInt() + 1)
     }
 
+    /** Are the last digits cut off by the edge of a [w] x [h] picture? */
+    fun isCutOff(w: Int, h: Int): Boolean = box(decimals + 1).let { it.left < 0 || it.top < 0 || it.right > w || it.bottom > h }
+
     /** The same grid ([dx], [dy]) further in the frame. */
     fun moved(dx: Double, dy: Double): SegmentGrid {
         val x = toLevel.x(dx, dy) - toLevel.x(0.0, 0.0)
@@ -93,29 +112,30 @@ data class SegmentGrid(
 
     private fun rightOf(i: Int): Double = right - pitch * i - if (i >= decimals) gap else 0.0
 
-    /** The level picture of the last digits at the size digits are compared, with [room] more around it, and where each place begins. */
-    private inner class Level(g: GrayPic, digits: Int, room: Int) {
-        private val sx = SEG_W / digitWidth
-        private val sy = SEG_H / height
+    /** The level picture of the last digits at the size digits are compared ([by] times smaller), with [room] more around it, and where each place begins. */
+    private inner class Level(g: GrayPic, digits: Int, room: Int, by: Int = 1) {
+        private val sx = SEG_W / by / digitWidth
+        private val sy = SEG_H / by / height
+        private val edge = ROOM / by + room
         private val left = rightOf(digits - 1) - digitWidth
-        val w = ((right - left) * sx).toInt() + 2 * (ROOM + room) + 1
-        val h = PLACE_H + 2 * room
+        val w = ((right - left) * sx).toInt() + 2 * edge + 1
+        val h = PLACE_H / by + 2 * room
         val d: FloatArray
         val starts = DoubleArray(digits) { (rightOf(it) - digitWidth - left) * sx }
 
         init {
             val v = FloatArray(w * h)
             for (y in 0 until h) {
-                val ly = (y - ROOM - room) / sy + top
+                val ly = (y - edge) / sy + top
                 for (x in 0 until w) {
-                    val lx = (x - ROOM - room) / sx + left
+                    val lx = (x - edge) / sx + left
                     v[y * w + x] = g.between(back.x(lx, ly), back.y(lx, ly))
                 }
             }
             // the difference to the surroundings, so that a shadow across the display doesn't matter
-            val around = boxMean(v, w, h, 10)
+            val around = boxMean(v, w, h, 10 / by)
             for (i in v.indices) v[i] = max(-8f, if (dark) around[i] - v[i] else v[i] - around[i])
-            d = softened(v, w, h, 0.8)
+            d = softened(v, w, h, 0.8 / by)
         }
     }
 
@@ -147,34 +167,95 @@ data class SegmentGrid(
     }
 
     /** The grid moved, by at most [reach] pixels of the level picture, to where its digits fit best; and how well they fit there. */
-    fun located(g: GrayPic, reach: Int, digits: Int = decimals + 1): Pair<SegmentGrid, Float> {
-        val level = Level(g, digits, reach)
+    fun located(g: GrayPic, reach: Int, digits: Int = decimals + 1): Pair<SegmentGrid, Float> =
+        if (reach <= ROUGH_FROM) searched(g, reach, digits, 1, FAR)
+        else searched(g, (reach + 1) / 2, digits, 2, 4 * FAR).first.searched(g, 2, digits, 1, FAR)      // (roughly first: four times fewer places, four times smaller)
+
+    /** The same for a timer that was pushed away: a quick look further around, then a proper one there. */
+    fun foundAgain(g: GrayPic): Pair<SegmentGrid, Float> = searched(g, PUSHED / 2, decimals + 1, 2, 4 * FAR_PUSHED).first.searched(g, 4, decimals + 1, 1, FAR)
+
+    private fun searched(g: GrayPic, reach: Int, digits: Int, by: Int, far: Float): Pair<SegmentGrid, Float> {
+        val level = Level(g, digits, reach, by)
+        val shapes = if (by == 1) PLACE_SHAPES else SMALL_SHAPES
+        val pw = PLACE_W / by
+        val ph = PLACE_H / by
         val n = 2 * reach + 1
         val sum = FloatArray(n * n)
-        val p = FloatArray(PLACE)
-        val column = FloatArray(n * (n + 1))
+        val p = FloatArray(pw * ph)
+        // the likeness of the best digit at every place of the level picture, worked out when it is first needed
+        val columns = level.w - pw + 1
+        val best = FloatArray(n * columns) { Float.NaN }
+        fun at(x: Int, y: Int): Float {
+            val c = if (x < 0) 0 else if (x >= columns) columns - 1 else x
+            val known = best[y * columns + c]
+            if (!known.isNaN()) return known
+            for (j in 0 until ph) System.arraycopy(level.d, (y + j) * level.w + c, p, j * pw, pw)
+            var l = -1f
+            if (evenOut(p)) for (s in shapes) { val k = likeness(p, s); if (k > l) l = k }
+            best[y * columns + c] = l
+            return l
+        }
         for (start in level.starts) {
             val from = floor(start).toInt()
             val f = (start - from).toFloat()
-            for (y in 0 until n) for (x in 0..n) {
-                var best = -1f
-                if (from + x + PLACE_W <= level.w) {
-                    for (j in 0 until PLACE_H) System.arraycopy(level.d, (y + j) * level.w + from + x, p, j * PLACE_W, PLACE_W)
-                    if (evenOut(p)) for (s in PLACE_SHAPES) best = max(best, likeness(p, s))
-                } else best = column[y * (n + 1) + x - 1]
-                column[y * (n + 1) + x] = best
-            }
-            for (y in 0 until n) for (x in 0 until n) sum[y * n + x] += column[y * (n + 1) + x] * (1 - f) + column[y * (n + 1) + x + 1] * f
+            for (y in 0 until n) for (x in 0 until n) sum[y * n + x] += at(from + x, y) * (1 - f) + at(from + x + 1, y) * f
         }
         var at = 0
-        var best = -1e9f
+        var most = -1e9f
         for (y in 0 until n) for (x in 0 until n) {
-            val s = sum[y * n + x] / digits - FAR * ((y - reach) * (y - reach) + (x - reach) * (x - reach))
-            if (s > best) { best = s; at = y * n + x }
+            val s = sum[y * n + x] / digits - far * ((y - reach) * (y - reach) + (x - reach) * (x - reach))
+            if (s > most) { most = s; at = y * n + x }
         }
-        val dx = (at % n - reach) * digitWidth / SEG_W
-        val dy = (at / n - reach) * height / SEG_H
+        val dx = (at % n - reach) * by * digitWidth / SEG_W
+        val dy = (at / n - reach) * by * height / SEG_H
         return Pair(copy(right = right + dx, top = top + dy, bottom = bottom + dy), sum[at] / digits)
+    }
+
+    /** This grid's shape where [place] is: the middle of the last digit stays. */
+    fun putAt(place: SegmentGrid): SegmentGrid {
+        val x = place.back.x(place.right - place.digitWidth / 2, (place.top + place.bottom) / 2)
+        val y = place.back.y(place.right - place.digitWidth / 2, (place.top + place.bottom) / 2)
+        val h = height
+        val middle = toLevel.y(x, y)
+        return copy(right = toLevel.x(x, y) + digitWidth / 2, top = middle - h / 2, bottom = middle + h / 2)
+    }
+
+    /** One shape for the whole video: made to fit many pictures, each with the place where the timer is in it. */
+    fun refinedOver(pics: List<Pair<GrayPic, SegmentGrid>>, isCancelled: () -> Boolean): Pair<SegmentGrid, Double> {
+        // (where a digit is sure before the last ones, it counts too: from there the grid can be told best)
+        val digits = pics.map { (pic, place) ->
+            val read = place.read(pic, decimals + 2)
+            val first = read[decimals + 1]
+            if (first.likeness >= SURE && first.contrast >= EMPTY * typicalContrast(read, decimals)) decimals + 2 else decimals + 1
+        }
+        fun quality(shape: SegmentGrid): Double {
+            if (isCancelled()) throw ScanCancelled()
+            val q = DoubleArray(pics.size)
+            IntStream.range(0, pics.size).parallel().forEach { i ->
+                val (pic, place) = pics[i]
+                q[i] = shape.putAt(place).located(pic, 2, digits[i]).first.read(pic, digits[i]).sumOf { it.likeness.toDouble() } / digits[i]
+            }
+            return q.average()
+        }
+        var now = this
+        var q = quality(now)
+        val px = height / 38
+        val changes: List<(SegmentGrid, Double) -> SegmentGrid> = listOf(
+            { g, s -> g.copy(slope = g.slope + 0.015 * s) }, { g, s -> g.copy(lean = g.lean + 0.04 * s) },
+            { g, s -> g.copy(digitWidth = g.digitWidth + 0.8 * px * s) }, { g, s -> g.copy(pitch = g.pitch + 0.5 * px * s) },
+            { g, s -> g.copy(gap = g.gap + 0.8 * px * s) }, { g, s -> g.copy(bottom = g.bottom + px * s) }
+        )
+        for (round in 0..2) for (change in changes) for (sign in listOf(1.0, -1.0)) {
+            while (true) {
+                val t = change(now, sign / (1 shl round))
+                if (t.gap < 0 || t.digitWidth >= t.pitch || t.height < 4) break
+                val better = quality(t)
+                if (better <= q + 2e-4) break
+                now = t
+                q = better
+            }
+        }
+        return Pair(now, q)
     }
 
     /** How well the digits fit in these pictures. */
@@ -278,7 +359,7 @@ fun tenthsOf(places: List<PlaceRead>, decimals: Int): Double? {
 fun segmentText(places: List<PlaceRead>, decimals: Int): String {
     val typical = typicalContrast(places, decimals)
     var n = places.size
-    while (n > decimals + 1 && (places[n - 1].likeness < 0.6f || places[n - 1].contrast < EMPTY * typical)) n--
+    while (n > decimals + 1 && (places[n - 1].likeness < 0.45f || places[n - 1].contrast < EMPTY * typical)) n--
     val digits = places.take(n).reversed().map { if (it.likeness >= SURE && it.contrast >= EMPTY * typical) '0' + it.digit else '?' }.joinToString("")
     return digits.dropLast(decimals) + "." + digits.takeLast(decimals)
 }

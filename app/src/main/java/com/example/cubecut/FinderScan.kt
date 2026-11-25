@@ -44,6 +44,9 @@ private const val HIDDEN_MAX_SEC = 15.0
 /** A time that seemed to stay, but then goes on rising with the clock in this many readings, was running (two blended frames read alike). */
 private const val STILL_RUNNING_READS = 3
 
+/** The same for a display whose last digits blur: so close to the clock. */
+private const val BLURRED_RISE_SEC = 0.3
+
 /** It wasn't hidden when the timer was seen running, as the clock says, this short before the first frame. */
 private const val SEEN_RUNNING_SEC = 0.5
 
@@ -56,9 +59,7 @@ const val CLOCK_NOTE = "the running time doesn't confirm this time - check it"
 /** Note on a cut that was worked out from the running time. */
 const val HIDDEN_STOP_NOTE = "the timer was hidden when it stopped, the cut is worked out - check it"
 
-private class TimeAt(val t: Double, val text: String) {
-    val seconds: Double = shownSeconds(text)
-}
+private class TimeAt(val t: Double, val text: String, val seconds: Double = shownSeconds(text))
 
 private class Stop(val text: String, var sec: Double, val votes: Int, val reads: Int, val certain: Boolean) {
     val seconds: Double = shownSeconds(text)
@@ -79,16 +80,20 @@ private fun middle(v: List<Double>): Double {
 /**
  * [read] gives what the timer shows at a second ("12.69", "9.4" while running), or null. [frameSec] is the length of one frame.
  * [frameTime] gives the real time of the frame [read] looked at last, which can be half a frame off the second asked for.
+ * [tenths]: for a display whose last digits blur while it runs, the seconds it shows to the tenth, or null; its running times are known by
+ * them, and a time that seems to stay needs another look.
  * [onProgress] gets (percent, 100). Throws [ScanCancelled] when [isCancelled] says so.
  */
 fun scanFoundTimer(
     read: (Double) -> String?, durationSec: Double, runningDecimals: Int, stoppedDecimals: Int, frameSec: Double,
-    frameTime: (Double) -> Double = { it }, onProgress: (Int, Int) -> Unit = { _, _ -> }, isCancelled: () -> Boolean = { false }
-): ScanResult = FinderScan(read, durationSec, runningDecimals, stoppedDecimals, frameSec, frameTime, onProgress, isCancelled).run()
+    frameTime: (Double) -> Double = { it }, onProgress: (Int, Int) -> Unit = { _, _ -> }, isCancelled: () -> Boolean = { false },
+    tenths: ((Double) -> Double?)? = null
+): ScanResult = FinderScan(read, durationSec, runningDecimals, stoppedDecimals, frameSec, frameTime, onProgress, isCancelled, tenths).run()
 
 private class FinderScan(
     private val readAt: (Double) -> String?, private val duration: Double, private val runningDecimals: Int, private val stoppedDecimals: Int,
-    private val frameSec: Double, private val frameTime: (Double) -> Double, private val onProgress: (Int, Int) -> Unit, private val isCancelled: () -> Boolean
+    private val frameSec: Double, private val frameTime: (Double) -> Double, private val onProgress: (Int, Int) -> Unit, private val isCancelled: () -> Boolean,
+    private val tenths: ((Double) -> Double?)?
 ) {
     private val stops = ArrayList<Stop>()
     private val running = ArrayList<TimeAt>()
@@ -145,7 +150,11 @@ private class FinderScan(
             val percent = if (duration > 0) (t / duration * 100).toInt().coerceIn(0, 100) else 0
             if (percent != lastPercent) { lastPercent = percent; onProgress(percent, 100) }
             val v = counted(t)
-            if (v == null) { t += SolveAnalyzer.SCAN_STEP; continue }
+            if (v == null) {
+                tenths?.invoke(t)?.let { running.add(TimeAt(t, "", it)) }
+                t += SolveAnalyzer.SCAN_STEP
+                continue
+            }
             if (isZero(v)) { confirmed = null; recent.clear(); t += SolveAnalyzer.ZERO_STEP; continue }
             if (stoppedDecimals != runningDecimals && !isStopped(v)) {
                 running.add(TimeAt(t, v))
@@ -160,7 +169,7 @@ private class FinderScan(
             if (recent.size > SolveAnalyzer.RECENT_N) recent.removeAt(0)
             val held = recent.takeLastWhile { it.text == v && it.t >= t - SolveAnalyzer.AGREE_WINDOW_SEC }
             if (held.size < SolveAnalyzer.MIN_AGREE) {
-                if (stoppedDecimals == runningDecimals) running.add(TimeAt(t, v))
+                if (stoppedDecimals == runningDecimals) running.add(TimeAt(t, v, tenths?.invoke(t) ?: shownSeconds(v)))
                 t += SolveAnalyzer.SCAN_STEP
                 continue
             }
@@ -172,7 +181,7 @@ private class FinderScan(
                 if (lv != null && !isZero(lv) && isStopped(lv)) votes.add(TimeAt(lt, lv))
                 lt += SolveAnalyzer.SCAN_STEP
             }
-            if (stoppedDecimals == runningDecimals && goesOnRising(held[0], votes)) {
+            if (stoppedDecimals == runningDecimals && goesOnRising(held, votes)) {
                 running.addAll(votes.filter { it.text != v })
                 recent.clear()
                 t += SolveAnalyzer.SCAN_STEP
@@ -197,9 +206,11 @@ private class FinderScan(
     }
 
     /** Does the number rise with the clock after [held]? Only asked when a running time looks like a stopped one (as many decimals). */
-    private fun goesOnRising(held: TimeAt, votes: List<TimeAt>): Boolean {
-        val rising = votes.filter { it.text != held.text && abs((it.t - it.seconds) - (held.t - held.seconds)) <= SEEN_RUNNING_SEC }
-        return rising.size >= STILL_RUNNING_READS && rising.size > votes.count { it.text == held.text }
+    private fun goesOnRising(held: List<TimeAt>, votes: List<TimeAt>): Boolean {
+        val from = if (tenths == null) held.take(1) else held               // (blurred digits: any of the readings may be the odd one)
+        val slack = if (tenths == null) SEEN_RUNNING_SEC else BLURRED_RISE_SEC
+        val rising = votes.filter { v -> v.text != held[0].text && from.any { h -> abs((v.t - v.seconds) - (h.t - h.seconds)) <= slack } }
+        return rising.size >= STILL_RUNNING_READS && rising.size > votes.count { it.text == held[0].text }
     }
 
     /**
@@ -276,6 +287,11 @@ private class FinderScan(
         val n = (SEEN_RUNNING_SEC / frameSec).toInt()
         for (k in 1..n) {
             val t = s.sec - k * frameSec
+            if (tenths != null) {
+                val v = (if (t >= 0) tenths.invoke(t) else null) ?: continue
+                if (abs(v - s.seconds) > 0.1 && abs(t - v - s.start) <= SEEN_RUNNING_SEC) return true
+                continue
+            }
             val v = (if (t >= 0) readAt(t) else null) ?: continue
             if (v != s.text && abs(t - shownSeconds(v) - s.start) <= SEEN_RUNNING_SEC) return true
         }

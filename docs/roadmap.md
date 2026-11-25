@@ -209,8 +209,8 @@ The scripts are in `D:\CubeCutRef\prototype\v2` (`frozen_v2c` is the version mea
 The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `frozen_q2` the version measured).
 
 **Steps in the app** (owner's go 2026-11-25; each with its own commit and phone test):
-1. 🟡 Reader and finder (`SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`), only in the debug scan report ([how](algorithms.md#3-reading-the-timer)). Waiting for the owner's phone test: its speed there.
-2. ⬜ Following and scanning, only in the scan report, against the two "before" reports.
+1. ✅ Reader and finder (`SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`), only in the debug scan report ([how](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-25): both QiYis found, in 8.6 s and 5.3 s.
+2. 🟡 Following and scanning (`SegmentTracker.kt`), only in the scan report. PC: 55 / 55 and 30 / 30, no false solves or wrong times, worst cut 0.033 s. Waiting for the owner's phone test, with the answer key **files**.
 3. ⬜ *Find solves* uses it. Owner's decisions: seven-segment is tried only when no solid number runs; a **seven-segment setup by hand switches to the new way by itself** at the next *Find solves* (the two ways share no reading code), solid ones set up by hand stay. Proposed: the corners are kept and used if the new way doesn't find the timer.
 - The per-video timer columns stay for the fallback.
 

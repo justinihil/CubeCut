@@ -116,6 +116,46 @@ class ReferenceVideoTest {
         assertTrue("$problems", problems.isEmpty())
     }
 
+    /** The seven-segment timers found, followed and scanned, against the keys (.frames.txt: time, first frame in seconds). */
+    @Test
+    fun scansTheSevenSegmentTimers() {
+        val wanted = System.getenv("CUBECUT_REF_VIDEOS").orEmpty()
+        assumeTrue("set CUBECUT_REF_VIDEOS=1 to run", wanted.isNotEmpty())
+        fun key(v: File) = File(dir, v.name.replace(".mp4", ".frames.txt"))
+        val videos = dir.listFiles { f -> f.name.endsWith(".mp4") && key(f).exists() && (wanted == "1" || wanted in f.name) }.orEmpty().sortedBy { it.name }
+        assumeTrue("no such videos", videos.isNotEmpty())
+        val problems = ArrayList<String>()
+        for (v in videos) {
+            val video = FfmpegVideo(v)
+            val found = findSegments({ video.at(it) }, video.duration).found
+            if (found == null) { problems.add("${v.name}: not found"); continue }
+            video.nanos = 0
+            val following = System.nanoTime()
+            val timer = SegmentTracker.follow(found, { video.at(it) }, video.duration)
+            val followSec = (System.nanoTime() - following - video.nanos) / 1e9
+            println("TRACK ${v.name}: from ${found.t} s; refined with ${timer.refinedWith}, fit ${"%.3f".format(timer.fit)} (${"%.3f".format(found.fit)} where found); ${"%.1f".format(followSec)} s without getting pictures")
+            video.nanos = 0
+            val scanning = System.nanoTime()
+            val scan = scanSegments(timer, video.duration, video.frameSec, { t -> video.frameTime(t) })
+            val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
+            val expected = key(v).readLines().filter { it.isNotBlank() && it[0].isDigit() }.map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
+            val c = compareScan(expected, scan.solves.filter { it.include })
+            println(
+                "SCAN ${v.name}: expected ${c.expectedCount}, found ${c.matches.size}, missed ${c.missed.size}, false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}; " +
+                        "${c.onFrame} on the frame, ${c.matches.count { abs(it.offsetSec) <= 0.05 }} within 0.05 s, ${c.close} within 0.1 s, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
+                        "readable ${(scan.readableFraction * 100).toInt()}%; moved ${timer.moved()}; ${timer.reads} reads, ${timer.farLooks} far looks, ${"%.1f".format(seconds)} s without getting pictures"
+            )
+            for (f in scan.solves.filter { it.note.isNotEmpty() }) println("   flagged: ${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+            for (f in c.falseSolves) println("   false: ${videoPlace(f.stopSec)} ${f.timeText}")
+            for (m in c.missed) println("   missed: ${videoPlace(m.stopSec)} ${m.time}")
+            for (m in c.wrongTime) println("   wrong: ${m.expected.time} as ${m.found.timeText}")
+            for (m in c.matches.filter { abs(it.offsetSec) > 0.05 }) println("   cut off: ${m.expected.time} by ${"%+.3f".format(m.offsetSec)} s")
+            if (c.missed.isNotEmpty() || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty() || c.close < c.matches.size) problems.add(v.name)
+            video.close()
+        }
+        assertTrue("$problems", problems.isEmpty())
+    }
+
     /** The whole chain on the first video, with the picture moved after a third and again after two thirds of it. */
     @Test
     fun smallCameraMoves() {
