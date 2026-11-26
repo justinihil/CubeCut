@@ -104,7 +104,8 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 
 **Reworked (2026-11-24):** the report first needed a working timer setup, so it couldn't test the videos that fail there. It now grades finding the timer, reading and scanning separately, always runs, and also takes a plain list of times.
 
-### 3.3-B Scan accuracy ⬜
+### 3.3-B Scan accuracy (dropped)
+**Dropped by the owner (2026-11-26):** all of it is about the scan of a timer set up by hand (`SolveAnalyzer.kt`), which since 3.3-C is only the backup and goes in 4.0-0. *Find solves* uses the new scans ([numbers](algorithms.md#3-reading-the-timer)). What was planned:
 - *Earlier note:* a held time misread without its last digit (`1151` while `11517` is held) should count as the same hold in `scan`. 3.3-A reproduced it: the hold often splits, and rarely the real time is lost. Un-ignore `heldTimeMissingLastDigit_isTheSameHold`.
 - *From the 3.3-A simulator:* 71 of 880 cuts land 2 or more frames off (worst 0.18 s). 65 of them are late and come from unreadable frames, so look at what `firstAppearance` does when a read in the middle is empty; 6 are early ([numbers](algorithms.md#ground-truth-harness-33-a)). Raise *on the frame* without lowering the other numbers.
 - Check whether readings like `0.004` of 0.000 occur.
