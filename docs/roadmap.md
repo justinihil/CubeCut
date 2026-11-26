@@ -70,7 +70,8 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 
 **Order (decided 2026-11-24): A → C → B → E → Z.** Finding the timer and reading any font are one phase (C). Splitting them (the old 3.3-D) made no sense: a timer is recognised by its digits, and digits are only worth reading once the timer is known.
 
-### 3.3-A Ground-truth harness 🔶
+### 3.3-A Ground-truth harness ✅
+**Closed by the owner (2026-11-26)**, with 3.3-Z: the harness is done; the missing footage below (phone timer apps, Stackmat, GAN, harder csTimer) isn't planned.
 - The owner records reference videos for each timer:
   - csTimer on a PC;
   - phone timer apps;
@@ -256,6 +257,7 @@ Built (2026-11-26):
 - `[3.3.0] - 2026-11-26` in the CHANGELOG, with a summary line.
 - The after-3.3 numbers in [algorithms § 8](algorithms.md#ground-truth-harness-33-a): 217 of 220 solves found by themselves, none false or wrong.
 - known-issues: lint line numbers, tests, the csTimer-and-QiYi order.
+- 3.3-A closed (owner).
 
 ---
 
