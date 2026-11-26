@@ -152,7 +152,7 @@ The owner's notes of 2026-11-26, after the first phone test step:
 - **A cancelled video stays in Sessions** (owner: makes sense, preferred), and its row offers **Scan again** besides *Open*. **Find solves** for ticked sessions; **Cancel all** while a batch runs (asks first; the videos stay).
 - **Hold and drag** to tick sessions, as on the Clips tab.
 - **A filter on the Sessions tab** (owner; the tag filters stay on the Clips tab, D7): *Not scanned*, *Timer not found*, *Places to check* (the last two added alongside, flagged to the owner).
-- **The selection bar on the Sessions tab** is laid out like the Clips tab's: ✕, count, All/None (of what the filter shows), the red bin (Delete videos), **Find solves** filled; below, *Set tags…*, *Clip settings…*, and *Forget* in red.
+- **The selection bar on the Sessions tab** (owner, after a first try): ✕, count, All/None (of what the filter shows) and **Find solves** filled; below, *Set tags…* and *Clip settings…* as outlined buttons side by side; then apart, at the right, the red bin (Delete videos) and a solid red *Forget*, away from Find solves.
 - **Built 2026-11-26**; phone test steps 45 to 50.
 
 ### 4.0-T Phone test and test rounds ⬜

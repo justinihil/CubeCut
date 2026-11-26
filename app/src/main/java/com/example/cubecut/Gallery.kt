@@ -2015,15 +2015,17 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }
                 }
             } else if (ui.selectingVideos && d != null) {
-                // (4.0-E) ticking videos: laid out like the Clips tab's bar (owner, 2026-11-26). First row: close, how many, All / None,
-                // the red bin (Delete videos) and the main action (Find solves, filled). Second row: the settings, then Forget in red.
+                // (4.0-E) ticking videos (owner, 2026-11-26). Row 1: close, how many, All / None, the main action (Find solves, filled).
+                // Row 2: Set tags and Clip settings, outlined, side by side. Row 3, apart at the right: what removes things, the red bin
+                // (Delete videos) and Forget (solid red). Each of those two warns first.
                 val tickedVideos = d.footage.filter { it.id in ui.selectedVideos }
                 val pickable = shownVideos.filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
                 val allOn = pickable.isNotEmpty() && ui.selectedVideos.containsAll(pickable)
                 val canTrash = tickedVideos.any { it.trashedMs == 0L && d.openable[it.id] == true } && batchDone < 0
+                val canForget = tickedVideos.isNotEmpty() && batchDone < 0
                 val scannable = tickedVideos.filter { !it.isSingle && d.openable[it.id] == true }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { exitVideoSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
+                    TextButton(onClick = { exitVideoSelection() }) { Text("✕", style = MaterialTheme.typography.titleLarge) }
                     Column(Modifier.weight(1f)) {
                         Text("${tickedVideos.size} selected", style = MaterialTheme.typography.titleLarge)
                         Text("Tap or hold and drag to tick", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2032,9 +2034,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         ui.selectedVideos = if (allOn) ui.selectedVideos - pickable else ui.selectedVideos + pickable
                         if (ui.selectedVideos.isEmpty()) ui.selectingVideos = false
                     }) { Text(if (allOn) "None" else "All") }
-                    IconButton(onClick = { askDeleteVideos = tickedVideos }, enabled = canTrash) {
-                        TrashIcon(if (canTrash) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
-                    }
                     // (4.0) Find solves for every ticked video, one after another (a re-scan keeps what was changed, ADR-0013)
                     Button(
                         onClick = {
@@ -2046,22 +2045,30 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         enabled = scannable.isNotEmpty()
                     ) { Text("Find solves") }
                 }
-                Row(Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { tagVideos = tickedVideos; tagVideosAtImport = false }, enabled = tickedVideos.isNotEmpty()) {
-                        Text("Set tags\u2026")
-                    }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { tagVideos = tickedVideos; tagVideosAtImport = false },
+                        enabled = tickedVideos.isNotEmpty(), modifier = Modifier.weight(1f)
+                    ) { Text("Set tags…", maxLines = 1) }
                     // (4.0) the scramble and extra time of every clip of the ticked videos
-                    TextButton(
+                    OutlinedButton(
                         onClick = {
                             val vids = tickedVideos.filter { !it.isSingle }
                             clipSettingsFor = ClipSettingsAsk("Clip settings for ${clipsText(vids.size, "video")}", vids, emptyList())
                         },
-                        enabled = tickedVideos.any { !it.isSingle }
-                    ) { Text("Clip settings\u2026") }
+                        enabled = tickedVideos.any { !it.isSingle }, modifier = Modifier.weight(1f)
+                    ) { Text("Clip settings…", maxLines = 1) }
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { forgettingMany = tickedVideos }, enabled = tickedVideos.isNotEmpty() && batchDone < 0) {
-                        Text("Forget", color = if (tickedVideos.isNotEmpty() && batchDone < 0) AppColors.danger else Color.Unspecified)
+                    IconButton(onClick = { askDeleteVideos = tickedVideos }, enabled = canTrash) {
+                        TrashIcon(if (canTrash) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
                     }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = { forgettingMany = tickedVideos }, enabled = canForget,
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.danger, contentColor = Color.White)
+                    ) { Text("Forget") }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
