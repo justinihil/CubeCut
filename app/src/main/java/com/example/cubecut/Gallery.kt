@@ -524,6 +524,7 @@ private class DragSelect {
     var last = -1                        // the clip the finger is over now
     var ticking = true                   // true = the drag ticks clips; false = it unticks them (it started on a ticked clip)
     var base: Set<String> = emptySet()   // the ticked clips from before the drag
+    var baseIds: Set<Long> = emptySet()  // (4.0) the same for videos on the Sessions tab
     var finger = Offset.Zero             // where the finger is, in the list's own coordinates
 }
 
@@ -963,7 +964,7 @@ private fun scanBadgeText(f: Footage): Pair<String, Boolean>? {
 @Composable
 private fun FootageCell(
     f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier,
-    highlight: Float = 0f, selecting: Boolean = false, selected: Boolean = false, onLongClick: () -> Unit = { },
+    highlight: Float = 0f, selecting: Boolean = false, selected: Boolean = false, onLongClick: (() -> Unit)? = null,
     hintCount: Int = 0, onHints: () -> Unit = { }, onMenu: () -> Unit, onClick: () -> Unit
 ) {
     Box(
@@ -1013,6 +1014,11 @@ private fun FootageCell(
                 }
             }
         }
+        // (4.0) this video's own scan, as a thin bar along the top of its picture (the Gallery's bar shows the whole batch)
+        val job = AnalysisQueue.jobOf(f.id)
+        if (job?.state == ScanState.SCANNING) {
+            LinearProgressIndicator(progress = { job.percent / 100f }, modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(4.dp))
+        }
         FlashOverlay(highlight)
         MoreButton(if (columns >= 5) 22.dp else 30.dp, Modifier.align(Alignment.BottomEnd).padding(4.dp), onMenu)
     }
@@ -1022,7 +1028,7 @@ private fun FootageCell(
 @Composable
 private fun FootageRow(
     f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, highlight: Float = 0f,
-    selecting: Boolean = false, selected: Boolean = false, onLongClick: () -> Unit = { },
+    selecting: Boolean = false, selected: Boolean = false, onLongClick: (() -> Unit)? = null,
     hintCount: Int = 0, onHints: () -> Unit = { }, onMenu: () -> Unit, onClick: () -> Unit
 ) {
     Row(
@@ -1057,6 +1063,11 @@ private fun FootageRow(
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2
             )
+            // (4.0) this video's own scan
+            val job = AnalysisQueue.jobOf(f.id)
+            if (job?.state == ScanState.SCANNING) {
+                LinearProgressIndicator(progress = { job.percent / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp))
+            }
         }
         if (hintCount > 0) TextButton(onClick = onHints) { Text(placesToCheckText(hintCount), color = AppColors.check, style = MaterialTheme.typography.labelMedium) }
         Spacer(Modifier.width(6.dp))
@@ -1282,6 +1293,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var flashLevel by remember { mutableStateOf(0f) }                   // how strongly (0 = not at all, 1 = fully)
     // ---- hold and drag to tick several clips (see dragToSelect) ----
     val drag = remember { DragSelect() }
+    val videoDrag = remember { DragSelect() }                           // (4.0) the same on the Sessions tab
+    var videoDragging by remember { mutableStateOf(false) }
+    var videoAutoScroll by remember { mutableStateOf(0f) }
     var dragging by remember { mutableStateOf(false) }                  // a drag is ticking clips: the list doesn't scroll by finger
     var autoScroll by remember { mutableStateOf(0f) }                   // the list scrolls by itself while the finger is near an edge
     val haptics = LocalHapticFeedback.current
@@ -1987,6 +2001,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+                    // (4.0) Find solves for every ticked video (a re-scan keeps what was changed, ADR-0013)
+                    OutlinedButton(
+                        onClick = {
+                            val vids = tickedVideos.filter { !it.isSingle && d.openable[it.id] == true && !AnalysisQueue.isBusy(it.id) }
+                            for (f in vids) AnalysisQueue.enqueue(context, f)
+                            message = if (vids.isEmpty()) "None of these can be scanned now." else "Finding solves in ${clipsText(vids.size, "video")}, one after another."
+                            exitVideoSelection()
+                        },
+                        enabled = tickedVideos.any { !it.isSingle && d.openable[it.id] == true }
+                    ) { Text("Find solves") }
                     // (4.0) the scramble and extra time of every clip of the ticked videos
                     OutlinedButton(
                         onClick = {
@@ -2042,6 +2066,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 onOpen = { job -> d?.footage?.firstOrNull { it.id == job.footageId }?.let { openFootage(it, d.openable[it.id] == true) } },
                 onChoose = { job -> asking = job },
                 onHints = { job -> hintsFor = job.footageId },
+                onAgain = { job -> AnalysisQueue.again(context, job, null) },
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
@@ -2308,6 +2333,69 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             }
                             sortFootage(picked, ui.footageSort, statsById)
                         }
+                        // (4.0) hold a card, then drag over others to tick them all, as on the Clips tab (owner, 2026-11-26)
+                        fun videoIndexAt(pos: Offset): Int? = if (ui.footageGrid) {
+                            footageGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                pos.x >= info.offset.x && pos.x < info.offset.x + info.size.width &&
+                                        pos.y >= info.offset.y && pos.y < info.offset.y + info.size.height
+                            }?.index
+                        } else {
+                            footageListState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                pos.y >= info.offset && pos.y < info.offset + info.size
+                            }?.index
+                        }
+                        fun videoViewport(): Int =
+                            if (ui.footageGrid) footageGridState.layoutInfo.viewportSize.height else footageListState.layoutInfo.viewportSize.height
+                        fun videoDragOver(to: Int) {
+                            val a = videoDrag.anchor
+                            if (a < 0) return
+                            videoDrag.last = to
+                            val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { shown.getOrNull(it) }
+                                .filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
+                            ui.selectedVideos = if (videoDrag.ticking) videoDrag.baseIds + range else videoDrag.baseIds - range
+                            ui.selectingVideos = ui.selectedVideos.isNotEmpty()
+                        }
+                        fun videoDragStart(i: Int): Boolean {
+                            val f = shown.getOrNull(i) ?: return false
+                            if (ui.selecting) return false
+                            if (AnalysisQueue.isBusy(f.id)) {
+                                message = "\"${f.title}\" is being scanned. Wait, or cancel it in the progress list."
+                                return false
+                            }
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            if (!ui.selectingVideos) {
+                                ui.selectedVideos = emptySet()
+                                ui.selectingVideos = true
+                            }
+                            videoDrag.baseIds = ui.selectedVideos
+                            videoDrag.ticking = f.id !in ui.selectedVideos
+                            videoDrag.anchor = i
+                            videoDragging = true
+                            videoDragOver(i)
+                            return true
+                        }
+                        val videoDragModifier = Modifier.dragToSelect(
+                            key = shown, drag = videoDrag,
+                            indexAt = { videoIndexAt(it) }, viewportHeight = { videoViewport() },
+                            onStart = { videoDragStart(it) }, onOver = { videoDragOver(it) },
+                            onSpeed = { videoAutoScroll = it }, onEnd = { videoDragging = false }
+                        )
+                        LaunchedEffect(videoAutoScroll) {
+                            if (videoAutoScroll != 0f) {
+                                while (true) {
+                                    if (ui.footageGrid) footageGridState.scrollBy(videoAutoScroll) else footageListState.scrollBy(videoAutoScroll)
+                                    val i = videoIndexAt(videoDrag.finger)
+                                    if (i != null && i != videoDrag.last) videoDragOver(i)
+                                    delay(16)
+                                }
+                            }
+                        }
+                        // (the tap Android sends when the finger lifts after a long-press is ignored)
+                        val onVideoTap: (Footage) -> Unit = { f ->
+                            if (!videoDrag.longPressed) {
+                                if (ui.selectingVideos) toggleVideo(f) else openFootage(f, d.openable[f.id] == true)
+                            }
+                        }
                         if (shown.isEmpty()) {
                             InfoNote(
                                 title = if (ui.footageKind == FootageKind.SINGLES) "No single solves yet" else "No videos yet",
@@ -2322,32 +2410,32 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 contentPadding = PaddingValues(bottom = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(if (ui.footageColumns >= 5) 4.dp else 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(if (ui.footageColumns >= 5) 4.dp else 8.dp),
-                                modifier = Modifier.fillMaxSize()
+                                userScrollEnabled = !videoDragging,
+                                modifier = Modifier.fillMaxSize().then(videoDragModifier)
                             ) {
                                 gridItems(shown, key = { it.id }) { f ->
                                     FootageCell(
                                         f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns, Modifier.animateItem(),
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
                                         selecting = ui.selectingVideos, selected = f.id in ui.selectedVideos,
-                                        onLongClick = { if (ui.selectingVideos) toggleVideo(f) else startVideoSelection(f) },
                                         hintCount = d.hints[f.id]?.size ?: 0, onHints = { hintsFor = f.id },
                                         onMenu = { footageMenu = f }
-                                    ) { if (ui.selectingVideos) toggleVideo(f) else openFootage(f, d.openable[f.id] == true) }
+                                    ) { onVideoTap(f) }
                                 }
                             }
                         } else {
-                            LazyColumn(Modifier.fillMaxSize(), state = footageListState, contentPadding = PaddingValues(bottom = 8.dp)) {
+                            LazyColumn(
+                                Modifier.fillMaxSize().then(videoDragModifier), state = footageListState,
+                                contentPadding = PaddingValues(bottom = 8.dp), userScrollEnabled = !videoDragging
+                            ) {
                                 listItems(shown, key = { it.id }) { f ->
                                     FootageRow(
                                         f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden,
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
                                         selecting = ui.selectingVideos, selected = f.id in ui.selectedVideos,
-                                        onLongClick = { if (ui.selectingVideos) toggleVideo(f) else startVideoSelection(f) },
                                         hintCount = d.hints[f.id]?.size ?: 0, onHints = { hintsFor = f.id },
                                         onMenu = { footageMenu = f }
-                                    ) {
-                                        if (ui.selectingVideos) toggleVideo(f) else openFootage(f, d.openable[f.id] == true)
-                                    }
+                                    ) { onVideoTap(f) }
                                 }
                             }
                         }
@@ -4437,14 +4525,15 @@ fun ClipViewer(
                         ) { Text("Reconnect video") }
                     }
                     if (current.needsCheck && checkedNow[current.listKey] == true) {
-                        Text("Marked as checked.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                        CheckedMark(modifier = Modifier.padding(top = 6.dp))
                     } else if (current.needsCheck) {
                         Text(
                             highlightCheck("check: " + current.checkText),
                             style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp)
                         )
                         if (editable && !current.cut.reviewed) {
-                            TextButton(onClick = {
+                            // (4.0) the same button as on the editor's cards
+                            ItsFineButton(modifier = Modifier.padding(top = 4.dp), onClick = {
                                 val c = current
                                 checkedNow[c.listKey] = true
                                 scope.launch {
@@ -4452,7 +4541,7 @@ fun ClipViewer(
                                         try { SessionStore.markCutReviewed(context, c.footage.id, c.cut.stopSec) } catch (e: Exception) { }
                                     }
                                 }
-                            }) { Text("It's fine: mark as checked", color = AppColors.check) }
+                            })
                         }
                     } else if (current.cut.note.isNotEmpty()) {
                         Text(current.cut.note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))

@@ -16,15 +16,16 @@ The saved data is upgraded to database v11 on first start.
 
 ### Added
 - **Import several videos at once.** Each new video goes to the Sessions tab and *Find solves* starts on it by itself, one after another. Videos imported before are skipped and counted (with one video, *Imported before* asks as before).
-- **Progress panel** above the tabs: one slim line while scans run; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
+- **Progress panel** above the tabs: one slim line for the whole batch ("2 of 10 videos done · 34%", also in the notification), each video's own bar on its card; *Cancel all*, and *Scan again* for a cancelled video; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
 - Session cards say **Waiting to scan**, **Finding solves 40%**, **Timer not found** or **Choose the timer**. Waiting scans start again after the app was closed.
 - The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
-- **Select several sessions:** long-press a card on the Sessions tab, tick others, then **Delete videos** or **Forget**, each with one warning for all of them.
+- **Select several sessions:** hold a card on the Sessions tab and drag over others (or tap them), then **Find solves**, then **Delete videos** or **Forget**, each with one warning for all of them.
 - **Last copy of a solve:** deleting an exported clip whose original video is gone now warns in red that it is the last copy (also when several are deleted at once).
 - **Cube and place tags.** A video (and a clip, for the cube) can be tagged with the cube model you used (your own list: type a name once, then pick it) and where it was filmed: *Home*, *Competition* or *Other*. Importing one video asks its tags while Find solves runs (*Skip* is fine); with several, tick them on the Sessions tab and tap *Set tags…*.
 - **Filters** for cube, place and penalty (*With penalty*, *+2*, *DNF*, *No penalty*).
 - **Possible missed solves** after a scan in the background: the card says "N places to check" and the progress list *Check N*. Tap to see them; *Go there* opens the editor at that place, *Nothing here* drops it. Nothing pops up by itself.
 - *⋮ → Open in editor* on the Sessions tab. A video whose timer wasn't found opens in the editor with the steps to add its solves by hand; its card stops saying *Timer not found* once it has solves.
+- The viewer's *It's fine* looks as in the editor (an amber outlined button, then a green *✓ Checked*).
 - **Clip settings for many clips at once:** tick clips or sessions, then *Clip settings…*: the scramble and the extra time for all of them (clips with their own setting get them too). *Settings → Clips of new videos* sets what imported videos start with, and *Apply to all videos…* sets it on every video. Exported files change only when exported again; the window says how many.
 - **New badge** on clips you haven't opened or exported yet, with *Filter → Only new clips* and *⋮ → Mark all as seen*. Clips saved before the update count as seen.
 

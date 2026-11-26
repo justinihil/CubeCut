@@ -23,11 +23,14 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -46,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -143,6 +147,32 @@ fun PadEditor(videoBefore: Double, videoAfter: Double, before: Double?, after: D
             Text("Before counts only when the scramble is left out.", style = MaterialTheme.typography.labelSmall)
         }
     }
+}
+
+/**
+ * (4.0) "It's fine": a cut that needs a check was looked at. The same amber outlined button in the editor's list and in the viewer
+ * (owner, 2026-11-26), so it reads the same everywhere.
+ */
+@Composable
+fun ItsFineButton(onClick: () -> Unit, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+    Text(
+        "\u2713  It's fine",
+        color = AppColors.check,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        modifier = modifier
+            .clip(shape)
+            .border(1.dp, AppColors.check, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    )
+}
+
+/** (4.0) What "It's fine" leaves behind: a green "✓  Checked" (or "✓  Fixed"), in the editor and the viewer. */
+@Composable
+fun CheckedMark(text: String = "\u2713  Checked", modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
+    Text(text, color = AppColors.keep, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, modifier = modifier)
 }
 
 /** (4.0) What a *Clip settings* window chose. null = leave it as it is; the extra time is both values or neither. */

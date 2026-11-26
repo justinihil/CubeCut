@@ -9,7 +9,7 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 
    **If it finds no timer,** the editor is the manual mode: add the solves at the playhead (step 4). Open a video there from its card, or *⋮ → Open in editor*. There is no setup by hand any more (until 4.0 there was one, as a backup). Stackmat, GAN and phone timer apps aren't read yet.
 3. **Find solves** reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. It runs in the background: you can leave the editor, use the Gallery, open another video or use other apps meanwhile (a notification shows progress), or press Cancel. While it runs, this video's list can't be changed. Several videos wait their turn.
-   - The **slim bar above the tabs** says how far it is. Tap it to see every video: *Waiting*, *Reading the timer 40%*, or how it ended. **Choose** answers *Which one is your timer?*; **Add by hand** opens a video whose timer wasn't found; **Open** opens one to review. *Clear finished* empties the list.
+   - The **slim bar above the tabs** (and the notification) shows the whole batch: "2 of 10 videos done · 34%", weighted by video length. Each video's own progress is a thin bar on its card. Tap the slim bar to see every video: *Waiting*, *Reading the timer 40%*, or how it ended. **Choose** answers *Which one is your timer?*; **Add by hand** opens a video whose timer wasn't found; **Open** opens one to review; a cancelled video stays in Sessions and offers **Scan again**. **Cancel all** stops the whole batch (the videos stay). *Clear finished* empties the list.
    - A card that says **Timer not found** opens in the editor: add its solves at the playhead. **Choose the timer** means it asks which number is the timer.
    - **N places to check** (on the card, or *Check N* in the list): a solve may be missing there. Tap it to see them: **Go there** opens the editor at that place, **Nothing here** drops it. They never pop up by themselves.
    - To scan a video again, open it and press *Find solves again*.
@@ -40,7 +40,7 @@ The **Sessions** tab's switch shows **All**, **Sessions** or **Single solves** (
 
 ## Things to know
 
-- **Several sessions at once:** on the Sessions tab, long-press a card, then tap others to tick them. **Delete videos** moves their original videos to the phone's trash (exported clips stay and keep playing; one confirmation for all), **Forget** removes CubeCut's records of them (the files stay). Each warns first. A video being scanned can't be ticked.
+- **Several sessions at once:** on the Sessions tab, hold a card and drag over others to tick them, as on the Clips tab (or hold one, then tap others). **Find solves** scans all of them, one after another. **Delete videos** moves their original videos to the phone's trash (exported clips stay and keep playing; one confirmation for all), **Forget** removes CubeCut's records of them (the files stay). Each warns first. A video being scanned can't be ticked.
 - **The last copy of a solve:** when a clip's original video is deleted, its exported clip still shows and plays. Deleting that file warns in red that it is the last copy; it goes to the phone's trash for about 30 days.
 
 - **New clips** (blue *New* badge) are clips CubeCut found that you haven't opened or exported yet: handy after importing a batch. Opening a clip in the viewer or exporting it clears its badge; *⋮ → Mark all as seen* clears them all. *Filter → Only new clips* shows just those.

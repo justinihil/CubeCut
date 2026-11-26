@@ -39,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,6 +60,7 @@ private const val PANEL_LIST_MAX_DP = 300
 /** One video's state in words, for the panel. */
 fun scanStateText(job: ScanJob): String = when (job.state) {
     ScanState.WAITING -> "Waiting"
+    ScanState.CANCELLED -> "Cancelled. It stays in Sessions, not scanned."
     ScanState.SCANNING -> (if (job.finding) "Looking for the timer" else "Reading the timer") + " ${job.percent}%"
     else -> job.outcome?.text ?: ""
 }
@@ -98,14 +100,18 @@ fun MissedHintsDialog(title: String, hints: List<MissedHint>, onGoThere: (Missed
  * at what was found); [onChoose] asks which number is the timer.
  */
 @Composable
-fun ScanProgressPanel(onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, onHints: (ScanJob) -> Unit = { }, modifier: Modifier = Modifier) {
+fun ScanProgressPanel(
+    onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, onHints: (ScanJob) -> Unit = { }, onAgain: (ScanJob) -> Unit = { },
+    modifier: Modifier = Modifier
+) {
     val jobs = AnalysisQueue.jobs.toList()
     if (jobs.isEmpty()) return
     var open by rememberSaveable { mutableStateOf(false) }
-    val current = jobs.firstOrNull { it.state == ScanState.SCANNING }
-    val waiting = jobs.count { it.state == ScanState.WAITING }
+    var askCancelAll by remember { mutableStateOf(false) }
+    val active = jobs.count { it.state.isActive }
     val done = jobs.filter { !it.state.isActive }
     val toLook = done.count { needsLook(it) }
+    val batch = AnalysisQueue.batchProgress()      // (4.0) the bar shows the whole batch, not one video (owner, 2026-11-26)
 
     Card(
         modifier.fillMaxWidth().animateContentSize(),
@@ -114,24 +120,19 @@ fun ScanProgressPanel(onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, on
         Column(Modifier.clickable { open = !open }.padding(horizontal = 10.dp, vertical = 6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (current != null) {
-                        "Finding solves: ${current.title} ${current.percent}%" + (if (waiting > 0) " · $waiting waiting" else "")
-                    } else if (waiting > 0) {
-                        "Finding solves: $waiting waiting"
-                    } else {
-                        "Find solves: ${done.size} done" + (if (toLook > 0) " · $toLook to look at" else "")
-                    },
+                    if (active > 0) "Finding solves: ${AnalysisQueue.batchLabel(batch)} · ${batch.percent}%"
+                    else "Find solves: ${done.size} done" + (if (toLook > 0) " · $toLook to look at" else ""),
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (current == null && toLook > 0) AppColors.check else MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = if (active == 0 && toLook > 0) AppColors.check else MaterialTheme.colorScheme.onPrimaryContainer,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
                 Text(if (open) "▲" else "▼", style = MaterialTheme.typography.labelLarge)
             }
-            if (current != null) {
+            if (active > 0) {
                 Spacer(Modifier.height(4.dp))
-                LinearProgressIndicator(progress = { current.percent / 100f }, modifier = Modifier.fillMaxWidth().height(3.dp))
+                LinearProgressIndicator(progress = { batch.fraction }, modifier = Modifier.fillMaxWidth().height(3.dp))
             }
         }
         if (open) {
@@ -142,17 +143,28 @@ fun ScanProgressPanel(onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, on
                     .padding(start = 10.dp, end = 4.dp, bottom = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                for (job in jobs.asReversed()) ScanJobRow(job, onOpen, onChoose, onHints)
-                if (done.isNotEmpty()) {
-                    TextButton(onClick = { AnalysisQueue.clearFinished() }, modifier = Modifier.align(Alignment.End)) { Text("Clear finished") }
+                for (job in jobs.asReversed()) ScanJobRow(job, onOpen, onChoose, onHints, onAgain)
+                Row(Modifier.align(Alignment.End)) {
+                    // (4.0) stop the whole batch; the videos stay, each can be scanned again
+                    if (active > 1) TextButton(onClick = { askCancelAll = true }) { Text("Cancel all") }
+                    if (done.isNotEmpty()) TextButton(onClick = { AnalysisQueue.clearFinished() }) { Text("Clear finished") }
                 }
             }
         }
     }
+    if (askCancelAll) {
+        AlertDialog(
+            onDismissRequest = { askCancelAll = false },
+            title = { Text("Cancel $active scans?") },
+            text = { Text("The videos stay in Sessions, not scanned. Scan them again any time.") },
+            confirmButton = { TextButton(onClick = { askCancelAll = false; AnalysisQueue.cancelAll() }) { Text("Cancel all") } },
+            dismissButton = { TextButton(onClick = { askCancelAll = false }) { Text("Keep going") } }
+        )
+    }
 }
 
 @Composable
-private fun ScanJobRow(job: ScanJob, onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, onHints: (ScanJob) -> Unit) {
+private fun ScanJobRow(job: ScanJob, onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, onHints: (ScanJob) -> Unit, onAgain: (ScanJob) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(job.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -173,7 +185,11 @@ private fun ScanJobRow(job: ScanJob, onOpen: (ScanJob) -> Unit, onChoose: (ScanJ
                 val missed = job.outcome?.maybeMissed ?: 0
                 if (missed > 0) TextButton(onClick = { onHints(job) }) { Text("Check $missed") } else TextButton(onClick = { onOpen(job) }) { Text("Open") }
             }
-            ScanState.CANCELLED, ScanState.FAILED -> TextButton(onClick = { onOpen(job) }) { Text("Open") }
+            // (4.0) a cancelled or failed video stays in Sessions: scan it again, or open it
+            ScanState.CANCELLED, ScanState.FAILED -> Row {
+                TextButton(onClick = { onAgain(job) }) { Text("Scan again") }
+                TextButton(onClick = { onOpen(job) }) { Text("Open") }
+            }
         }
     }
 }

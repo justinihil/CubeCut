@@ -88,6 +88,35 @@ object AnalysisQueue {
     private var appContext: Context? = null                 // for the marks in the database (the application, never a screen)
     private var running = false
     private var runs = 0
+    private var batchFrom = 1                               // (4.0) the first job of the batch now running (see [batch])
+
+    /**
+     * (4.0) The videos of the batch now running, or of the last one: every job asked for since the queue last started from empty.
+     * The bar and the notification show this batch as a whole (owner, 2026-11-26), not one video.
+     */
+    val batch: List<ScanJob> get() = jobs.filter { it.run >= batchFrom }
+
+    /** (4.0) How far the batch is: videos done (also cancelled or failed), videos in it, and the share done, weighted by video length. */
+    class BatchProgress(val done: Int, val total: Int, val fraction: Float) {
+        val percent: Int get() = (fraction * 100).toInt().coerceIn(0, 100)
+    }
+
+    fun batchProgress(): BatchProgress {
+        val b = batch
+        val totalMs = b.sumOf { maxOf(1L, it.durationMs) }.toDouble()
+        var doneMs = 0.0
+        for (j in b) doneMs += maxOf(1L, j.durationMs) * when {
+            !j.state.isActive -> 1.0
+            j.state == ScanState.SCANNING -> j.percent / 100.0
+            else -> 0.0
+        }
+        return BatchProgress(b.count { !it.state.isActive }, b.size, if (totalMs > 0) (doneMs / totalMs).toFloat() else 0f)
+    }
+
+    /** (4.0) Stops the scan in progress and every waiting one. The videos stay in Sessions, not scanned; each can be scanned again. */
+    fun cancelAll() {
+        for (j in jobs.filter { it.state.isActive }) cancel(j.footageId)
+    }
 
     /** The newest job of this video, or null. */
     fun jobOf(footageId: Long?): ScanJob? = if (footageId == null) null else jobs.lastOrNull { it.footageId == footageId }
@@ -186,6 +215,7 @@ object AnalysisQueue {
 
     private fun start(app: Context) {
         running = true
+        batchFrom = jobs.firstOrNull { it.state == ScanState.WAITING }?.run ?: (runs + 1)
         AnalysisService.start(app)
         scope.launch {
             var done = 0
@@ -211,12 +241,9 @@ object AnalysisQueue {
         }
     }
 
-    /** The notification's line: "Sunday practice: reading the timer (2 more waiting)". */
-    private fun progressLabel(job: ScanJob): String {
-        val waiting = jobs.count { it.state == ScanState.WAITING }
-        return job.title + ": " + (if (job.finding) "looking for the timer" else "reading the timer") +
-                (if (waiting > 0) " ($waiting more waiting)" else "")
-    }
+    /** (4.0) The batch in words, for the notification and the bar: "2 of 10 videos done", or one video's name. */
+    fun batchLabel(p: BatchProgress = batchProgress()): String =
+        if (p.total == 1) batch.firstOrNull()?.title ?: "1 video" else "${p.done} of ${p.total} videos done"
 
     /** Scans one video and saves what it found. Never throws: how it ended is in [ScanJob.state] and [ScanJob.outcome]. */
     private suspend fun scanOne(app: Context, job: ScanJob) {
@@ -231,7 +258,8 @@ object AnalysisQueue {
                     onProgress = { finding, percent ->
                         job.finding = finding
                         job.percent = percent
-                        AnalysisService.update(app, percent, 100, progressLabel(job))
+                        val p = batchProgress()
+                        AnalysisService.update(app, p.percent, 100, batchLabel(p))
                     },
                     isCancelled = { job.cancelAsked }
                 )

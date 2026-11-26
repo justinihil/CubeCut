@@ -1939,27 +1939,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     }
                                     // (3.1-D) in the frozen check list but no longer flagged: say so instead of hiding the card
                                     if (onlyCheck && !needsCheck(index)) {
-                                        Text(
-                                            if (item.reviewed) "✓  Checked" else "✓  Fixed",
-                                            color = AppColors.keep,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
+                                        CheckedMark(if (item.reviewed) "✓  Checked" else "✓  Fixed")
                                     }
                                     // it was looked at and is fine: stop flagging it
                                     if (needsCheck(index) && !item.reviewed) {
                                         Spacer(Modifier.height(4.dp))
-                                        Text(
-                                            "\u2713  It's fine",
-                                            color = AppColors.check,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(16.dp))
-                                                .border(1.dp, AppColors.check, RoundedCornerShape(16.dp))
-                                                .clickable { checkCut(index) }
-                                                .padding(horizontal = 12.dp, vertical = 4.dp)
-                                        )
+                                        ItsFineButton(onClick = { checkCut(index) })
                                     }
                                 }
                             }

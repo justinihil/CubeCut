@@ -145,8 +145,16 @@ The owner's addition of 2026-11-26, before testing: the scramble and the extra t
 - Old single solves are left out (their clip is their trim).
 - **Built 2026-11-26**; phone test steps 39 to 44.
 
+### 4.0-J The owner's notes before testing 🔶
+The owner's notes of 2026-11-26, after the first phone test step:
+- **The batch as a whole:** the slim bar and the notification show "2 of 10 videos done · 34%" (weighted by video length), not one video. Each video's own progress is a thin bar on its card.
+- **"It's fine" in the viewer** looks as in the editor: the amber outlined button, then a green "✓ Checked" (`ItsFineButton`, `CheckedMark`, shared).
+- **A cancelled video stays in Sessions** (owner: makes sense, preferred), and its row offers **Scan again** besides *Open*. **Find solves** for ticked sessions; **Cancel all** while a batch runs (asks first; the videos stay).
+- **Hold and drag** to tick sessions, as on the Clips tab.
+- **Built 2026-11-26**; phone test steps 45 to 50.
+
 ### 4.0-T Phone test and test rounds ⬜
-- First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:\CubeCutRef\v4.0-phone-test.md` (44 steps).
+- First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:\CubeCutRef\v4.0-phone-test.md` (50 steps).
 - Then the owner imports batches of videos and puts the ones that didn't work in `D:\CubeCutRef`. Claude finds out why (answer first), and the fixes follow as separate commits. Each round starts a new thread: `Test round: <files and what happened>`.
 - The scan, the reader and `computeClips` change only in these rounds, and are checked against the known-good footage ([algorithms §8](algorithms.md#8-reference-measurements)).
 - The first thing to measure is whether the finder trusts a timer it sees for only one solve.

@@ -100,7 +100,7 @@ class AnalysisService : Service() {
             NotificationCompat.Builder(context, PROGRESS_CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle("Finding solves")
-                .setContentText(if (total > 0) "$label: ${done * 100 / total}%" else "Starting...")
+                .setContentText(if (total > 0) "$label \u00B7 ${done * 100 / total}%" else "Starting...")
                 .setProgress(total, done, total == 0)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
