@@ -14,7 +14,7 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 | Persisted URI read grants for imported videos | Android (`takePersistableUriPermission` in `SessionStore.keepAccess`) | Restarts, not reinstall. Capped at 512 grants; *Forget* releases one |
 | Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` until 4.0-0; since then left alone (harmless, nothing reads them) | — |
 
-## Schema (DB version 10)
+## Schema (DB version 11)
 
 ```mermaid
 erDiagram
@@ -44,6 +44,8 @@ erDiagram
     real trim_start_sec "v7; NULL = untrimmed (3.2-F)"
     real trim_end_sec "v7; NULL = untrimmed (3.2-F)"
     text scan_state "v9; queued, no_timer, asks or '' (4.0-C)"
+    text cube "v11; '' = not tagged (4.0-F)"
+    text place "v11; Home, Competition, Other or '' (4.0-F)"
   }
   cuts {
     int id PK "NOT stable: regenerated on every save"
@@ -64,6 +66,7 @@ erDiagram
     real after_pad "v7; NULL = follows the video"
     text shared_on "v7; e.g. TikTok,YouTube"
     int seen_ms "v10; 0 = New (4.0-D)"
+    text cube "v11; '' = follows the video (4.0-F)"
   }
   exports {
     int id PK
@@ -100,6 +103,7 @@ Migrations (`onUpgrade`) only add, one `if (oldVersion < N)` block per version:
 | v8 | `hints` table |
 | v9 | `footage.scan_state` (4.0-C) |
 | v10 | `cuts.seen_ms` (4.0-D), set to the upgrade time for every cut already saved |
+| v11 | `footage.cube`, `footage.place`, `cuts.cube` (4.0-F) |
 
 ### v7 fields (3.2)
 
@@ -133,6 +137,10 @@ On a match it refreshes the stored uri, name and size, and returns `isNew = fals
 `timer_corners` is where CubeCut **found** the timer (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` writes it after every scan that found a timer, with `timer_frame_ms` −1 and an empty `timer_typed`. What the finder learned isn't stored; every scan learns it again.
 
 Before 4.0 the same columns could hold a timer set up **by hand** (a picture time, the four corners and the typed number; [ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). 4.0-0 removed that setup: such a row is never read as one any more, its corners still serve the zoom until the next scan replaces them, and the columns stay so old rows and backups load unchanged.
+
+## Cube and place (v11)
+
+`footage.cube` and `cuts.cube` work exactly like the puzzle (`''` on a clip = follows the video, `NO_TAG` = not tagged, a typed name as typed, `resolveTag`); the names already used are the list to pick from. `footage.place` is one of `PLACES` or `''`, on the video only. `updateFootageCubePlace` is a video setting (no `user_edited`); `updateCutCube` sets `user_edited`, and `withUserFieldsOf` carries `cube` over a re-scan. The cube is not part of exported file names. The backup writes all three; older backups restore them empty.
 
 ## New clips (v10)
 

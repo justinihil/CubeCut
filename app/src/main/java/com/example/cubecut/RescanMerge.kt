@@ -76,7 +76,7 @@ private fun sameSolve(a: CutItem, b: CutItem): Boolean {
  */
 private fun CutItem.withUserFieldsOf(old: CutItem): CutItem = copy(
     userNote = old.userNote, puzzle = old.puzzle, category = old.category, plus2Count = old.plus2Count, dnf = old.dnf,
-    beforePad = old.beforePad, afterPad = old.afterPad, sharedOn = old.sharedOn, seenMs = old.seenMs
+    beforePad = old.beforePad, afterPad = old.afterPad, sharedOn = old.sharedOn, seenMs = old.seenMs, cube = old.cube
 )
 
 /**

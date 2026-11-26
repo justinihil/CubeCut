@@ -115,7 +115,7 @@ The owner's addition of 2026-11-26.
 - **The last copy of a solve** (owner): an exported clip whose original video is gone already stays in the Clips tab and keeps playing (*Export only*), and *Forget* stays as it is. Its *Delete file* warning now says so: a red note "This is the last copy of this solve. Its original video is deleted." If the original is still in the trash, it says "Restore the video to keep the solve." Then: "Restore within about 30 days, then it's gone for good." It no longer says "the solve stays in CubeCut", which isn't true here. It isn't called irreversible: the file goes to the phone's trash ([ADR-0008](adr/0008-never-delete-permanently.md)).
 - **Built 2026-11-26**; phone test in 4.0-T. Also (not asked, flagged to the owner): the Clips tab's *Delete N exported files?* says in red how many are the last copy of their solve, and drops "Solves stay in CubeCut" when none of them does.
 
-### 4.0-F Tags and filters ⬜
+### 4.0-F Tags and filters 🔶
 DB v11. The owner's additions of penalty, home/competition and cube filters. Answers D1–D7.
 - **One list of tag kinds** in `Tags.kt`: puzzle, type, cube and place. Each entry gives its choices, whether a clip may differ and whether import asks for it. A new tag kind is one entry, plus its column.
 - **Cube** (D1): the cube model ("GAN 12", "RS3M"…), from the user's own list: typed once, then picked. A clip may differ from its video (D6), as with the puzzle.
@@ -124,6 +124,7 @@ DB v11. The owner's additions of penalty, home/competition and cube filters. Ans
 - **Asked on import of one video** (D3): the scan starts at once, and meanwhile a sheet asks for the puzzle, type, cube and place. *Skip* closes it. With several videos, nothing is asked.
 - **Tag many at once** (D4): tick several sessions on the Sessions tab (4.0-E), then *Set tags*.
 - The new filters are on the Clips tab only (D7), with the existing ones.
+- **Built 2026-11-26**; phone test in 4.0-T. The tag window is the old puzzle window with more sections (`TagKind`). A cube name is typed once with *New cube*; the names already used are the choices. The editor's Setup box sets all four for the video. The cube isn't in exported file names.
 
 ### 4.0-G Review possible missed solves ⬜
 The hints came in 3.3: they are found without the editor and saved with the video, and a hint's card is its own composable.

@@ -12,7 +12,7 @@ Notes on history:
 
 ## [Unreleased]
 
-The saved data is upgraded to database v10 on first start.
+The saved data is upgraded to database v11 on first start.
 
 ### Added
 - **Import several videos at once.** Each new video goes to the Sessions tab and *Find solves* starts on it by itself, one after another. Videos imported before are skipped and counted (with one video, *Imported before* asks as before).
@@ -21,6 +21,8 @@ The saved data is upgraded to database v10 on first start.
 - The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
 - **Select several sessions:** long-press a card on the Sessions tab, tick others, then **Delete videos** or **Forget**, each with one warning for all of them.
 - **Last copy of a solve:** deleting an exported clip whose original video is gone now warns in red that it is the last copy (also when several are deleted at once).
+- **Cube and place tags.** A video (and a clip, for the cube) can be tagged with the cube model you used (your own list: type a name once, then pick it) and where it was filmed: *Home*, *Competition* or *Other*. Importing one video asks its tags while Find solves runs (*Skip* is fine); with several, tick them on the Sessions tab and tap *Set tags…*.
+- **Filters** for cube, place and penalty (*With penalty*, *+2*, *DNF*, *No penalty*).
 - **New badge** on clips you haven't opened or exported yet, with *Filter → Only new clips* and *⋮ → Mark all as seen*. Clips saved before the update count as seen.
 
 ### Removed

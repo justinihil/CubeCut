@@ -80,6 +80,23 @@ fun shownTime(timeText: String, plus2Count: Int, dnf: Boolean): String {
     }
 }
 
+/** (4.0-F) The Clips tab's penalty filter (owner, 2026-11-26). Only penalties set by hand: the scan doesn't read them. */
+enum class PenaltyFilter(val label: String) {
+    ANY("Any"), WITH("With penalty"), PLUS2("+2"), DNF("DNF"), NONE("No penalty");
+
+    fun matches(plus2Count: Int, dnf: Boolean): Boolean = when (this) {
+        ANY -> true
+        WITH -> plus2Count > 0 || dnf
+        PLUS2 -> plus2Count > 0
+        DNF -> dnf
+        NONE -> plus2Count == 0 && !dnf
+    }
+
+    companion object {
+        fun from(name: String?): PenaltyFilter = entries.firstOrNull { it.name == name } ?: ANY
+    }
+}
+
 /** The time as a clip title says it, with "s": "11.263s", "13.263s (+2)", "DNF(11.263s)", "time unknown". */
 fun titleTime(timeText: String, plus2Count: Int, dnf: Boolean): String {
     val t = timeText.trim()

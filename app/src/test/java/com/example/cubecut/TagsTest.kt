@@ -128,4 +128,30 @@ class TagsTest {
         assertFalse(followsVideoTags("3x3", "BLD", "3x3", "OH"))
         assertFalse(followsVideoTags(NO_TAG, NO_TAG, "3x3", ""))
     }
+
+    // ------------------------------------------------------------ (4.0-F) cube, place, penalty filter
+
+    @Test
+    fun tagKinds_placeIsTheVideosOnly_andHasNoTypedNames() {
+        assertTrue(TagKind.PLACE !in TagKind.forClips)
+        assertTrue(TagKind.CUBE in TagKind.forClips)
+        assertTrue(!TagKind.PLACE.typedNames)
+        assertEquals(listOf("Home", "Competition", "Other"), TagKind.PLACE.fixed)
+    }
+
+    @Test
+    fun aClipsCube_followsItsVideo_unlessItHasItsOwn() {
+        assertEquals("GAN 12", resolveTag("", "GAN 12"))
+        assertEquals("RS3M", resolveTag("RS3M", "GAN 12"))
+        assertEquals("", resolveTag(NO_TAG, "GAN 12"))
+    }
+
+    @Test
+    fun penaltyFilter_matches() {
+        assertTrue(PenaltyFilter.ANY.matches(0, false))
+        assertTrue(PenaltyFilter.WITH.matches(1, false) && PenaltyFilter.WITH.matches(0, true) && !PenaltyFilter.WITH.matches(0, false))
+        assertTrue(PenaltyFilter.PLUS2.matches(2, false) && !PenaltyFilter.PLUS2.matches(0, true))
+        assertTrue(PenaltyFilter.DNF.matches(0, true) && !PenaltyFilter.DNF.matches(1, false))
+        assertTrue(PenaltyFilter.NONE.matches(0, false) && !PenaltyFilter.NONE.matches(1, false))
+    }
 }

@@ -34,6 +34,31 @@ val CATEGORIES = listOf("Normal", "OH", "BLD", "Relay", "PLL attack")
 /** The plain type: left out of labels and file names, so a normal 3x3 solve is just "3x3". */
 const val NORMAL_CATEGORY = "Normal"
 
+/** (4.0-F) Where a video was filmed (owner, 2026-11-26). Fixed choices; "Other" is one of them, not a typed name. */
+val PLACES = listOf("Home", "Competition", "Other")
+
+/**
+ * (4.0-F) Every kind of tag, in the order the tag window shows them. Each says:
+ * - [label]: its name in the app;
+ * - [clipMayDiffer]: a clip can have its own (else only the video has one; the clip follows it);
+ * - [askOnImport]: asked when one video is imported (several videos ask nothing, owner 2026-11-26);
+ * - [typedNames]: names can be typed (Other / New); else only the fixed [fixed] choices.
+ * The choices are [fixed], and for typed kinds also the names already used ([TagKind.CUBE]: your own list of cube models, typed once,
+ * then picked). A new kind is one entry here, plus its columns in SessionStore (footage, and cuts if [clipMayDiffer]), Backup, the
+ * Gallery filter and [withUserFieldsOf].
+ */
+enum class TagKind(val label: String, val fixed: List<String>, val clipMayDiffer: Boolean, val askOnImport: Boolean, val typedNames: Boolean) {
+    PUZZLE("Puzzle", PUZZLES, true, true, true),
+    TYPE("Type", CATEGORIES, true, true, true),
+    CUBE("Cube", emptyList(), true, true, true),
+    PLACE("Place", PLACES, false, true, false);
+
+    companion object {
+        /** The kinds a clip's own tag window shows. */
+        val forClips: List<TagKind> get() = entries.filter { it.clipMayDiffer }
+    }
+}
+
 /**
  * A clip's own tag that means "not tagged, even though the video is". Never shown, never typed (cleanTag turns a typed "-" into "").
  * Stored in `cuts.puzzle` / `cuts.category` only.

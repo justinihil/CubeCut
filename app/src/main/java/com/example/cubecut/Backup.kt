@@ -85,7 +85,7 @@ object Backup {
         .put("include_scramble", c.includeScramble).put("user_note", c.userNote).put("user_edited", c.edited).put("reviewed", c.reviewed)
         .put("puzzle", c.puzzle).put("category", c.category).put("plus2_count", c.plus2Count).put("dnf", c.dnf)
         .put("before_pad", c.beforePad.orNull()).put("after_pad", c.afterPad.orNull()).put("shared_on", encodeSharedOn(c.sharedOn))
-        .put("seen_ms", c.seenMs)
+        .put("seen_ms", c.seenMs).put("cube", c.cube)
 
     private fun cutOf(o: JSONObject) = CutItem(
         stopSec = o.getDouble("stop_sec"), timeText = o.optString("time_text"), included = o.optBoolean("included", true),
@@ -94,7 +94,8 @@ object Backup {
         puzzle = o.optString("puzzle"), category = o.optString("category"), plus2Count = o.optInt("plus2_count"), dnf = o.optBoolean("dnf"),
         beforePad = o.doubleOrNull("before_pad"), afterPad = o.doubleOrNull("after_pad"), sharedOn = decodeSharedOn(o.optString("shared_on")),
         // (4.0-D) a backup from before 4.0 has no seen_ms: its clips count as seen, as on the upgrade
-        seenMs = if (o.has("seen_ms")) o.optLong("seen_ms") else System.currentTimeMillis()
+        seenMs = if (o.has("seen_ms")) o.optLong("seen_ms") else System.currentTimeMillis(),
+        cube = o.optString("cube")
     )
 
     private fun exportJson(e: ExportedClip) = JSONObject()
@@ -128,6 +129,7 @@ object Backup {
                     .put("before_pad", f.beforePad.toDouble()).put("after_pad", f.afterPad.toDouble()).put("scramble_all", f.scrambleAll)
                     .put("timer_frame_ms", f.timerFrameMs).put("timer_corners", f.timerCorners).put("timer_typed", f.timerTyped)
                     .put("puzzle", f.puzzle).put("category", f.category).put("kind", f.kind)
+                    .put("cube", f.cube).put("place", f.place)
                     .put("trim_start_sec", f.trimStartSec.orNull()).put("trim_end_sec", f.trimEndSec.orNull())
                     .put("cuts", JSONArray().apply { cuts.forEach { put(cutJson(it)) } })
                     .put("exports", JSONArray().apply { exports.forEach { put(exportJson(it)) } })
@@ -171,7 +173,8 @@ object Backup {
                     timerFrameMs = o.optLong("timer_frame_ms", -1L), timerCorners = o.optString("timer_corners"),
                     timerTyped = o.optString("timer_typed"), trashedMs = 0L, puzzle = o.optString("puzzle"), category = o.optString("category"),
                     kind = o.optString("kind", KIND_SESSION).ifEmpty { KIND_SESSION },
-                    trimStartSec = o.doubleOrNull("trim_start_sec"), trimEndSec = o.doubleOrNull("trim_end_sec")
+                    trimStartSec = o.doubleOrNull("trim_start_sec"), trimEndSec = o.doubleOrNull("trim_end_sec"),
+                    cube = o.optString("cube"), place = o.optString("place")
                 )
                 val cutsJson = o.optJSONArray("cuts") ?: JSONArray()
                 val cuts = (0 until cutsJson.length()).map { cutOf(cutsJson.getJSONObject(it)) }

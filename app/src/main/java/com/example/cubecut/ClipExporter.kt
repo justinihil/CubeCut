@@ -51,7 +51,8 @@ data class CutItem(
     val beforePad: Double? = null,        // this clip's own "before" buffer in seconds (null = follows the video's slider)
     val afterPad: Double? = null,         // this clip's own "after" buffer in seconds (null = follows the video's slider)
     val sharedOn: List<String> = emptyList(),  // where you shared it, as names from SOCIAL_PLATFORMS
-    val seenMs: Long = 0L                 // (4.0-D) when its clip was first opened in the viewer or exported (0 = not yet: "New")
+    val seenMs: Long = 0L,                // (4.0-D) when its clip was first opened in the viewer or exported (0 = not yet: "New")
+    val cube: String = ""                 // (4.0-F) the cube model set on this clip itself ("" = follows its video's, NO_TAG = none)
 )
 
 /**

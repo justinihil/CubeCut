@@ -406,6 +406,9 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var categoryFilter by mutableStateOf(prefs.getString("category_filter", null))
     // (3.2-E) show only clips shared on this platform: null = any, "" = only clips not shared yet
     var sharedFilter by mutableStateOf(prefs.getString("shared_filter", null))
+    var cubeFilter by mutableStateOf(prefs.getString("cube_filter", null))                 // (4.0-F) null = any cube, "" = not tagged
+    var placeFilter by mutableStateOf(prefs.getString("place_filter", null))               // (4.0-F) null = any place, "" = not tagged
+    var penaltyFilter by mutableStateOf(PenaltyFilter.from(prefs.getString("penalty_filter", null)))   // (4.0-F)
     var themeMode by mutableStateOf(ThemeMode.from(prefs.getString("theme", null)))  // light, dark or as the phone (the whole app)
     // sessions switched off in the Clips tab (everything else is shown, so a new session shows up by itself)
     var hidden by mutableStateOf(
@@ -420,7 +423,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
 
     val filterActive: Boolean get() =
         hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly || newOnly || puzzleFilter != null || categoryFilter != null ||
-                sharedFilter != null
+                sharedFilter != null || cubeFilter != null || placeFilter != null || penaltyFilter != PenaltyFilter.ANY
 
     /** Remember the view, sort and filter choices for the next time the app opens. */
     fun save() {
@@ -438,6 +441,9 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("puzzle_filter", puzzleFilter)          // (null removes the key: any tag)
             .putString("category_filter", categoryFilter)
             .putString("shared_filter", sharedFilter)
+            .putString("cube_filter", cubeFilter)
+            .putString("place_filter", placeFilter)
+            .putString("penalty_filter", penaltyFilter.name)
             .putString("theme", themeMode.name)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
@@ -1247,7 +1253,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var askDeleteVideos by remember { mutableStateOf<List<Footage>?>(null) }   // (4.0-E) "Delete N videos?" for the ticked sessions
     var forgettingMany by remember { mutableStateOf<List<Footage>?>(null) }    // (4.0-E) "Forget N sessions?" for the ticked sessions
     var tagSelection by remember { mutableStateOf(false) }              // (3.2-B) the "Set puzzle" window for the chosen clips
-    var tagFootage by remember { mutableStateOf<Footage?>(null) }       // (3.2-B) the video whose "Puzzle for this video" window is open
+    var tagVideos by remember { mutableStateOf<List<Footage>?>(null) }  // (3.2-B, 4.0-F) the videos whose "Tags" window is open
+    var tagVideosAtImport by remember { mutableStateOf(false) }         // (4.0-F) ...opened by the import of one video: Skip, not Cancel
     var batchDone by remember { mutableStateOf(-1) }                    // clips exported so far in a batch export (-1 = not exporting)
     var batchTotal by remember { mutableStateOf(0) }
     // ---- "you were just here": the video or clip you came back from lights up for a moment ----
@@ -1382,12 +1389,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 for (f in chosen.map { it.footage }.distinctBy { it.id }.filter { it.id in wholeVideos }) {
                     try {
                         SessionStore.updateFootageTags(context, f.id, videoTagFor(f.puzzle, choice.puzzle), videoTagFor(f.category, choice.category))
+                        if (choice.cube != null) SessionStore.updateFootageCubePlace(context, f.id, videoTagFor(f.cube, choice.cube), null)
                     } catch (e: Exception) { }
                 }
                 for (c in chosen) {
                     val whole = c.footage.id in wholeVideos
                     val p = if (whole) resetOwnTag(c.cut.puzzle, choice.puzzle) else normalizeClipTag(applyTagChoice(c.cut.puzzle, choice.puzzle), c.footage.puzzle)
                     val k = if (whole) resetOwnTag(c.cut.category, choice.category) else normalizeClipTag(applyTagChoice(c.cut.category, choice.category), c.footage.category)
+                    // (4.0-F) the cube, the same way
+                    val q = if (whole) resetOwnTag(c.cut.cube, choice.cube) else normalizeClipTag(applyTagChoice(c.cut.cube, choice.cube), c.footage.cube)
+                    if (q != c.cut.cube) try { SessionStore.updateCutCube(context, c.footage.id, c.cut.stopSec, q) } catch (e: Exception) { }
                     if (p == c.cut.puzzle && k == c.cut.category) continue
                     try { SessionStore.updateCutTags(context, c.footage.id, c.cut.stopSec, p, k) } catch (e: Exception) { }
                 }
@@ -1453,7 +1464,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val clipsListState = rememberLazyListState()
     val footageGridState = rememberLazyGridState()
     val footageListState = rememberLazyListState()
-    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
+    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter, ui.cubeFilter, ui.placeFilter, ui.penaltyFilter) {
         clipsGridState.scrollToItem(0)
         clipsListState.scrollToItem(0)
     }
@@ -1548,6 +1559,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             if (made.isNotEmpty()) {
                 ui.tab = 1
                 ui.flashFootage = made[0].id
+            }
+            // (4.0-F) one new video: its tags are asked now, while Find solves already runs; several videos ask nothing
+            if (uris.size == 1 && made.size == 1 && skipped == 0) {
+                tagVideosAtImport = true
+                tagVideos = made
             }
             ui.refresh++
         }
@@ -1730,16 +1746,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     }
 
     val d = data
+    // (4.0-F) the cube models already used, for the tag windows: your own list, typed once, then picked
+    val knownCubes: List<String> = remember(d) { if (d == null) emptyList() else orderTags(d.footage.map { it.cube } + d.clips.map { it.cube }, emptyList()) }
     val statsById: Map<Long, FootageStats> = remember(d) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
     }
     // the Clips tab's clips, filtered and sorted
-    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.seenKeys, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
+    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.seenKeys, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter, ui.cubeFilter, ui.placeFilter, ui.penaltyFilter) {
         if (d == null) emptyList()
         else sortClips(
             d.clips.filter { c ->
                 c.footage.id !in ui.hidden && (!ui.checkOnly || c.needsCheck) && (!ui.newOnly || isNewClip(c, ui)) &&
                         tagMatches(c.puzzle, ui.puzzleFilter) && tagMatches(c.category, ui.categoryFilter) &&
+                        tagMatches(c.cube, ui.cubeFilter) && tagMatches(c.place, ui.placeFilter) &&
+                        ui.penaltyFilter.matches(c.cut.plus2Count, c.cut.dnf) &&
                         sharedMatches(c.sharedList, ui.sharedFilter) && when (ui.exportFilter) {
                     ExportFilter.ALL -> true
                     ExportFilter.EXPORTED -> c.exported != null
@@ -1870,7 +1890,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        TextButton(onClick = { tagSelection = true }, enabled = batchDone < 0) { Text("Set puzzle\u2026") }
+                        TextButton(onClick = { tagSelection = true }, enabled = batchDone < 0) { Text("Set tags\u2026") }
                     }
                 }
             } else if (ui.selectingVideos && d != null) {
@@ -1895,6 +1915,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ) { Text("Delete videos") }
                     OutlinedButton(onClick = { forgettingMany = tickedVideos }, enabled = tickedVideos.isNotEmpty() && batchDone < 0) {
                         Text("Forget")
+                    }
+                    OutlinedButton(onClick = { tagVideos = tickedVideos; tagVideosAtImport = false }, enabled = tickedVideos.isNotEmpty()) {
+                        Text("Set tags\u2026")
                     }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2020,6 +2043,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         if (puzzleLabel != null) ActiveFilterChip(puzzleLabel) { ui.puzzleFilter = null; ui.save() }
                         if (typeLabel != null) ActiveFilterChip(typeLabel) { ui.categoryFilter = null; ui.save() }
                         if (sharedLabel != null) ActiveFilterChip(sharedLabel) { ui.sharedFilter = null; ui.save() }
+                        ui.cubeFilter?.let { ActiveFilterChip("Cube: " + it.ifEmpty { "not tagged" }) { ui.cubeFilter = null; ui.save() } }
+                        ui.placeFilter?.let { ActiveFilterChip("Place: " + it.ifEmpty { "not tagged" }) { ui.placeFilter = null; ui.save() } }
+                        if (ui.penaltyFilter != PenaltyFilter.ANY) ActiveFilterChip("Penalty: " + ui.penaltyFilter.label) { ui.penaltyFilter = PenaltyFilter.ANY; ui.save() }
                         if (active >= 2) {
                             Text(
                                 "Clear all",
@@ -2542,6 +2568,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         // (3.2-B) puzzle and type: only the tags some clip has, plus Not tagged
                         TagFilterSection("Puzzle", d.clips.map { it.puzzle }, PUZZLES, ui.puzzleFilter) { ui.puzzleFilter = it; ui.save() }
                         TagFilterSection("Type", d.clips.map { it.category }, CATEGORIES, ui.categoryFilter) { ui.categoryFilter = it; ui.save() }
+                        // (4.0-F) the cube model (your own names), where it was filmed, and the penalty set by hand
+                        TagFilterSection("Cube", d.clips.map { it.cube }, emptyList(), ui.cubeFilter) { ui.cubeFilter = it; ui.save() }
+                        TagFilterSection("Place", d.clips.map { it.place }, PLACES, ui.placeFilter) { ui.placeFilter = it; ui.save() }
+                        FilterChips("Penalty", PenaltyFilter.entries.map { it to it.label }, ui.penaltyFilter) { ui.penaltyFilter = it; ui.save() }
                         // (3.2-E) where the clips were shared: every platform, then Not shared yet
                         FilterChips(
                             "Shared on",
@@ -2681,7 +2711,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             TextButton(onClick = { footageMenu = null; startTrash(PendingTrash(menuFootage, null, false)) }) { Text("Restore video") }
                         }
                         TextButton(onClick = { renaming = menuFootage; footageMenu = null }) { Text("Rename") }
-                        TextButton(onClick = { tagFootage = menuFootage; footageMenu = null }) { Text("Set puzzle for this video\u2026") }
+                        TextButton(onClick = { tagVideos = listOf(menuFootage); tagVideosAtImport = false; footageMenu = null }) { Text("Set tags for this video\u2026") }
 
                         // the two that remove things: apart, at the bottom, in red (each one warns first)
                         Spacer(Modifier.height(8.dp))
@@ -2708,38 +2738,55 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val chosen = d.clips.filter { it.listKey in ui.selected && it.index >= 0 }
             val one = chosen.map { it.footage }.distinctBy { it.id }.singleOrNull()
             TagDialog(
-                title = "Set puzzle for ${clipsText(chosen.size, "clip")}",
+                title = "Tags for ${clipsText(chosen.size, "clip")}",
                 // a clip tagged the same as its video counts as following it, so it doesn't make the selection look mixed
                 puzzle = chosen.map { normalizeClipTag(it.cut.puzzle, it.footage.puzzle) }.distinct().singleOrNull(),
                 category = chosen.map { normalizeClipTag(it.cut.category, it.footage.category) }.distinct().singleOrNull(),
+                cube = chosen.map { normalizeClipTag(it.cut.cube, it.footage.cube) }.distinct().singleOrNull(),
                 forClip = true,
                 followPuzzle = one?.puzzle,
                 followCategory = one?.category,
+                followCube = one?.cube,
+                kinds = TagKind.forClips,
+                knownCubes = knownCubes,
                 onDismiss = { tagSelection = false },
                 onDone = { choice -> tagSelection = false; setTagsForSelected(choice, chosen, d) }
             )
         }
 
-        // ===== (3.2-B) puzzle tag of a whole video (Footage menu) =====
-        val taggingFootage = tagFootage
-        if (taggingFootage != null) {
+        // ===== (3.2-B, 4.0-F) the tags of whole videos: the Sessions menu, the ticked sessions, or the import of one video =====
+        val taggingVideos = tagVideos
+        if (taggingVideos != null && taggingVideos.isNotEmpty() && d != null) {
+            fun <T> common(get: (Footage) -> T): T? = taggingVideos.map(get).distinct().singleOrNull()
             TagDialog(
-                title = "Puzzle for this video",
-                puzzle = taggingFootage.puzzle,
-                category = taggingFootage.category,
+                title = when {
+                    tagVideosAtImport -> "Tags for the new video"
+                    taggingVideos.size == 1 -> "Tags for this video"
+                    else -> "Tags for ${taggingVideos.size} videos"
+                },
+                puzzle = common { it.puzzle },
+                category = common { it.category },
+                cube = common { it.cube },
+                place = common { it.place },
                 forClip = false,
-                intro = "Its clips follow it. Tag odd clips in the Clips tab.",
-                onDismiss = { tagFootage = null },
+                kinds = if (tagVideosAtImport) TagKind.entries.filter { it.askOnImport } else TagKind.entries,
+                knownCubes = knownCubes,
+                intro = if (tagVideosAtImport) "Find solves already runs. Tag it now, or skip and tag it later."
+                else "Their clips follow them. Tag odd clips in the Clips tab.",
+                dismissLabel = if (tagVideosAtImport) "Skip" else "Cancel",
+                onDismiss = { tagVideos = null },
                 onDone = { choice ->
-                    tagFootage = null
+                    tagVideos = null
                     scope.launch {
                         withContext(Dispatchers.IO) {
-                            try {
-                                SessionStore.updateFootageTags(
-                                    context, taggingFootage.id, choice.puzzle ?: taggingFootage.puzzle, choice.category ?: taggingFootage.category
-                                )
-                            } catch (e: Exception) { }
+                            for (f in taggingVideos) {
+                                try {
+                                    SessionStore.updateFootageTags(context, f.id, choice.puzzle ?: f.puzzle, choice.category ?: f.category)
+                                    SessionStore.updateFootageCubePlace(context, f.id, choice.cube, choice.place)
+                                } catch (e: Exception) { }
+                            }
                         }
+                        if (ui.selectingVideos) exitVideoSelection()
                         ui.refresh++
                     }
                 }
@@ -3582,6 +3629,7 @@ fun ClipViewer(
     val noteSaved = remember { mutableStateMapOf<String, String>() }
     val checkedNow = remember { mutableStateMapOf<String, Boolean>() }      // clips marked as checked here (saved at once)
     val tagOv = remember { mutableStateMapOf<String, Pair<String, String>>() }   // (3.2-B) clips tagged here: their own (puzzle, type)
+    val cubeOv = remember { mutableStateMapOf<String, String>() }                // (4.0-F) ...and their own cube
     val penaltyOv = remember { mutableStateMapOf<String, Pair<Int, Boolean>>() } // (3.2-C) clips given a penalty here: (+2 count, DNF)
     val padOv = remember { mutableStateMapOf<String, Pair<Double?, Double?>>() }  // (3.2-D) clips given their own buffers here (null = follow)
     val sharedOv = remember { mutableStateMapOf<String, List<String>>() }        // (3.2-E) clips whose Shared on was changed here
@@ -3839,6 +3887,12 @@ fun ClipViewer(
 
     /** (3.2-B) Sets one clip's own tags (saved at once, and marked `edited` like every change to one clip). */
     fun setTags(c: GalleryClip, choice: TagChoice) {
+        val ownCube = cubeOv[c.listKey] ?: c.cut.cube
+        val q = normalizeClipTag(applyTagChoice(ownCube, choice.cube), c.footage.cube)
+        if (q != ownCube) {
+            cubeOv[c.listKey] = q
+            scope.launch { withContext(Dispatchers.IO) { try { SessionStore.updateCutCube(context, c.footage.id, c.cut.stopSec, q) } catch (e: Exception) { } } }
+        }
         val (ownP, ownK) = ownTags(c)
         val p = normalizeClipTag(applyTagChoice(ownP, choice.puzzle), c.footage.puzzle)
         val k = normalizeClipTag(applyTagChoice(ownK, choice.category), c.footage.category)
@@ -4324,7 +4378,17 @@ fun ClipViewer(
                                 PuzzleIcon(shownPuzzle, MaterialTheme.colorScheme.primary, 30.dp)
                                 Spacer(Modifier.width(10.dp))
                             }
-                            Text("Puzzle: " + shownTag.ifEmpty { "not tagged" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Column(Modifier.weight(1f)) {
+                                Text("Puzzle: " + shownTag.ifEmpty { "not tagged" }, style = MaterialTheme.typography.bodyMedium)
+                                // (4.0-F) the cube (its own, or its video's) and where the video was filmed
+                                val shownCube = resolveTag(cubeOv[current.listKey] ?: current.cut.cube, current.footage.cube)
+                                if (shownCube.isNotEmpty() || current.footage.place.isNotEmpty()) {
+                                    Text(
+                                        listOfNotNull(shownCube.ifEmpty { null }?.let { "Cube: $it" }, current.footage.place.ifEmpty { null }).joinToString("  |  "),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
                             TextButton(onClick = { tagWindow = true }) { Text("Change") }
                         }
                         Spacer(Modifier.height(6.dp))
@@ -4441,12 +4505,16 @@ fun ClipViewer(
         if (tagWindow && current.index >= 0) {
             val (ownP, ownK) = ownTags(current)
             TagDialog(
-                title = "Puzzle for this clip",
+                title = "Tags for this clip",
                 puzzle = ownP,
                 category = ownK,
+                cube = cubeOv[current.listKey] ?: current.cut.cube,
                 forClip = true,
                 followPuzzle = current.footage.puzzle,
                 followCategory = current.footage.category,
+                followCube = current.footage.cube,
+                kinds = TagKind.forClips,
+                knownCubes = orderTags(allClips.map { it.cube } + allClips.map { it.footage.cube }, emptyList()),
                 onDismiss = { tagWindow = false },
                 onDone = { choice -> tagWindow = false; setTags(current, choice) }
             )

@@ -45,11 +45,15 @@ import androidx.compose.ui.unit.dp
 
 // ---------------------------------------------------------------------------------------
 // (3.2-B) The window that sets a puzzle and type tag. Used for a whole video (the editor's Setup box, the import question, the
-// Gallery's Footage menu) and for clips (a Gallery selection, the viewer sheet). The stored values are explained in Tags.kt.
+// Gallery's Sessions menu) and for clips (a Gallery selection, the viewer sheet). The stored values are explained in Tags.kt.
+// (4.0-F) It shows the kinds it is given (TagKind): also the cube model (your own list) and, for videos, the place.
 // ---------------------------------------------------------------------------------------
 
-/** What a tag window chose, as stored values (see Tags.kt). null = leave each clip as it is (only when the clips were mixed). */
-class TagChoice(val puzzle: String?, val category: String?)
+/**
+ * What a tag window chose, as stored values (see Tags.kt). null = leave each clip or video as it is (when they were mixed, or the
+ * window didn't show that kind).
+ */
+class TagChoice(val puzzle: String?, val category: String?, val cube: String? = null, val place: String? = null)
 
 // the buttons that are not a name (a name is stored as it is)
 private const val PICK_FOLLOW = "\u0001follow"
@@ -61,7 +65,7 @@ private const val PICK_OTHER = "\u0001other"
  * [follow] is the video's tag for clips of one video: then "as the video" has no button of its own, the video's tag is simply
  * chosen, and choosing it stores "" (normalizeClipTag). For clips of several videos ([follow] null) "As each video" stays a button.
  */
-private class TagSection(given: String?, val known: List<String>, val forClip: Boolean, val follow: String?) {
+private class TagSection(given: String?, val known: List<String>, val forClip: Boolean, val follow: String?, val typed: Boolean = true) {
     val oneVideo = forClip && follow != null
     private val start = if (oneVideo && given != null) resolveTag(given, follow!!) else given
     var pick by mutableStateOf(
@@ -70,6 +74,7 @@ private class TagSection(given: String?, val known: List<String>, val forClip: B
             forClip && start == "" && !oneVideo -> PICK_FOLLOW
             start == "" || start == NO_TAG -> PICK_NONE
             start in known -> start
+            !typed -> null
             else -> PICK_OTHER
         }
     )
@@ -136,15 +141,28 @@ fun TagDialog(
     followCategory: String? = "",
     intro: String? = null,
     dismissLabel: String = "Cancel",
+    cube: String? = null,
+    place: String? = null,
+    followCube: String? = "",
+    kinds: List<TagKind> = listOf(TagKind.PUZZLE, TagKind.TYPE),
+    knownCubes: List<String> = emptyList(),
     onDismiss: () -> Unit,
     onDone: (TagChoice) -> Unit
 ) {
-    val puzzles = remember { TagSection(puzzle, PUZZLES, forClip, followPuzzle) }
-    val types = remember { TagSection(category, CATEGORIES, forClip, followCategory) }
+    // (4.0-F) one section per kind shown; a clip window never shows the place (it is the video's only)
+    val shown = kinds.filter { !forClip || it.clipMayDiffer }
+    val sections = remember {
+        mapOf(
+            TagKind.PUZZLE to TagSection(puzzle, PUZZLES, forClip, followPuzzle),
+            TagKind.TYPE to TagSection(category, CATEGORIES, forClip, followCategory),
+            TagKind.CUBE to TagSection(cube, knownCubes, forClip, followCube),
+            TagKind.PLACE to TagSection(place, PLACES, false, "", typed = false)
+        )
+    }
 
     @Composable
-    fun Section(label: String, s: TagSection, follow: String?) {
-        Text(label, style = MaterialTheme.typography.labelLarge)
+    fun Section(kind: TagKind, s: TagSection, follow: String?) {
+        Text(kind.label, style = MaterialTheme.typography.labelLarge)
         if (s.pick == null) {
             Text("Mixed. Pick one to set them all, or leave it.", style = MaterialTheme.typography.bodySmall)
         }
@@ -152,9 +170,9 @@ fun TagDialog(
             // clips of several videos can go back to each one's own video tag; for one video that is just its tag's button
             if (forClip && follow == null) TagChip("As each video", s.pick == PICK_FOLLOW) { s.pick = PICK_FOLLOW }
             for (name in s.known) {
-                TagChip(name, s.pick == name, logo = if (s.known === PUZZLES) name else "") { s.pick = name }
+                TagChip(name, s.pick == name, logo = if (kind == TagKind.PUZZLE) name else "") { s.pick = name }
             }
-            TagChip("Other", s.pick == PICK_OTHER) { s.pick = PICK_OTHER }
+            if (s.typed) TagChip(if (kind == TagKind.CUBE) "New cube" else "Other", s.pick == PICK_OTHER) { s.pick = PICK_OTHER }
             TagChip("Not tagged", s.pick == PICK_NONE) { s.pick = PICK_NONE }
         }
         if (s.pick == PICK_OTHER) {
@@ -162,7 +180,7 @@ fun TagDialog(
                 value = s.other,
                 onValueChange = { s.other = it },
                 singleLine = true,
-                placeholder = { Text("Type its name") },
+                placeholder = { Text(if (kind == TagKind.CUBE) "Its name, e.g. GAN 12" else "Type its name") },
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -177,15 +195,23 @@ fun TagDialog(
                     InfoNote(intro)
                     Spacer(Modifier.height(10.dp))
                 }
-                Section("Puzzle", puzzles, followPuzzle)
-                Spacer(Modifier.height(12.dp))
-                Section("Type", types, followCategory)
+                for ((i, kind) in shown.withIndex()) {
+                    if (i > 0) Spacer(Modifier.height(12.dp))
+                    val follow = when (kind) {
+                        TagKind.PUZZLE -> followPuzzle
+                        TagKind.TYPE -> followCategory
+                        TagKind.CUBE -> followCube
+                        TagKind.PLACE -> ""
+                    }
+                    Section(kind, sections.getValue(kind), follow)
+                }
             }
         },
         confirmButton = {
+            fun value(k: TagKind) = if (k in shown) sections.getValue(k).result() else null
             Button(
-                onClick = { onDone(TagChoice(puzzles.result(), types.result())) },
-                enabled = !puzzles.missingName && !types.missingName
+                onClick = { onDone(TagChoice(value(TagKind.PUZZLE), value(TagKind.TYPE), value(TagKind.CUBE), value(TagKind.PLACE))) },
+                enabled = shown.none { sections.getValue(it).missingName }
             ) { Text("Done") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(dismissLabel) } }

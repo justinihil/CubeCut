@@ -71,7 +71,9 @@ class Footage(
     val kind: String = KIND_SESSION,   // KIND_SESSION, or KIND_SINGLE for a clip of one solve (3.2-F)
     val trimStartSec: Double? = null,  // a single solve's trim, in seconds of the file (null = not trimmed: the whole file plays)
     val trimEndSec: Double? = null,
-    val scanState: String = ""         // (4.0-C) SCAN_QUEUED, SCAN_NO_TIMER, SCAN_ASKS, or "" (never scanned in the background, or done)
+    val scanState: String = "",        // (4.0-C) SCAN_QUEUED, SCAN_NO_TIMER, SCAN_ASKS, or "" (never scanned in the background, or done)
+    val cube: String = "",             // (4.0-F) the cube model of the whole video ("" = not tagged); a clip follows it unless it has its own
+    val place: String = ""             // (4.0-F) where it was filmed (PLACES, "" = not tagged); the video's only
 )
 
 /** (4.0-C) [Footage.scanState]: waiting for, or in, a background scan. Queued again when the app starts (AnalysisQueue.resume). */
@@ -105,7 +107,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 10
+    private const val DB_VERSION = 11
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -136,7 +138,9 @@ object SessionStore {
                         "kind TEXT NOT NULL DEFAULT 'session', " +
                         "trim_start_sec REAL, " +
                         "trim_end_sec REAL, " +
-                        "scan_state TEXT NOT NULL DEFAULT '')"
+                        "scan_state TEXT NOT NULL DEFAULT '', " +
+                        "cube TEXT NOT NULL DEFAULT '', " +
+                        "place TEXT NOT NULL DEFAULT '')"
             )
             db.execSQL(
                 "CREATE TABLE cuts (" +
@@ -157,7 +161,8 @@ object SessionStore {
                         "before_pad REAL, " +
                         "after_pad REAL, " +
                         "shared_on TEXT NOT NULL DEFAULT '', " +
-                        "seen_ms INTEGER NOT NULL DEFAULT 0)"
+                        "seen_ms INTEGER NOT NULL DEFAULT 0, " +
+                        "cube TEXT NOT NULL DEFAULT '')"
             )
             db.execSQL("CREATE INDEX cuts_by_footage ON cuts(footage_id)")
             createExportsTable(db)
@@ -265,6 +270,12 @@ object SessionStore {
                 // counts as seen, so the upgrade doesn't mark the whole Gallery as new.
                 db.execSQL("ALTER TABLE cuts ADD COLUMN seen_ms INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("UPDATE cuts SET seen_ms = ${System.currentTimeMillis()}")
+            }
+            if (oldVersion < 11) {
+                // version 11 (CubeCut 4.0-F): the cube model (video and clip, like the puzzle) and where it was filmed (video only)
+                db.execSQL("ALTER TABLE footage ADD COLUMN cube TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE footage ADD COLUMN place TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cuts ADD COLUMN cube TEXT NOT NULL DEFAULT ''")
             }
         }
     }
@@ -480,7 +491,7 @@ object SessionStore {
                 "f.before_pad, f.after_pad, f.scramble_all, " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id), " +
                 "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms, " +
-                "f.puzzle, f.category, f.kind, f.trim_start_sec, f.trim_end_sec, f.scan_state " +
+                "f.puzzle, f.category, f.kind, f.trim_start_sec, f.trim_end_sec, f.scan_state, f.cube, f.place " +
                 "FROM footage f"
 
     private fun android.database.Cursor.doubleOrNull(i: Int): Double? = if (isNull(i)) null else getDouble(i)
@@ -492,7 +503,8 @@ object SessionStore {
         cutCount = c.getInt(12),
         timerFrameMs = c.getLong(13), timerCorners = c.getString(14), timerTyped = c.getString(15), trashedMs = c.getLong(16),
         puzzle = c.getString(17), category = c.getString(18), kind = c.getString(19),
-        trimStartSec = c.doubleOrNull(20), trimEndSec = c.doubleOrNull(21), scanState = c.getString(22)
+        trimStartSec = c.doubleOrNull(20), trimEndSec = c.doubleOrNull(21), scanState = c.getString(22),
+        cube = c.getString(23), place = c.getString(24)
     )
 
     fun getFootage(context: Context, id: Long): Footage? =
@@ -514,7 +526,7 @@ object SessionStore {
         db(context).query(
             "cuts", arrayOf(
                 "stop_sec", "time_text", "included", "note", "include_scramble", "user_note", "user_edited", "reviewed",
-                "puzzle", "category", "plus2_count", "dnf", "before_pad", "after_pad", "shared_on", "seen_ms"
+                "puzzle", "category", "plus2_count", "dnf", "before_pad", "after_pad", "shared_on", "seen_ms", "cube"
             ),
             "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
         ).use { c ->
@@ -524,7 +536,7 @@ object SessionStore {
                     c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1, c.getInt(7) == 1,
                     puzzle = c.getString(8), category = c.getString(9), plus2Count = c.getInt(10), dnf = c.getInt(11) == 1,
                     beforePad = c.doubleOrNull(12), afterPad = c.doubleOrNull(13), sharedOn = decodeSharedOn(c.getString(14)),
-                    seenMs = c.getLong(15)
+                    seenMs = c.getLong(15), cube = c.getString(16)
                 )
                 // every cut is a solve except the scan's "left over" ones (see normalizeIncluded in RescanMerge.kt)
                 out.add(normalizeIncluded(cut))
@@ -573,6 +585,7 @@ object SessionStore {
                 putPad(v, "after_pad", cut.afterPad)
                 v.put("shared_on", encodeSharedOn(cut.sharedOn))
                 v.put("seen_ms", cut.seenMs)
+                v.put("cube", cut.cube)
                 d.insert("cuts", null, v)
             }
             val id = footageId.toString()
@@ -767,6 +780,21 @@ object SessionStore {
      * Tags a whole video with a puzzle and category ("" = not tagged). Its clips follow the tag unless they have their own. It is a
      * video setting, like the scramble switch, so it leaves `user_edited` alone.
      */
+    /** (4.0-F) The video's cube model and place. A video setting, like its puzzle, so no clip is marked `edited`. Null = unchanged. */
+    fun updateFootageCubePlace(context: Context, footageId: Long, cube: String?, place: String?) {
+        val v = ContentValues()
+        if (cube != null) v.put("cube", cube)
+        if (place != null) v.put("place", place)
+        if (v.size() > 0) db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
+    }
+
+    /** (4.0-F) One clip's own cube model ("" = follows its video's, NO_TAG = none), marked `edited` like its puzzle. */
+    fun updateCutCube(context: Context, footageId: Long, stopSec: Double, cube: String) {
+        val v = ContentValues()
+        v.put("cube", cube)
+        updateCut(context, footageId, stopSec, v)
+    }
+
     fun updateFootageTags(context: Context, footageId: Long, puzzle: String, category: String) {
         val v = ContentValues()
         v.put("puzzle", puzzle)
@@ -830,6 +858,8 @@ object SessionStore {
             v.put("timer_typed", f.timerTyped)
             v.put("puzzle", f.puzzle)
             v.put("category", f.category)
+            v.put("cube", f.cube)
+            v.put("place", f.place)
             v.put("kind", f.kind)
             putPad(v, "trim_start_sec", f.trimStartSec)
             putPad(v, "trim_end_sec", f.trimEndSec)
@@ -1184,6 +1214,10 @@ class GalleryClip(
     val category: String get() = resolveTag(cut.category, footage.category)
     /** "3x3 OH", "Megaminx", "" (not tagged): what the cards show and what goes into an exported file's name. */
     val tagText: String get() = tagLabel(puzzle, category)
+    /** (4.0-F) The cube model this clip counts as: its own, else its video's ("" = not tagged). Not in file names. */
+    val cube: String get() = resolveTag(cut.cube, footage.cube)
+    /** (4.0-F) Where it was filmed: always its video's. */
+    val place: String get() = footage.place
 }
 
 /**

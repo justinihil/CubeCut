@@ -385,7 +385,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     // (3.2-B) the video's puzzle and type tags ("" = not tagged); every clip follows them unless it has its own (see Tags.kt)
     var videoPuzzle by remember { mutableStateOf("") }
     var videoCategory by remember { mutableStateOf("") }
-    var tagVideoWindow by remember { mutableStateOf(false) }     // the "Puzzle for this video" window (Setup box)
+    var videoCube by remember { mutableStateOf("") }             // (4.0-F) the video's cube model and place
+    var videoPlace by remember { mutableStateOf("") }
+    var knownCubes by remember { mutableStateOf(emptyList<String>()) }   // (4.0-F) the cube models used in any video (your own list)
+    var tagVideoWindow by remember { mutableStateOf(false) }     // the "Tags for this video" window (Setup box)
     var askPuzzleNew by remember { mutableStateOf(false) }       // a video imported for the first time: ask its puzzle once
     var zoom by remember { mutableStateOf(1f) }
     val timelineScroll = rememberScrollState()
@@ -519,6 +522,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         scanned = false
         videoPuzzle = ""
         videoCategory = ""
+        videoCube = ""
+        videoPlace = ""
         askPuzzleNew = false
         zoom = 1f
         videoScale = 1f
@@ -566,6 +571,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 }
                 videoPuzzle = opened.footage.puzzle
                 videoCategory = opened.footage.category
+                videoCube = opened.footage.cube
+                videoPlace = opened.footage.place
+                knownCubes = withContext(Dispatchers.IO) {
+                    try { orderTags(SessionStore.listFootage(context).map { it.cube } + opened.cuts.map { it.cube }, emptyList()) } catch (e: Exception) { emptyList() }
+                }
                 footageId = opened.footage.id       // set last: from now on every change is saved
             }
             // (3.1-D) the filter stays as it was: its list is picked from this video's solves
@@ -1551,7 +1561,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                 // (3.2-B) the puzzle of the whole video; odd solves are unticked on their cards below
                                 Spacer(Modifier.height(12.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("3. Puzzle for this video", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                    Text("3. Tags for this video", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                                     InfoButton(
                                         "Puzzle for this video",
                                         listOf(
@@ -1562,10 +1572,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     )
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val videoTag = tagLabel(videoPuzzle, videoCategory)
+                                    val videoTag = listOf(tagLabel(videoPuzzle, videoCategory), videoCube, videoPlace).filter { it.isNotEmpty() }.joinToString(" · ")
                                     Text(videoTag.ifEmpty { "Not tagged" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                                     OutlinedButton(onClick = { tagVideoWindow = true }, enabled = footageId != null) {
-                                        Text(if (videoTag.isEmpty()) "Set puzzle" else "Change")
+                                        Text(if (videoTag.isEmpty()) "Set tags" else "Change")
                                     }
                                 }
                                 // (the scramble switch for all clips is not here: it sits under Add a missed solve, next to the check filter)
@@ -2260,18 +2270,29 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         if ((tagVideoWindow || askPuzzleNew) && footageId != null && !importing) {
             val asking = !tagVideoWindow
             TagDialog(
-                title = if (asking) "Which puzzle is this?" else "Puzzle for this video",
+                title = if (asking) "Which puzzle is this?" else "Tags for this video",
                 puzzle = videoPuzzle,
                 // a new video starts on Normal, so picking only the puzzle is enough
                 category = if (asking && videoCategory.isEmpty()) NORMAL_CATEGORY else videoCategory,
                 forClip = false,
                 intro = if (asking) "One puzzle per video works best. Mixed? Untick the odd solves later." else null,
                 dismissLabel = if (asking) "Decide later" else "Cancel",
+                // (4.0-F) also the cube model and where it was filmed
+                cube = videoCube,
+                place = videoPlace,
+                kinds = TagKind.entries,
+                knownCubes = knownCubes,
                 onDismiss = { tagVideoWindow = false; askPuzzleNew = false },
                 onDone = { choice ->
                     tagVideoWindow = false
                     askPuzzleNew = false
                     saveVideoTags(choice.puzzle ?: videoPuzzle, choice.category ?: videoCategory)
+                    if (choice.cube != null) videoCube = choice.cube
+                    if (choice.place != null) videoPlace = choice.place
+                    val id = footageId
+                    if (id != null) scope.launch {
+                        withContext(Dispatchers.IO) { try { SessionStore.updateFootageCubePlace(context, id, choice.cube, choice.place) } catch (e: Exception) { } }
+                    }
                 }
             )
         }

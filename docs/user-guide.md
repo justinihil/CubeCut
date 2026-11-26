@@ -48,11 +48,12 @@ The **Sessions** tab's switch shows **All**, **Sessions** or **Single solves** (
 - **Re-running Find solves keeps your edits.** Solves you changed or exported stay as they are, untouched ones update, and new ones are added. A solve you deleted can come back if the scan finds it again.
 - **Delete** moves a video or clip to the phone's trash after a warning. You can restore it for about 30 days from *Recently deleted*. CubeCut never deletes anything permanently. Only videos picked from the picker's Videos or Images lists can be trashed from CubeCut.
 - **Delete many exported files at once:** hold a clip to start ticking, tick the clips, then tap the red bin next to *Export*. Only their files go to the trash; the solves and notes stay. Clips that only had their file left (*Export only*, *Solve deleted*) leave the Gallery. Export skips those clips.
-- **Puzzle tags:** a video has a puzzle and a type (Normal, OH, BLD, Relay, PLL attack, or *Other* with your own name). Its clips follow it.
-  - Set it at import, in the editor's Setup box, or with *Set puzzle for this video…* in a video's ⋮ menu.
+- **Tags:** a video has a **puzzle**, a **type** (Normal, OH, BLD, Relay, PLL attack, or *Other* with your own name), a **cube** (your own list of cube models: type a name once with *New cube*, then pick it) and a **place** (Home, Competition or Other). Its clips follow it; a clip can have its own puzzle, type and cube, but the place is always the video's.
+  - Importing **one** video asks its tags while Find solves already runs (*Skip* to do it later). Importing several asks nothing: tick them on the Sessions tab (long-press) and tap **Set tags…**.
+  - Set them later in the editor's Setup box, or with *Set tags for this video…* in a video's ⋮ menu.
   - Mixed footage: in the editor, untick the card of each solve that isn't that puzzle. It is then *not tagged*.
-  - Tag single clips in the Gallery: *Set puzzle…* while ticking, or *Change* next to *Puzzle* in the viewer's details. With every clip of a video ticked, it tags the video instead.
-  - *Filter* shows only one puzzle or type, or only clips that are not tagged.
+  - Tag single clips in the Gallery: *Set tags…* while ticking, or *Change* next to *Puzzle* in the viewer's details. With every clip of a video ticked, it tags the video instead.
+  - *Filter* shows only one puzzle, type, cube or place, or only clips that are not tagged. **Penalty** shows clips with a penalty, only +2, only DNF, or none (the penalties you set: CubeCut doesn't read them from the timer).
 - **Shared on:** in the viewer's details, tap the platforms you posted a clip to (TikTok, Instagram, YouTube…). It's separate from the note. *Filter* → *Shared on* shows only clips shared on one platform, or those *Not shared yet*.
 - **Scramble for many clips:** while ticking, the switch under the header turns the scramble on or off for every ticked clip. *All* ticks every clip shown. With every clip of a video ticked, it works like the editor's *Scramble in all clips*.
 - If you delete a raw video, its exported clips stay in the Gallery (*Export only*). Clips that were never exported disappear, but their solves stay saved, and importing the video again brings them back.
