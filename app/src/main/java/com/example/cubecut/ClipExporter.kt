@@ -50,8 +50,15 @@ data class CutItem(
     val dnf: Boolean = false,             // the solve counts as DNF; timeText still holds what the timer showed
     val beforePad: Double? = null,        // this clip's own "before" buffer in seconds (null = follows the video's slider)
     val afterPad: Double? = null,         // this clip's own "after" buffer in seconds (null = follows the video's slider)
-    val sharedOn: List<String> = emptyList()   // where you shared it, as names from SOCIAL_PLATFORMS
+    val sharedOn: List<String> = emptyList(),  // where you shared it, as names from SOCIAL_PLATFORMS
+    val seenMs: Long = 0L                 // (4.0-D) when its clip was first opened in the viewer or exported (0 = not yet: "New")
 )
+
+/**
+ * (4.0-D) A clip the user hasn't looked at yet: found by a scan, never opened in the viewer or exported. A cut the user changed or
+ * added (`edited`) has been seen in the editor, so it never counts as new.
+ */
+val CutItem.isNew: Boolean get() = seenMs == 0L && !edited
 
 /** The note on a cut added by hand (Add a missed solve). It is not a reason to check the cut. */
 const val ADDED_BY_YOU_NOTE = "added by you"

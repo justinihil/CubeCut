@@ -170,6 +170,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Notes, info buttons, message colours | `Notes.kt` (`InfoNote`, `InfoButton`, `kindOfMessage`) |
 | Colours, dark mode | `Theme.kt` (`CubeCutTheme`, `AppColors`, `ThemeMode`) |
 | Background notification during Find solves | `AnalysisService.kt`, started and stopped by `AnalysisQueue` |
+| The New badge | `cuts.seen_ms`, `CutItem.isNew`, `isNewClip`; marked by the viewer (`ClipViewer(onSeen)` → `markCutSeen`), `recordExports` and *Mark all as seen*; the filter is `GalleryUiState.newOnly` ([data-model](docs/data-model.md#new-clips-v10)) |
 | Progress panel, card marks, waiting scans after a restart | `ScanProgress.kt`; `scanBadgeText` (`Gallery.kt`); `footage.scan_state` and `AnalysisQueue.resume` (called by `AppRoot`) |
 | Find solves in the background, the queue, the per-video lock | `AnalysisQueue.kt` ([ADR-0018](docs/adr/0018-app-wide-analysis-queue.md)); in the editor `runFindSolves` and the effect on `scanJob`; in the Gallery the reload on `AnalysisQueue.finished` |
 | Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf`; many exported files at once: `startBatchTrash` and `PendingTrash.batch` (one request) |

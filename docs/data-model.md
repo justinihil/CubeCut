@@ -14,7 +14,7 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 | Persisted URI read grants for imported videos | Android (`takePersistableUriPermission` in `SessionStore.keepAccess`) | Restarts, not reinstall. Capped at 512 grants; *Forget* releases one |
 | Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` until 4.0-0; since then left alone (harmless, nothing reads them) | — |
 
-## Schema (DB version 9)
+## Schema (DB version 10)
 
 ```mermaid
 erDiagram
@@ -63,6 +63,7 @@ erDiagram
     real before_pad "v7; NULL = follows the video"
     real after_pad "v7; NULL = follows the video"
     text shared_on "v7; e.g. TikTok,YouTube"
+    int seen_ms "v10; 0 = New (4.0-D)"
   }
   exports {
     int id PK
@@ -98,6 +99,7 @@ Migrations (`onUpgrade`) only add, one `if (oldVersion < N)` block per version:
 | v7 | `footage`: `puzzle`, `category`, `kind`, `trim_start_sec`, `trim_end_sec`. `cuts`: `puzzle`, `category`, `plus2_count`, `dnf`, `before_pad`, `after_pad`, `shared_on`, plus a one-off fill of `shared_on` from the platform names in `user_note` (the note is left as it is) |
 | v8 | `hints` table |
 | v9 | `footage.scan_state` (4.0-C) |
+| v10 | `cuts.seen_ms` (4.0-D), set to the upgrade time for every cut already saved |
 
 ### v7 fields (3.2)
 
@@ -132,6 +134,15 @@ On a match it refreshes the stored uri, name and size, and returns `isNew = fals
 
 Before 4.0 the same columns could hold a timer set up **by hand** (a picture time, the four corners and the typed number; [ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). 4.0-0 removed that setup: such a row is never read as one any more, its corners still serve the zoom until the next scan replaces them, and the columns stay so old rows and backups load unchanged.
 
+## New clips (v10)
+
+`cuts.seen_ms` is when the clip was first opened in the viewer or exported; 0 = not yet. A clip is **New** when `seen_ms` is 0 and the cut isn't `user_edited` (`CutItem.isNew`: what you changed or added you have seen), and it has a solve and no live export (`isNewClip` in `Gallery.kt`). The upgrade to v10 sets every saved cut to the upgrade time, so nothing old shows as new.
+
+- `markCutSeen` (the viewer shows the clip) finds the cut by `stop_sec` within 0.0005 s and does **not** set `user_edited`: looking at a clip doesn't change it, so a re-scan may still update it. `mergeRescan` carries `seen_ms` over (`withUserFieldsOf`), so a re-scan never makes a seen clip new again; a solve it adds is new.
+- `recordExports` sets it for the exported solves (within `SAME_SOLVE_SEC`), in the same transaction.
+- `markAllSeen` (*⋮ → Mark all as seen*) sets it for every cut still at 0.
+- The backup writes `seen_ms`; a backup without it (before 4.0) restores its clips as seen.
+
 ## Scan state (v9)
 
 How a video's background scan stands (`AnalysisQueue.kt`, 4.0-C), so it survives the app ending. `SessionStore.setScanState` writes it; the queue writes `queued` when a video is put in it, and when the scan ends `no_timer` (*Timer not found* on the card), `asks` (*Choose the timer*) or `''` (done, cancelled or failed). `AnalysisQueue.resume` queues every `queued` or `asks` video again when the app starts, if its file still opens. While the queue holds a job for the video, the job's state is shown instead. It isn't in the backup file: a restored video starts with `''`.
@@ -152,7 +163,7 @@ Where a solve may be missing (`MissedSolves.kt`, 3.3-C). `saveHints` replaces a 
 - An exported file is a copy. Editing the cut afterwards does not change the file.
 - **(3.2-C) A penalty change renames the file**: only the time part of its name changes (`renamedExportName`: `…_Solve_03_11.263s.mp4` → `…_Solve_03_13.263s_plus2.mp4`; title, tag, number and Android's ` (1)` stay). `ClipExporter.renameFile` updates `DISPLAY_NAME`; the name Android really gave goes into `exports.file_name` (`setExportFileName`) in the same IO block. The link (`stop_sec`) doesn't change. A file CubeCut no longer owns (after a reinstall) needs `MediaStore.createWriteRequest` first (`rememberExportRenamer`). A file renamed by hand is left alone. Changing only the time does not rename.
 
-Single-field writes from the Gallery or viewer (`updateCutScramble`, `markCutReviewed`, `updateCutNote`, and from v7 `updateCutTags`, `updateCutPenalty`, `updateCutPads`, `updateCutSharedOn`, and `updateCutTime` for a single solve's time typed in the viewer, through the private `updateCut`) find the cut by `stop_sec` within 0.0005 s, and set `user_edited = 1` where the change is the user's. The exception is `setVideoScramble`: the Gallery's selection scramble switch with every exportable clip of a video ticked sets `footage.scramble_all` and every cut's `include_scramble`, like the editor's all-clips switch, without `user_edited` ([ADR-0013](adr/0013-rescan-merge-keeps-user-edits.md)). The editor and the Gallery never run at the same time (see [ARCHITECTURE](../ARCHITECTURE.md#navigation)), so these writes don't race the editor's delete-and-reinsert save.
+Single-field writes from the Gallery or viewer (`markCutSeen` and `markAllSeen` are the exception that sets no `user_edited`, see *New clips*; `updateCutScramble`, `markCutReviewed`, `updateCutNote`, and from v7 `updateCutTags`, `updateCutPenalty`, `updateCutPads`, `updateCutSharedOn`, and `updateCutTime` for a single solve's time typed in the viewer, through the private `updateCut`) find the cut by `stop_sec` within 0.0005 s, and set `user_edited = 1` where the change is the user's. The exception is `setVideoScramble`: the Gallery's selection scramble switch with every exportable clip of a video ticked sets `footage.scramble_all` and every cut's `include_scramble`, like the editor's all-clips switch, without `user_edited` ([ADR-0013](adr/0013-rescan-merge-keeps-user-edits.md)). The editor and the Gallery never run at the same time (see [ARCHITECTURE](../ARCHITECTURE.md#navigation)), so these writes don't race the editor's delete-and-reinsert save.
 
 ## What the Gallery shows (`loadGallery`)
 

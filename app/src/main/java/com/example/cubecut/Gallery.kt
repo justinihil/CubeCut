@@ -225,6 +225,14 @@ private val AMBER = Color(0xFFFFB74D)
 private val GREY = Color(0xFF757575)
 private val GREEN = Color(0xFF2E7D32)
 private val RED = Color(0xFFC62828)
+private val NEW_BLUE = Color(0xFF1565C0)        // (4.0-D) the "New" badge: over a picture, so a fixed colour
+
+/**
+ * (4.0-D) Is [c] shown as new? Not opened in the viewer or exported yet ([CutItem.isNew]), and not seen since the data loaded. An
+ * exported file whose solve is gone, or a clip with no solve, is never new.
+ */
+fun isNewClip(c: GalleryClip, ui: GalleryUiState?): Boolean =
+    c.cut.isNew && c.index >= 0 && !c.solveDeleted && c.exported == null && (ui == null || c.listKey !in ui.seenKeys)
 
 /**
  * A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). [batch] holds the exported
@@ -380,6 +388,8 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var footageKind by mutableStateOf(FootageKind.from(prefs.getString("footage_kind", null)))   // (4.0-C) the Sessions tab's switch
     var exportFilter by mutableStateOf(ExportFilter.from(prefs.getString("export_filter", null)))
     var checkOnly by mutableStateOf(prefs.getBoolean("check_only", false))   // show only clips that need a check
+    var newOnly by mutableStateOf(prefs.getBoolean("new_only", false))       // (4.0-D) show only new clips
+    var seenKeys by mutableStateOf(emptySet<String>())            // (4.0-D) clips seen since the data loaded (the badge goes at once)
     // (3.2-B) show only clips with this puzzle / type tag: null = any, "" = only clips that are not tagged
     var puzzleFilter by mutableStateOf(prefs.getString("puzzle_filter", null))
     var categoryFilter by mutableStateOf(prefs.getString("category_filter", null))
@@ -398,7 +408,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     }
 
     val filterActive: Boolean get() =
-        hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly || puzzleFilter != null || categoryFilter != null ||
+        hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly || newOnly || puzzleFilter != null || categoryFilter != null ||
                 sharedFilter != null
 
     /** Remember the view, sort and filter choices for the next time the app opens. */
@@ -413,6 +423,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("footage_kind", footageKind.name)
             .putString("export_filter", exportFilter.name)
             .putBoolean("check_only", checkOnly)
+            .putBoolean("new_only", newOnly)
             .putString("puzzle_filter", puzzleFilter)          // (null removes the key: any tag)
             .putString("category_filter", categoryFilter)
             .putString("shared_filter", sharedFilter)
@@ -755,7 +766,7 @@ private fun Modifier.flashRow(level: Float, blue: Color): Modifier =
 @Composable
 private fun ClipCell(
     clip: GalleryClip, openable: Map<Long, Boolean>, columns: Int, selecting: Boolean, selected: Boolean, modifier: Modifier = Modifier,
-    highlight: Float = 0f, onPreview: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, isNew: Boolean = false, onPreview: () -> Unit, onClick: () -> Unit
 ) {
     val canPick = selectable(clip, openable)
     Box(
@@ -778,6 +789,7 @@ private fun ClipCell(
                 } else if (clip.exportOnly) Badge("Export only", GREEN)
                 else if (clip.exported != null) Badge("Exported", GREEN)
                 if (clip.needsCheck) Badge("Check", AMBER, Color.Black)
+                if (isNew) Badge("New", NEW_BLUE)
                 if (!clip.cut.included) Badge("Left over", GREY)
                 // (3.2-F) only a single solve shows without its video and without a file
                 if (!clip.exportOnly && clip.exported == null && openable[clip.footage.id] != true) {
@@ -846,7 +858,7 @@ private fun ClipCell(
 @Composable
 private fun ClipRow(
     clip: GalleryClip, openable: Map<Long, Boolean>, selecting: Boolean, selected: Boolean,
-    highlight: Float = 0f, onPreview: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, isNew: Boolean = false, onPreview: () -> Unit, onClick: () -> Unit
 ) {
     val canPick = selectable(clip, openable)
     Row(
@@ -872,7 +884,7 @@ private fun ClipRow(
         Column(Modifier.weight(1f)) {
             Text(clip.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
-                formatDate(dateOf(clip.footage)) +
+                (if (isNew) "New  |  " else "") + formatDate(dateOf(clip.footage)) +
                         (if (clip.index >= 0) "  |  " + clip.placeText else "") +
                         (if (clip.tagText.isNotEmpty()) "  |  " + clip.tagText else "") +
                         (if (clip.solveDeleted) "  |  exported, solve deleted" else if (clip.exportOnly) "  |  export only (raw video gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
@@ -1398,7 +1410,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val clipsListState = rememberLazyListState()
     val footageGridState = rememberLazyGridState()
     val footageListState = rememberLazyListState()
-    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
+    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
         clipsGridState.scrollToItem(0)
         clipsListState.scrollToItem(0)
     }
@@ -1654,11 +1666,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
     }
     // the Clips tab's clips, filtered and sorted
-    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
+    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.seenKeys, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter) {
         if (d == null) emptyList()
         else sortClips(
             d.clips.filter { c ->
-                c.footage.id !in ui.hidden && (!ui.checkOnly || c.needsCheck) &&
+                c.footage.id !in ui.hidden && (!ui.checkOnly || c.needsCheck) && (!ui.newOnly || isNewClip(c, ui)) &&
                         tagMatches(c.puzzle, ui.puzzleFilter) && tagMatches(c.category, ui.categoryFilter) &&
                         sharedMatches(c.sharedList, ui.sharedFilter) && when (ui.exportFilter) {
                     ExportFilter.ALL -> true
@@ -1811,6 +1823,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     TextButton(onClick = { showMore = true }) { Text("\u22EE") }
                     DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
                         DropdownMenuItem(text = { Text("Refresh") }, onClick = { showMore = false; ui.refresh++ })
+                        // (4.0-D) every New badge goes
+                        DropdownMenuItem(
+                            text = { Text("Mark all as seen") }, enabled = d?.clips?.any { isNewClip(it, ui) } == true,
+                            onClick = {
+                                showMore = false
+                                ui.seenKeys = ui.seenKeys + (d?.clips?.map { it.listKey } ?: emptyList())
+                                scope.launch {
+                                    withContext(Dispatchers.IO) { try { SessionStore.markAllSeen(context) } catch (e: Exception) { } }
+                                    ui.refresh++
+                                }
+                            }
+                        )
                         DropdownMenuItem(text = { Text("Recently deleted") }, onClick = { showMore = false; showTrash = true })
                         DropdownMenuItem(
                             text = { Text("Backup and restore") }, enabled = batchDone < 0,
@@ -1900,6 +1924,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         if (videoLabel != null) ActiveFilterChip(videoLabel) { ui.hidden = emptySet(); ui.save() }
                         if (exportLabel != null) ActiveFilterChip(exportLabel) { ui.exportFilter = ExportFilter.ALL; ui.save() }
                         if (ui.checkOnly) ActiveFilterChip("Needs a check") { ui.checkOnly = false; ui.save() }
+                        if (ui.newOnly) ActiveFilterChip("New only") { ui.newOnly = false; ui.save() }
                         if (puzzleLabel != null) ActiveFilterChip(puzzleLabel) { ui.puzzleFilter = null; ui.save() }
                         if (typeLabel != null) ActiveFilterChip(typeLabel) { ui.categoryFilter = null; ui.save() }
                         if (sharedLabel != null) ActiveFilterChip(sharedLabel) { ui.sharedFilter = null; ui.save() }
@@ -2056,6 +2081,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                     ClipCell(
                                         clip, d.openable, ui.clipsColumns, ui.selecting, clip.listKey in ui.selected, Modifier.animateItem(),
                                         highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
+                                        isNew = isNewClip(clip, ui),
                                         onPreview = { onPreview(clip) }
                                     ) { onTap(clip) }
                                 }
@@ -2071,6 +2097,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                     ClipRow(
                                         clip, d.openable, ui.selecting, clip.listKey in ui.selected,
                                         highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
+                                        isNew = isNewClip(clip, ui),
                                         onPreview = { onPreview(clip) }
                                     ) { onTap(clip) }
                                 }
@@ -2179,7 +2206,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 onToggleSelect = { c -> toggleSelect(c, d.openable) },
                 onSingleSaved = { f, stop -> ui.detail = null; showSolve(f.id, stop) },
                 onDeleteVideo = { f -> ui.detail = null; ui.refresh++; confirmTrashFootage = f },
-                onForget = { f -> ui.detail = null; ui.refresh++; forgetting = f }
+                onForget = { f -> ui.detail = null; ui.refresh++; forgetting = f },
+                onSeen = { c ->
+                    if (isNewClip(c, ui)) {
+                        ui.seenKeys = ui.seenKeys + c.listKey
+                        scope.launch(Dispatchers.IO) { try { SessionStore.markCutSeen(context, c.footage.id, c.cut.stopSec) } catch (e: Exception) { } }
+                    }
+                }
             )
         }
 
@@ -2388,6 +2421,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 Checkbox(checked = ui.checkOnly, onCheckedChange = { ui.checkOnly = it; ui.save() })
                             }
                             Text("Only clips that need a check", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        // (4.0-D) clips not opened or exported yet
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { ui.newOnly = !ui.newOnly; ui.save() },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides FILTER_CHIP_TOUCH) {
+                                Checkbox(checked = ui.newOnly, onCheckedChange = { ui.newOnly = it; ui.save() })
+                            }
+                            Text("Only new clips", style = MaterialTheme.typography.bodyMedium)
                         }
                         // (3.2-B) puzzle and type: only the tags some clip has, plus Not tagged
                         TagFilterSection("Puzzle", d.clips.map { it.puzzle }, PUZZLES, ui.puzzleFilter) { ui.puzzleFilter = it; ui.save() }
@@ -3292,7 +3337,8 @@ fun ClipViewer(
     onToggleSelect: (GalleryClip) -> Unit = { },
     onSingleSaved: (Footage, Double) -> Unit = { _, _ -> },   // (3.2-F) a single solve's time or trim was changed: (video, new stop)
     onDeleteVideo: (Footage) -> Unit = { },                    // (3.2-F) a single solve's Delete video (it has no Footage card)
-    onForget: (Footage) -> Unit = { }                          // (3.2-F) a single solve's Forget
+    onForget: (Footage) -> Unit = { },                         // (3.2-F) a single solve's Forget
+    onSeen: (GalleryClip) -> Unit = { }                        // (4.0-D) a clip was shown: its New badge goes
 ) {
     if (list.isEmpty()) return
     val context = LocalContext.current
@@ -3515,6 +3561,7 @@ fun ClipViewer(
     val pictureTap by rememberUpdatedState { side: Int -> onPictureTap(side) }
 
     LaunchedEffect(current.listKey) {
+        onSeen(current)
         exportMessage = ""
         actionHint = ""
         confirmReexport = false

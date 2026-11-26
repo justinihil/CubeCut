@@ -37,6 +37,8 @@ The **Sessions** tab's switch shows **All**, **Sessions** or **Single solves** (
 
 ## Things to know
 
+- **New clips** (blue *New* badge) are clips CubeCut found that you haven't opened or exported yet: handy after importing a batch. Opening a clip in the viewer or exporting it clears its badge; *⋮ → Mark all as seen* clears them all. *Filter → Only new clips* shows just those.
+
 - **Long videos warm the phone** and use battery during Find solves. Plug it in for a long session.
 - **Exports are full-quality copies** made without re-encoding, so a session can take several GB. They may start up to about 1 s early, because a clip must begin on a keyframe.
 - **Your original video is never changed.** CubeCut only reads it.

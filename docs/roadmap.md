@@ -102,10 +102,11 @@ The owner's additions "import several videos at once" and "no difference between
 - Competition videos (B4) mostly hold one solve, so they are one-solve sessions. Their timer (often a Stackmat) is untested.
 - **Built 2026-11-26**; phone test in 4.0-T. DB v9 (`footage.scan_state`): waiting scans are queued again after a restart, and *Timer not found* stays on the card. The progress panel sits above the tabs; its rows offer *Cancel*, *Choose*, *Add by hand* and *Open*. A new video's puzzle is no longer asked at import (4.0-F asks it, for one video).
 
-### 4.0-D "New" badge ⬜
+### 4.0-D "New" badge 🔶
 DB v10 (`cuts.seen_ms`). It comes before the test rounds (E3), so each batch's results stand out.
 - The badge goes away when the clip is opened in the viewer or exported, or with *Mark all as seen*.
 - A *New* filter chip.
+- **Built 2026-11-26**; phone test in 4.0-T. The badge is blue, on the clip's picture (and "New" in list rows); the filter is *Only new clips*; *Mark all as seen* is in the Gallery's ⋮ menu. A cut you changed or added is never new, and the upgrade marks every saved clip as seen.
 
 ### 4.0-E Sessions: select several ⬜
 The owner's addition of 2026-11-26.

@@ -31,6 +31,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Ground truth / reference video** | (3.3-A) A video whose correct solves are known: a JSON file fixed by hand, or only the times in order (csTimer's export) | `GroundTruth`, `ExpectedSolve`, `parseTimesList`, `src/test/resources/groundtruth/` |
 | **Scan report** | (3.3-A, debug builds) Grades finding the timer, reading and Find solves against the ground truth without changing the list. Runs even when there is no timer | `ScanReportHost`, `runScanReport`, `runScanReportStages`, `gradeReading`, `compareScan`, `compareTimes`, `scanReportText`, `timesReportText` |
 | **Exported** | A file exists in `Movies/CubeCut`, is not trashed, and opens | Table `exports`, `ExportedClip`, `recordExports` |
+| **New** | (4.0-D) A clip found by a scan that was never opened in the viewer or exported. *Mark all as seen* clears every badge | `cuts.seen_ms`, `CutItem.seenMs` / `isNew`, `isNewClip`, `GalleryUiState.newOnly` / `seenKeys`, `markCutSeen`, `markAllSeen` |
 | **Export only** | A clip whose raw video is gone, shown from its exported file | `GalleryClip.exportOnly` |
 | **Solve deleted** | An exported file whose cut was deleted in the editor | `GalleryClip.solveDeleted`, `index = -1` |
 | **Recently deleted / trash** | Items CubeCut moved to Android's trash | `trashed_ms`, `loadTrash`, `createTrashRequest` |

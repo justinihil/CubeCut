@@ -105,7 +105,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 9
+    private const val DB_VERSION = 10
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -156,7 +156,8 @@ object SessionStore {
                         "dnf INTEGER NOT NULL DEFAULT 0, " +
                         "before_pad REAL, " +
                         "after_pad REAL, " +
-                        "shared_on TEXT NOT NULL DEFAULT '')"
+                        "shared_on TEXT NOT NULL DEFAULT '', " +
+                        "seen_ms INTEGER NOT NULL DEFAULT 0)"
             )
             db.execSQL("CREATE INDEX cuts_by_footage ON cuts(footage_id)")
             createExportsTable(db)
@@ -258,6 +259,12 @@ object SessionStore {
             if (oldVersion < 9) {
                 // version 9 (CubeCut 4.0-C): how the video's last background scan ended, or that it waits for one (AnalysisQueue.kt)
                 db.execSQL("ALTER TABLE footage ADD COLUMN scan_state TEXT NOT NULL DEFAULT ''")
+            }
+            if (oldVersion < 10) {
+                // version 10 (CubeCut 4.0-D): when a clip was first opened or exported, for the "New" badge. Every clip saved before
+                // counts as seen, so the upgrade doesn't mark the whole Gallery as new.
+                db.execSQL("ALTER TABLE cuts ADD COLUMN seen_ms INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE cuts SET seen_ms = ${System.currentTimeMillis()}")
             }
         }
     }
@@ -507,7 +514,7 @@ object SessionStore {
         db(context).query(
             "cuts", arrayOf(
                 "stop_sec", "time_text", "included", "note", "include_scramble", "user_note", "user_edited", "reviewed",
-                "puzzle", "category", "plus2_count", "dnf", "before_pad", "after_pad", "shared_on"
+                "puzzle", "category", "plus2_count", "dnf", "before_pad", "after_pad", "shared_on", "seen_ms"
             ),
             "footage_id = ?", arrayOf(footageId.toString()), null, null, "stop_sec ASC, id ASC"
         ).use { c ->
@@ -516,7 +523,8 @@ object SessionStore {
                 val cut = CutItem(
                     c.getDouble(0), c.getString(1), c.getInt(2) == 1, c.getString(3), c.getInt(4) == 1, c.getString(5), c.getInt(6) == 1, c.getInt(7) == 1,
                     puzzle = c.getString(8), category = c.getString(9), plus2Count = c.getInt(10), dnf = c.getInt(11) == 1,
-                    beforePad = c.doubleOrNull(12), afterPad = c.doubleOrNull(13), sharedOn = decodeSharedOn(c.getString(14))
+                    beforePad = c.doubleOrNull(12), afterPad = c.doubleOrNull(13), sharedOn = decodeSharedOn(c.getString(14)),
+                    seenMs = c.getLong(15)
                 )
                 // every cut is a solve except the scan's "left over" ones (see normalizeIncluded in RescanMerge.kt)
                 out.add(normalizeIncluded(cut))
@@ -564,6 +572,7 @@ object SessionStore {
                 putPad(v, "before_pad", cut.beforePad)
                 putPad(v, "after_pad", cut.afterPad)
                 v.put("shared_on", encodeSharedOn(cut.sharedOn))
+                v.put("seen_ms", cut.seenMs)
                 d.insert("cuts", null, v)
             }
             val id = footageId.toString()
@@ -671,6 +680,7 @@ object SessionStore {
                 v.put("offset_sec", e.offsetSec)
                 v.put("exported_ms", e.exportedMs)
                 d.insert("exports", null, v)
+                markSeen(d, footageId, e.stopSec, SAME_SOLVE_SEC)              // (4.0-D) an exported clip isn't new any more
             }
             d.setTransactionSuccessful()
         } finally {
@@ -1075,6 +1085,26 @@ object SessionStore {
     }
 
     /** Remembers that Find solves has just run on this session. */
+    /**
+     * (4.0-D) The clip of this cut was opened in the viewer: it isn't new any more. Found by its stop time like the other single-field
+     * writes, but WITHOUT `user_edited`: looking at a clip doesn't change it, so a re-scan may still update it (and keeps seen_ms,
+     * `withUserFieldsOf`). Only a cut not seen yet is changed.
+     */
+    fun markCutSeen(context: Context, footageId: Long, stopSec: Double) = markSeen(db(context), footageId, stopSec, 0.0005)
+
+    /** (4.0-D) *Mark all as seen*: no clip is new any more. */
+    fun markAllSeen(context: Context) {
+        val v = ContentValues()
+        v.put("seen_ms", System.currentTimeMillis())
+        db(context).update("cuts", v, "seen_ms = 0", null)
+    }
+
+    private fun markSeen(d: SQLiteDatabase, footageId: Long, stopSec: Double, within: Double) {
+        val v = ContentValues()
+        v.put("seen_ms", System.currentTimeMillis())
+        d.update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < $within AND seen_ms = 0", arrayOf(footageId.toString(), stopSec.toString()))
+    }
+
     /** (4.0-C) Writes how the video's background scan stands ([Footage.scanState]). */
     fun setScanState(context: Context, footageId: Long, state: String) {
         val v = ContentValues()

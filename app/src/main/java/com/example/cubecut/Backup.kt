@@ -85,13 +85,16 @@ object Backup {
         .put("include_scramble", c.includeScramble).put("user_note", c.userNote).put("user_edited", c.edited).put("reviewed", c.reviewed)
         .put("puzzle", c.puzzle).put("category", c.category).put("plus2_count", c.plus2Count).put("dnf", c.dnf)
         .put("before_pad", c.beforePad.orNull()).put("after_pad", c.afterPad.orNull()).put("shared_on", encodeSharedOn(c.sharedOn))
+        .put("seen_ms", c.seenMs)
 
     private fun cutOf(o: JSONObject) = CutItem(
         stopSec = o.getDouble("stop_sec"), timeText = o.optString("time_text"), included = o.optBoolean("included", true),
         note = o.optString("note"), includeScramble = o.optBoolean("include_scramble", true), userNote = o.optString("user_note"),
         edited = o.optBoolean("user_edited"), reviewed = o.optBoolean("reviewed"),
         puzzle = o.optString("puzzle"), category = o.optString("category"), plus2Count = o.optInt("plus2_count"), dnf = o.optBoolean("dnf"),
-        beforePad = o.doubleOrNull("before_pad"), afterPad = o.doubleOrNull("after_pad"), sharedOn = decodeSharedOn(o.optString("shared_on"))
+        beforePad = o.doubleOrNull("before_pad"), afterPad = o.doubleOrNull("after_pad"), sharedOn = decodeSharedOn(o.optString("shared_on")),
+        // (4.0-D) a backup from before 4.0 has no seen_ms: its clips count as seen, as on the upgrade
+        seenMs = if (o.has("seen_ms")) o.optLong("seen_ms") else System.currentTimeMillis()
     )
 
     private fun exportJson(e: ExportedClip) = JSONObject()

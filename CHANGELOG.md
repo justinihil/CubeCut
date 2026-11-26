@@ -12,13 +12,14 @@ Notes on history:
 
 ## [Unreleased]
 
-The saved data is upgraded to database v9 on first start.
+The saved data is upgraded to database v10 on first start.
 
 ### Added
 - **Import several videos at once.** Each new video goes to the Sessions tab and *Find solves* starts on it by itself, one after another. Videos imported before are skipped and counted (with one video, *Imported before* asks as before).
 - **Progress panel** above the tabs: one slim line while scans run; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
 - Session cards say **Waiting to scan**, **Finding solves 40%**, **Timer not found** or **Choose the timer**. Waiting scans start again after the app was closed.
 - The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
+- **New badge** on clips you haven't opened or exported yet, with *Filter → Only new clips* and *⋮ → Mark all as seen*. Clips saved before the update count as seen.
 
 ### Removed
 - **Import no longer asks "A session or One solve?"**: every video is scanned, and a video of one solve is cut like any solve (exported as a copy, which a penalty can rename). Single solves made before keep working as they are.

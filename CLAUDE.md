@@ -48,7 +48,7 @@ For each pattern, copy the example named in the last column.
 - **Never permanently delete user media.** Use `MediaStore.createTrashRequest` after a visual warning ([ADR-0008](docs/adr/0008-never-delete-permanently.md)).
 - **Never add the INTERNET permission, networking or cloud services.** ML needs an owner decision first ([ADR-0001](docs/adr/0001-offline-classic-cv-no-ml.md)).
 - **Never start video or `cuts` work while `analyzing`** (or while a batch export runs). The frame source and the scans' memos are not thread-safe.
-- **Never change a cut without setting `edited`.** The exception is the all-clips scramble switch. Otherwise a re-scan overwrites the change.
+- **Never change a cut without setting `edited`.** The exceptions are the all-clips scramble switch and the New badge's `seen_ms` (re-scans carry it over). Otherwise a re-scan overwrites the change.
 - **Never link anything to `cuts.id`.** It changes on every save. Exports link by `stop_sec` within `SAME_SOLVE_SEC`.
 - **Never store clips or pictures in the database.** Clips come from `computeClips`; pictures come from `ThumbCache`.
 - **Never change the scan, the digit reader or `computeClips` as a side effect.** Only change them when that is the task, and check against the known-good footage ([algorithms §8](docs/algorithms.md#8-reference-measurements)).

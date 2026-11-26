@@ -136,6 +136,22 @@ class RescanMergeTest {
     }
 
     @Test
+    fun rescan_keepsWhenAClipWasSeen_andANewSolveIsNew() {
+        // (4.0-D) a clip opened in the viewer stays seen after a re-scan; a solve the re-scan adds shows the New badge
+        val seen = cut(30.0, "10.000").copy(seenMs = 1234L)
+        val merged = mergeRescan(listOf(seen), listOf(cut(30.1, "10.100"), cut(90.0, "11.000")), emptyList()).cuts
+        assertEquals(1234L, merged.first { it.stopSec < 60 }.seenMs)
+        assertTrue(merged.first { it.stopSec > 60 }.isNew)
+    }
+
+    @Test
+    fun aCutYouChangedOrAdded_isNeverNew() {
+        assertTrue(cut(30.0, "10.000").isNew)
+        assertTrue(!cut(30.0, "10.000", edited = true).isNew)
+        assertTrue(!cut(30.0, "10.000").copy(seenMs = 1L).isNew)
+    }
+
+    @Test
     fun summary_listsEveryPart() {
         val r = RescanResult(emptyList(), 2, 1, 12, 1)
         assertEquals("2 new, 1 updated, 12 kept as you left them, 1 not found again (check them)", r.summary())
