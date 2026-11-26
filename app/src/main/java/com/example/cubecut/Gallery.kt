@@ -1969,13 +1969,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     TextButton(onClick = { ui.selected = if (allOn) ui.selected - pickable else ui.selected + pickable }) {
                         Text(if (allOn) "None" else "All")
                     }
-                    // (3.1-E) the red bin: deletes the exported files of the ticked clips (it warns first)
-                    IconButton(
-                        onClick = { askDelete = true }, enabled = hasFiles && batchDone < 0,
-                        modifier = Modifier.semantics { contentDescription = "Delete exported files" }
-                    ) {
-                        TrashIcon(if (hasFiles && batchDone < 0) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
-                    }
+                    // (4.0) the main action alone on this row; the bin is apart, at the bottom right (owner, 2026-11-26: as on Sessions)
                     Button(onClick = { askExport = true }, enabled = canExport && batchDone < 0) { Text("Export") }
                 }
                 // one switch for the scramble of every chosen clip (each one can still differ: change it in the player)
@@ -2010,8 +2004,25 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        TextButton(onClick = { tagSelection = true }, enabled = batchDone < 0) { Text("Set tags\u2026") }
-                        TextButton(onClick = { clipSettingsFor = clipSettingsOfTicked(d) }, enabled = batchDone < 0) { Text("Clip settings\u2026") }
+                    }
+                    // (4.0) the settings as buttons, side by side, as on the Sessions tab
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { tagSelection = true }, enabled = batchDone < 0, modifier = Modifier.weight(1f)) {
+                            Text("Set tags\u2026", maxLines = 1)
+                        }
+                        OutlinedButton(onClick = { clipSettingsFor = clipSettingsOfTicked(d) }, enabled = batchDone < 0, modifier = Modifier.weight(1f)) {
+                            Text("Clip settings\u2026", maxLines = 1)
+                        }
+                    }
+                }
+                // (3.1-E) the red bin: deletes the exported files of the ticked clips (it warns first). (4.0) Apart, at the bottom right.
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = { askDelete = true }, enabled = hasFiles && batchDone < 0,
+                        modifier = Modifier.semantics { contentDescription = "Delete exported files" }
+                    ) {
+                        TrashIcon(if (hasFiles && batchDone < 0) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
                     }
                 }
             } else if (ui.selectingVideos && d != null) {
