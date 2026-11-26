@@ -328,8 +328,12 @@ class ReferenceVideoTest {
 
     /** Pictures of a video through ffmpeg: half-second steps from one running decode, frame by frame from short bursts, the rest by seeking. */
     private class FfmpegVideo(private val file: File) {
-        private val w = 1080
-        private val h = if ("cstimer_seconds" in file.name) 2340 else 1920       // (a screen recording)
+        // (ffmpeg turns the picture by the video's turn flag, so a stored 1920 x 1080 turned by 90 degrees comes out 1080 x 1920)
+        private val size = text("ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=width,height:stream_side_data=rotation", "-of", "csv=p=0", file.path)
+            .trim().split(Regex("[,\\s]+")).mapNotNull { it.toIntOrNull() }
+        private val sideways = size.size > 2 && Math.abs(size[2]) % 180 == 90
+        private val w = if (sideways) size[1] else size[0]
+        private val h = if (sideways) size[0] else size[1]
         private val times: DoubleArray = text(
             "ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0", file.path
         ).split(Regex("[,\\s]+")).mapNotNull { it.toDoubleOrNull() }.sorted().toDoubleArray()
