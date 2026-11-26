@@ -308,7 +308,8 @@ object AnalysisQueue {
         val f = SessionStore.getFootage(app, job.footageId) ?: return null
         auto.numbers?.let { try { SessionStore.saveFoundTimer(app, f.id, it) } catch (e: Exception) { } }
         val saved = SessionStore.loadCuts(app, f.id)
-        val found = report.solves.map { r -> normalizeIncluded(CutItem(r.stopSec, r.timeText, r.include, r.note, f.scrambleAll)) }
+        // (4.0) a time already on the timer when the video began is no solve: it is dropped here, not listed (owner, 2026-11-27)
+        val found = withoutLeftovers(report.solves.map { r -> normalizeIncluded(CutItem(r.stopSec, r.timeText, r.include, r.note, f.scrambleAll)) })
         val exportedStops = SessionStore.loadExports(app, f.id).map { it.stopSec }
         val merged = mergeRescan(saved, found, exportedStops)
         SessionStore.saveSession(app, f.id, merged.cuts, f.beforePad, f.afterPad, f.scrambleAll)
@@ -320,7 +321,7 @@ object AnalysisQueue {
 
         val maybeMissed = hintsToShow(hints, merged.cuts).size
         val checks = checkCuts(merged.cuts, computeClips(merged.cuts, f.beforePad.toDouble(), f.afterPad.toDouble(), job.durationMs / 1000.0))
-        val solveCount = merged.cuts.count { !isLeftover(it) }
+        val solveCount = merged.cuts.size
         val toCheck = merged.cuts.indices.count { merged.cuts[it].noteNeedsCheck() || checks.warnings.containsKey(it) }
         val seconds = (System.currentTimeMillis() - started) / 1000
         val text = if (saved.isEmpty()) {

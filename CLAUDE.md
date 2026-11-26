@@ -31,7 +31,7 @@ For each pattern, copy the example named in the last column.
 | New file | Same GPL header as every `.kt` file, then `package com.example.cubecut` | Top of `Notes.kt` |
 | Screen state / dialogs | `var x by remember { mutableStateOf<T?>(null) }` in the owning screen + `AlertDialog` shown when non-null | `confirmTrashFootage` / `forgetting` in `GalleryScreen` |
 | Destructive action | Picture/header, `EffectLine` rows (✓ / ✕ / ↺), red `DangerButton` at the bottom, then `createTrashRequest` | The *Delete video* dialog in `GalleryScreen` |
-| Messages to the user | `InfoNote`, `InfoButton`, `BulletLines`. Short lines (~12 words, one idea, says what to do), no grey paragraphs | `Notes.kt`; Setup box in `EditorScreen` |
+| Messages to the user | `InfoNote`, `InfoButton`, `BulletLines`. Short lines (~12 words, one idea, says what to do), no grey paragraphs | `Notes.kt`; `PaddingHeading` in `ClipSettings.kt` |
 | UI text | Written directly in Kotlin (`strings.xml` only has `app_name`). Keep that style unless localisation is planned | Anywhere |
 | Colours | `MaterialTheme.colorScheme.*` or `AppColors.check/keep/danger`. Fixed colours only over pictures, in the viewer, or in the timeline panel | `Theme.kt` |
 | App setting | Field in `GalleryUiState` + `save()` + `ui.save()` at every change | `themeMode` in `Gallery.kt` |

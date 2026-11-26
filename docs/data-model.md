@@ -14,7 +14,7 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 | Persisted URI read grants for imported videos | Android (`takePersistableUriPermission` in `SessionStore.keepAccess`) | Restarts, not reinstall. Capped at 512 grants; *Forget* releases one |
 | Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` until 4.0-0; since then left alone (harmless, nothing reads them) | — |
 
-## Schema (DB version 11)
+## Schema (DB version 12)
 
 ```mermaid
 erDiagram
@@ -52,7 +52,7 @@ erDiagram
     int footage_id FK
     real stop_sec "the cut = first frame showing the time"
     text time_text "as shown, e.g. 11.263 or 1:02.34"
-    int included "0 only for left-over cuts"
+    int included "1; 0 was for left-over cuts, deleted in v12"
     text note "scan/check note"
     int include_scramble
     text user_note "v2; free text + social-media words"
@@ -104,6 +104,7 @@ Migrations (`onUpgrade`) only add, one `if (oldVersion < N)` block per version:
 | v9 | `footage.scan_state` (4.0-C) |
 | v10 | `cuts.seen_ms` (4.0-D), set to the upgrade time for every cut already saved |
 | v11 | `footage.cube`, `footage.place`, `cuts.cube` (4.0-F) |
+| v12 | No new column: the left-over cuts (`included = 0`, note starting `LEFTOVER_NOTE_START`) are deleted. They are never saved again (`withoutLeftovers` in `saveSession`, `loadCuts` and the scan's save) |
 
 ### v7 fields (3.2)
 

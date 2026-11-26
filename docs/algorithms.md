@@ -26,7 +26,7 @@ All three share the idea and the steps at the top of `FinderScan.kt`. Until 4.0-
 2. **Stopped timer.** The same time on at least `MIN_AGREE` (2) of the last `RECENT_N` (6) readable reads, within `AGREE_WINDOW_SEC` (6 s). A running timer never agrees with itself.
 3. **Vote.** Read `LOCK_SEC` (3 s) more at 0.5 s steps. The time read most often wins; the running time before it can overrule that (start to now must fit). Under 60 % agreement adds the note "time not steady … check it".
 4. **First frame.** Walk back in `COARSE_BACK_STEP` (0.5 s) steps to the nearest picture that shows something else, never more than `BACK_MAX_SEC` (4 s); then every frame of that gap ([§ 3](#3-reading-the-timer), *Scanning a found timer*). The result is `stopSec`: **the cut**.
-5. **Left-over.** A time already on the display when the video starts (no earlier frame differs, within the first second) is switched off with a note starting `LEFTOVER_NOTE_START`. `isLeftover()` identifies it. It counts as deleted in the clip maths while it stays off.
+5. **Left-over.** A time already on the display when the video starts (no earlier frame differs, within the first second) is switched off with a note starting `LEFTOVER_NOTE_START`. `isLeftover()` identifies it. Since 4.0 the app drops it before saving (`withoutLeftovers`, owner 2026-11-27: "almost certainly not a solve"); only the scan report still counts it. The clip maths still skips one like a deleted cut.
 
 Cancellation: `isCancelled` is polled before every read and throws `ScanCancelled`. `ScanResult.readableFraction` below 25 % triggers the amber "timer hard to read" note.
 

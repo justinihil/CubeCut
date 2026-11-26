@@ -215,4 +215,12 @@ class RescanMergeTest {
         assertTrue(c.warnings.isEmpty())
         assertTrue(c.noClip.isEmpty())
     }
+
+    @Test
+    fun withoutLeftovers_dropsOnlyTheSwitchedOffLeftovers() {
+        // (4.0, owner 2026-11-27) a time already on the timer when the video began is never kept; a real solve with a note stays
+        val leftover = cut(1.0, "8.000", note = LEFTOVER_NOTE_START + " when the video began", included = false)
+        val real = cut(30.0, "10.000", note = "time not steady (read on 3 of 9 frames) - check it")
+        assertEquals(listOf(real), withoutLeftovers(listOf(leftover, real)))
+    }
 }

@@ -139,6 +139,12 @@ fun mergeRescan(saved: List<CutItem>, found: List<CutItem>, exportedStops: List<
 fun isLeftover(c: CutItem): Boolean = !c.included && c.note.startsWith(LEFTOVER_NOTE_START)
 
 /**
+ * (4.0) [cuts] without the left-over ones (owner, 2026-11-27: "almost certainly not a solve"). The scan still reports them (the scan
+ * report counts them), but they are never saved or listed. Before 4.0 they were kept switched off, as "Not a clip" rows.
+ */
+fun withoutLeftovers(cuts: List<CutItem>): List<CutItem> = cuts.filter { !isLeftover(it) }
+
+/**
  * Every cut is a solve that can be exported; the only cuts that stay switched off are the leftovers above. Cuts switched off by hand in an
  * older version, or by the scan for another reason, become normal solves (a scan note on them still flags them for a check).
  */

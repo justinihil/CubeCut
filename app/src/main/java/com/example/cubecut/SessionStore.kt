@@ -107,7 +107,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 11
+    private const val DB_VERSION = 12
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -276,6 +276,11 @@ object SessionStore {
                 db.execSQL("ALTER TABLE footage ADD COLUMN cube TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE footage ADD COLUMN place TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE cuts ADD COLUMN cube TEXT NOT NULL DEFAULT ''")
+            }
+            if (oldVersion < 12) {
+                // version 12 (CubeCut 4.0): a time already on the timer when the video began is no solve, so it is not kept any more
+                // (owner, 2026-11-27). Before, the scan saved it switched off and the editor listed it as "Not a clip".
+                db.execSQL("DELETE FROM cuts WHERE included = 0 AND note LIKE '$LEFTOVER_NOTE_START%'")
             }
         }
     }
@@ -538,8 +543,8 @@ object SessionStore {
                     beforePad = c.doubleOrNull(12), afterPad = c.doubleOrNull(13), sharedOn = decodeSharedOn(c.getString(14)),
                     seenMs = c.getLong(15), cube = c.getString(16)
                 )
-                // every cut is a solve except the scan's "left over" ones (see normalizeIncluded in RescanMerge.kt)
-                out.add(normalizeIncluded(cut))
+                // every cut is a solve (see normalizeIncluded in RescanMerge.kt); (4.0) a "left over" one is never kept
+                if (!isLeftover(cut)) out.add(normalizeIncluded(cut))
             }
             out
         }
@@ -566,7 +571,7 @@ object SessionStore {
             settings.put("scramble_all", if (scrambleAll) 1 else 0)
             d.update("footage", settings, "id = ?", arrayOf(footageId.toString()))
             d.delete("cuts", "footage_id = ?", arrayOf(footageId.toString()))
-            for (cut in cuts) {
+            for (cut in withoutLeftovers(cuts)) {
                 val v = ContentValues()
                 v.put("footage_id", footageId)
                 v.put("stop_sec", cut.stopSec)
@@ -968,6 +973,14 @@ object SessionStore {
         v.put("reviewed", 1)
         v.put("user_edited", 1)
         db(context).update("cuts", v, "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
+    }
+
+    /**
+     * (4.0) Deletes one cut (found by its stop time): the viewer's *Not a solve*, the same as the editor's red bin. Its export record
+     * stays, so an exported file is still shown, as "Solve deleted" (loadGallery). A re-scan may find it again, like after the editor.
+     */
+    fun deleteCut(context: Context, footageId: Long, stopSec: Double) {
+        db(context).delete("cuts", "footage_id = ? AND ABS(stop_sec - ?) < 0.0005", arrayOf(footageId.toString(), stopSec.toString()))
     }
 
     /** Switches the scramble of one cut on or off (found by its stop time). The editor sees the change. */

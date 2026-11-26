@@ -37,11 +37,13 @@ class ScanFilterTest {
     }
 
     @Test
-    fun timerNotFound_andPlacesToCheck() {
+    fun timerNotFound_andToCheck() {
         assertTrue(scanFilterMatches(ScanFilter.NO_TIMER, video(scanState = SCAN_NO_TIMER), null, 0))
         assertFalse(scanFilterMatches(ScanFilter.NO_TIMER, video(), null, 0))
         assertTrue(scanFilterMatches(ScanFilter.TO_CHECK, video(lastScanMs = 5L), null, 2))
         assertFalse(scanFilterMatches(ScanFilter.TO_CHECK, video(lastScanMs = 5L), null, 0))
+        // (owner, 2026-11-27) a solve to check counts as much as a place to check
+        assertTrue(scanFilterMatches(ScanFilter.TO_CHECK, video(lastScanMs = 5L), null, 0, checks = 1))
         assertTrue(scanFilterMatches(ScanFilter.ANY, video(), null, 0))
     }
 }

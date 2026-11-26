@@ -68,6 +68,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
@@ -294,7 +295,7 @@ enum class ScanFilter(val label: String) {
     ANY("Any"),
     NOT_SCANNED("Not scanned"),          // never scanned, not waiting or being scanned, and not "Timer not found"
     NO_TIMER("Timer not found"),
-    TO_CHECK("Places to check");
+    TO_CHECK("To check");                // (owner, 2026-11-27) solves to check and places where one may be missing: both need a look
 
     companion object {
         fun from(name: String?): ScanFilter = ScanFilter.entries.firstOrNull { it.name == name } ?: ANY
@@ -312,15 +313,18 @@ enum class FootageKind(val label: String) {
     }
 }
 
-/** (4.0) Does video [f] pass the Sessions tab's scan filter? [job]: its job in the scan queue, if any; [hints]: its places to check. */
-fun scanFilterMatches(filter: ScanFilter, f: Footage, job: ScanJob?, hints: Int): Boolean {
+/**
+ * (4.0) Does video [f] pass the Sessions tab's scan filter? [job]: its job in the scan queue, if any; [hints]: its places to check;
+ * [checks]: its solves to check (the card's "N to check" badge).
+ */
+fun scanFilterMatches(filter: ScanFilter, f: Footage, job: ScanJob?, hints: Int, checks: Int = 0): Boolean {
     val state = job?.state
     val noTimer = state == ScanState.NO_TIMER || (state == null && f.scanState == SCAN_NO_TIMER)
     return when (filter) {
         ScanFilter.ANY -> true
         ScanFilter.NOT_SCANNED -> !f.isSingle && f.lastScanMs == 0L && state?.isActive != true && !noTimer
         ScanFilter.NO_TIMER -> noTimer
-        ScanFilter.TO_CHECK -> hints > 0
+        ScanFilter.TO_CHECK -> hints > 0 || checks > 0
     }
 }
 
@@ -1889,7 +1893,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 FootageKind.ALL -> d.footage
                 FootageKind.SESSIONS -> d.footage.filter { !isOneSolve(it, statsById[it.id]) }
                 FootageKind.SINGLES -> d.footage.filter { isOneSolve(it, statsById[it.id]) }
-            }.filter { f -> scanFilterMatches(ui.scanFilter, f, AnalysisQueue.jobOf(f.id), d.hints[f.id]?.size ?: 0) }
+            }.filter { f -> scanFilterMatches(ui.scanFilter, f, AnalysisQueue.jobOf(f.id), d.hints[f.id]?.size ?: 0, statsById[f.id]?.check ?: 0) }
             sortFootage(picked, ui.footageSort, statsById)
         }
     }
@@ -2594,6 +2598,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         ui.seenKeys = ui.seenKeys + c.listKey
                         scope.launch(Dispatchers.IO) { try { SessionStore.markCutSeen(context, c.footage.id, c.cut.stopSec) } catch (e: Exception) { } }
                     }
+                },
+                batchRunning = batchDone >= 0,
+                onSolveDeleted = { c ->
+                    ui.detail = null
+                    ui.selected = ui.selected - c.listKey
+                    ui.refresh++
+                    message = "Deleted: " + c.title
                 }
             )
         }
@@ -3581,6 +3592,7 @@ private fun SheetAction(
     val fg = if (enabled) content else content.copy(alpha = 0.38f)
     Column(
         modifier
+            .fillMaxHeight()
             .clip(RoundedCornerShape(10.dp))
             .background(if (enabled) background else background.copy(alpha = 0.5f))
             .clickable { if (enabled) onClick() else onDisabledClick() }
@@ -3589,7 +3601,8 @@ private fun SheetAction(
     ) {
         icon(fg)
         Spacer(Modifier.height(4.dp))
-        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        // (4.0) up to two lines: "Delete exported file" (owner, 2026-11-27) doesn't fit a third of the row on one
+        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 2, textAlign = TextAlign.Center)
     }
 }
 
@@ -3937,7 +3950,9 @@ fun ClipViewer(
     onSingleSaved: (Footage, Double) -> Unit = { _, _ -> },   // (3.2-F) a single solve's time or trim was changed: (video, new stop)
     onDeleteVideo: (Footage) -> Unit = { },                    // (3.2-F) a single solve's Delete video (it has no Footage card)
     onForget: (Footage) -> Unit = { },                         // (3.2-F) a single solve's Forget
-    onSeen: (GalleryClip) -> Unit = { }                        // (4.0-D) a clip was shown: its New badge goes
+    onSeen: (GalleryClip) -> Unit = { },                       // (4.0-D) a clip was shown: its New badge goes
+    batchRunning: Boolean = false,                             // (4.0) a batch export runs: no solve may be deleted meanwhile
+    onSolveDeleted: (GalleryClip) -> Unit = { }                // (4.0) Not a solve: the solve is gone, the viewer closes
 ) {
     if (list.isEmpty()) return
     val context = LocalContext.current
@@ -4006,6 +4021,7 @@ fun ClipViewer(
     var exporting by remember { mutableStateOf(false) }
     var confirmReexport by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf(false) }
+    var confirmNotSolve by remember { mutableStateOf(false) }   // (4.0) the warning before Not a solve deletes the solve
     var loadingKey by remember { mutableStateOf("") }            // the clip that was last handed to the player
     var renderedKey by remember { mutableStateOf("") }           // the clip whose first picture the player has drawn
 
@@ -4167,6 +4183,7 @@ fun ClipViewer(
         confirmReexport = false
         reexportAsk = ""
         confirmTrash = false
+        confirmNotSolve = false
         tagWindow = false
         taps.pending?.cancel()           // a tap on the clip before must not toggle the controls of this one
         taps.pending = null
@@ -4652,17 +4669,29 @@ fun ClipViewer(
                             highlightCheck("check: " + current.checkText),
                             style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp)
                         )
-                        if (editable && !current.cut.reviewed) {
-                            // (4.0) the same button as on the editor's cards
-                            ItsFineButton(modifier = Modifier.padding(top = 4.dp), onClick = {
-                                val c = current
-                                checkedNow[c.listKey] = true
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        try { SessionStore.markCutReviewed(context, c.footage.id, c.cut.stopSec) } catch (e: Exception) { }
+                        // (4.0) a find that needs a check is either fine or no solve at all (owner, 2026-11-27): both answers
+                        // on one line. A single solve has Forget at the bottom instead.
+                        val canFine = editable && !current.cut.reviewed
+                        val canDrop = editable && !single
+                        if (canFine || canDrop) {
+                            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // the same button as on the editor's cards
+                                if (canFine) ItsFineButton(onClick = {
+                                    val c = current
+                                    checkedNow[c.listKey] = true
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            try { SessionStore.markCutReviewed(context, c.footage.id, c.cut.stopSec) } catch (e: Exception) { }
+                                        }
                                     }
-                                }
-                            })
+                                })
+                                if (canDrop) NotASolveButton(onClick = {
+                                    // the scan's list and the exports must not change under a scan or a batch export
+                                    if (AnalysisQueue.isBusy(current.footage.id)) actionHint = "This video is being scanned. Try again when it's done."
+                                    else if (batchRunning || exporting) actionHint = "Clips are being exported. Try again when it's done."
+                                    else confirmNotSolve = true
+                                })
+                            }
                         }
                     } else if (current.cut.note.isNotEmpty()) {
                         Text(current.cut.note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
@@ -4671,15 +4700,16 @@ fun ClipViewer(
                     // ===== 2. what you can do with this clip: export it, open it in the editor, delete its exported file =====
                     // (all three always show, greyed out when they can't be used, so the row never changes shape)
                     val canDeleteFile = exportedFile != null && exportedFile.trashedMs == 0L
-                    // what a tap on a greyed-out button says (short, and says what to do instead)
+                    // what a tap on a greyed-out button says (short, and says what to do instead); (4.0) a find that is no solve
+                    // at all is deleted in the editor (or with Not a solve when it needs a check), not here (owner, 2026-11-27)
                     val noVideoHint = if (current.solveDeleted) "This solve was deleted in the editor. Only its exported file is left."
                     else if (!sourceOk) "The original video is missing. Tap Reconnect video above to use it again."
                     else "This clip no longer matches a solve. Open the video in the editor from the Sessions tab."
                     val noFileHint = if (exportedFile == null && single) "Not exported, so there's no copy to delete. To remove the solve, use Forget below."
-                    else if (exportedFile == null) "Not exported yet, so there's no file to delete.\nWrong solve? Tap Editor to fix or delete it."
+                    else if (exportedFile == null) "Not exported yet, so there's no file to delete.\nNot a real solve? Tap Editor and delete it there."
                     else "This file is already in the phone's trash. Restore it from Recently deleted."
                     Spacer(Modifier.height(12.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SheetAction(
                             if (exporting) "Exporting..." else if (exportedFile != null) "Export again" else "Export",
                             MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary,
@@ -4698,7 +4728,7 @@ fun ClipViewer(
                             icon = { c -> EditIcon(c, 22.dp) }
                         ) { if (single) singleEdit = true else scope.launch { flushNotes(); onOpenEditor(current) } }
                         SheetAction(
-                            "Delete file",
+                            "Delete exported file",
                             MaterialTheme.colorScheme.surfaceContainerHighest, AppColors.danger,
                             enabled = canDeleteFile, modifier = Modifier.weight(1f),
                             onDisabledClick = { actionHint = noFileHint },
@@ -4767,8 +4797,8 @@ fun ClipViewer(
                                 Text("Include the scramble", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                                 Switch(checked = withScramble(current), onCheckedChange = { setScramble(current, it) })
                             }
-                            // (3.2-D) this clip's own extra time ("buffers" in the code; a single solve has its trim instead)
-                            Text("Extra time", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+                            // (3.2-D) this clip's own padding ("buffers" in the code; a single solve has its trim instead)
+                            PaddingHeading(modifier = Modifier.padding(top = 4.dp))
                             val (ownBefore, ownAfter) = padsOf(current)
                             PadEditor(footage.beforePad.toDouble(), footage.afterPad.toDouble(), ownBefore, ownAfter) { b, a -> setPads(current, b, a) }
                         } else if (wholeFile) {
@@ -4905,10 +4935,63 @@ fun ClipViewer(
                                 if (lastCopy || current.solveDeleted) "The clip leaves the Gallery." else "The solve, its cut and your note stay in CubeCut."
                             )
                         )
+                        // (4.0) the file isn't the problem when the find is no solve at all (owner, 2026-11-27)
+                        if (!lastCopy && !current.solveDeleted && editable && !footage.isSingle) {
+                            InfoNote(
+                                "Not a real solve? Cancel, tap Editor and delete it there.",
+                                modifier = Modifier.padding(top = 10.dp)
+                            )
+                        }
                     }
                 },
                 confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Delete") } },
                 dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (4.0) Not a solve: the solve leaves CubeCut, after this warning (owner, 2026-11-27) =====
+        if (confirmNotSolve && editable && !footage.isSingle) {
+            val doomed = current
+            val file = exportedFor(doomed)
+            AlertDialog(
+                onDismissRequest = { confirmNotSolve = false },
+                title = { Text("Delete this solve?") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text(doomed.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text("at ${formatTime(Math.round(doomed.cut.stopSec * 1000.0))} in the video", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(10.dp))
+                        EffectLine(Effect.GOES, "The solve leaves CubeCut, with its tags, penalty and note")
+                        EffectLine(Effect.STAYS, "The video stays as it is")
+                        if (file != null && file.trashedMs == 0L) {
+                            EffectLine(Effect.STAYS, "Its exported file stays. The Gallery shows it as \"Solve deleted\"")
+                        }
+                        EffectLine(Effect.UNDO, "No Undo. To get it back, use Add a missed solve in the editor")
+                        Spacer(Modifier.height(8.dp))
+                        InfoNote(
+                            kind = NoteKind.CHECK,
+                            text = "Find solves again may find it again.",
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Text(
+                            "The solves after it move up a number.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton("Delete solve") {
+                            confirmNotSolve = false
+                            scope.launch {
+                                flushNotes()
+                                val done = withContext(Dispatchers.IO) {
+                                    try { SessionStore.deleteCut(context, doomed.footage.id, doomed.cut.stopSec); true } catch (e: Exception) { false }
+                                }
+                                if (done) onSolveDeleted(doomed) else actionHint = "Couldn't delete the solve."
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { confirmNotSolve = false }) { Text("Cancel") } }
             )
         }
 
@@ -4938,7 +5021,7 @@ fun ClipViewer(
             )
         }
 
-        // ===== (3.2-D) extra time changed on an exported clip: make the file again? =====
+        // ===== (3.2-D) padding changed on an exported clip: make the file again? =====
         val reexportFile = exportedFor(current)
         if (reexportAsk == current.listKey && reexportFile != null && editable) {
             AlertDialog(
@@ -4947,7 +5030,7 @@ fun ClipViewer(
                 text = {
                     BulletLines(
                         listOf(
-                            "The exported file still has the old extra time.",
+                            "The exported file still has the old padding.",
                             "Re-export makes a new file. Then you choose what happens to the old one."
                         )
                     )
@@ -4967,7 +5050,7 @@ fun ClipViewer(
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                         Text(oldFile.fileName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(10.dp))
-                        EffectLine(Effect.STAYS, "The new file with the new extra time stays")
+                        EffectLine(Effect.STAYS, "The new file with the new padding stays")
                         EffectLine(Effect.GOES, "The old file goes to the phone's trash")
                         EffectLine(Effect.UNDO, "Restore it from Recently deleted within about 30 days")
                         Spacer(Modifier.height(8.dp))

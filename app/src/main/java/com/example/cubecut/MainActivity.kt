@@ -388,7 +388,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var videoCube by remember { mutableStateOf("") }             // (4.0-F) the video's cube model and place
     var videoPlace by remember { mutableStateOf("") }
     var knownCubes by remember { mutableStateOf(emptyList<String>()) }   // (4.0-F) the cube models used in any video (your own list)
-    var tagVideoWindow by remember { mutableStateOf(false) }     // the "Tags for this video" window (Setup box)
     var askPuzzleNew by remember { mutableStateOf(false) }       // a video imported for the first time: ask its puzzle once
     var zoom by remember { mutableStateOf(1f) }
     val timelineScroll = rememberScrollState()
@@ -451,7 +450,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var cancelScan by remember { mutableStateOf(false) }         // the scan report's Cancel
     var scanReport by remember { mutableStateOf<ScanResult?>(null) }   // what the last scan learned (for the warnings)
     var scanned by remember { mutableStateOf(false) }            // Find solves has run on this video (now or in an earlier visit)
-    var setupExpanded by remember { mutableStateOf(true) }       // the Setup box: open at first, closes after Find solves
     var showScanTools by remember { mutableStateOf(false) }       // (3.3-A, debug builds) the Scan report window
     var scanToolResult by remember { mutableStateOf<ScanReportResult?>(null) }   // ...and its finished report
     // (3.3-A) one frame of this video in seconds, for the Edit window's 1-frame buttons (1/60 s until the file says otherwise)
@@ -529,7 +527,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         videoScale = 1f
         videoOffX = 0f
         videoOffY = 0f
-        setupExpanded = true
         positionMs = 0L
         exoPlayer.setMediaItem(MediaItem.fromUri(uri))
         exoPlayer.prepare()
@@ -562,7 +559,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     hints = withContext(Dispatchers.IO) { try { SessionStore.loadHints(context, opened.footage.id) } catch (e: Exception) { emptyList() } }
                     scanned = opened.footage.lastScanMs > 0
                     if (opened.cuts.isNotEmpty()) {
-                        setupExpanded = false
                         openedNote = "Saved session: ${opened.cuts.size} cuts" +
                                 (if (opened.footage.lastScanMs > 0) ", found ${formatDate(opened.footage.lastScanMs)}" else "") +
                                 (if (opened.footage.lastScanMs > 0) "" else ". Press Find solves to find the other solves.")
@@ -758,7 +754,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         exoPlayer.pause()
         timerNotFound = false
         timerQuestion = null
-        setupExpanded = false                   // fold the Setup box away as soon as the scan starts
         staleCuts = true                        // from now on the scan's result counts, not this list
         val snapshot = cuts.toList()
         val moves = HashMap(pendingMoves)
@@ -814,7 +809,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             }
             scanReport = outcome?.report
             scanned = true
-            setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job
         }
         timerNotFound = job.state == ScanState.NO_TIMER
         timerQuestion = if (job.state == ScanState.ASKS) outcome?.question else null
@@ -1155,7 +1149,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     // opened from a Gallery clip: once the list has been laid out, scroll so the selected row is in view
     LaunchedEffect(scrollToSelected) {
         if (!scrollToSelected) return@LaunchedEffect
-        delay(250)                                  // let the screen settle (the Setup box folds away)
+        delay(250)                                  // let the screen settle
         var tries = 0
         while (tries < 30) {
             val i = selectedCut
@@ -1496,108 +1490,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             ) {
                 val report = scanReport
 
-                // ===== Setup box: the timer (the heart of the app now) and the clip buffers; folds away =====
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                        // the header row is always visible; tap it to open or close the box
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { setupExpanded = !setupExpanded },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(12.dp)
-                                    .background(if (timerNotFound) AppColors.check else AppColors.keep, CircleShape)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                if (setupExpanded) "Setup: timer, extra time and puzzle"
-                                else tagLabel(videoPuzzle, videoCategory).let { if (it.isEmpty()) "" else "$it \u00B7 " } +
-                                        (if (timerNotFound) "Timer not found" else "Finds the timer") +
-                                        " \u00B7 ${"%.1f".format(beforePad)} s before \u00B7 ${"%.1f".format(afterPad)} s after",
-                                style = if (setupExpanded) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (setupExpanded) "Hide \u25B2" else "Change \u25BC", style = MaterialTheme.typography.labelLarge)
-                        }
-
-                        if (setupExpanded) {
-                            Column {
-                                Spacer(Modifier.height(8.dp))
-                                Text("1. Timer", style = MaterialTheme.typography.titleSmall)
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "CubeCut finds the timer by itself",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    InfoButton(
-                                        "Timer",
-                                        listOf(
-                                            "Just press Find solves.",
-                                            "Keep the timer in view and readable, also while it runs.",
-                                            "Film with a fixed camera. A small bump is fine.",
-                                            "It reads csTimer-like digits and QiYi-like displays.",
-                                            "Not found? Add each solve by hand with Add a missed solve."
-                                        )
-                                    )
-                                }
-
-                                Spacer(Modifier.height(12.dp))
-                                Text("2. Extra time around the solve", style = MaterialTheme.typography.titleSmall)
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Before the solve: ${"%.1f".format(beforePad)} s", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                                    InfoButton(
-                                        "Before the solve",
-                                        listOf("Used when the scramble is left out.", "The clip starts this long before the timer started.")
-                                    )
-                                }
-                                Slider(value = beforePad, onValueChange = { beforePad = it }, valueRange = 0f..8f, steps = 15, enabled = !analyzing)
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("After the solve: ${"%.1f".format(afterPad)} s", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                                    InfoButton(
-                                        "After the solve",
-                                        listOf("Every clip ends this long after the final time first shows.")
-                                    )
-                                }
-                                Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15, enabled = !analyzing)
-
-                                // (3.2-B) the puzzle of the whole video; odd solves are unticked on their cards below
-                                Spacer(Modifier.height(12.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("3. Tags for this video", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                    InfoButton(
-                                        "Puzzle for this video",
-                                        listOf(
-                                            "Every clip of this video gets this tag.",
-                                            "Mixed puzzles? Untick the odd solves below.",
-                                            "Then tag those clips in the Gallery."
-                                        )
-                                    )
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val videoTag = listOf(tagLabel(videoPuzzle, videoCategory), videoCube, videoPlace).filter { it.isNotEmpty() }.joinToString(" · ")
-                                    Text(videoTag.ifEmpty { "Not tagged" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                                    OutlinedButton(onClick = { tagVideoWindow = true }, enabled = footageId != null) {
-                                        Text(if (videoTag.isEmpty()) "Set tags" else "Change")
-                                    }
-                                }
-                                // (the scramble switch for all clips is not here: it sits under Add a missed solve, next to the check filter)
-                            }
-                        }
-                    }
-                }
-
-                // ===== Find solves: right under the box it depends on (a re-run doesn't need the box opened) =====
+                // ===== Find solves: at the top of the list (4.0: the Setup box is gone; padding and tags are set in the Gallery) =====
                 // (4.0-B) the progress is the queue's (or the scan report's)
                 val progressPercent = if (reportRunning) (if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0) else scanJob?.percent ?: 0
                 val waitingInQueue = !reportRunning && scanJob?.state == ScanState.WAITING
-                Spacer(Modifier.height(6.dp))
                 Button(
                     onClick = { showFindConfirm = true },
                     enabled = videoUri != null && durationMs > 0 && !analyzing && !importing,
@@ -1854,9 +1750,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                                     clip.withScramble -> "with scramble"
                                                     else -> "solve only"
                                                 }
-                                                isLeftover(item) -> "  \u00B7  not a clip"
                                                 else -> ""
-                                            } + (if (item.beforePad != null || item.afterPad != null) "  \u00B7  own extra time" else "")
+                                            } + (if (item.beforePad != null || item.afterPad != null) "  \u00B7  own padding" else "")
                                             Text(
                                                 detail,
                                                 style = MaterialTheme.typography.bodySmall,
@@ -1868,7 +1763,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                         Spacer(Modifier.width(6.dp))
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                             // this clip's scramble: in (blue) or out (grey, crossed out). Counts as an edit, so a re-scan keeps it
-                                            ScrambleButton(on = item.includeScramble, enabled = !analyzing && !isLeftover(item)) {
+                                            ScrambleButton(on = item.includeScramble, enabled = !analyzing) {
                                                 if (index in cuts.indices) {
                                                     cuts[index] = cuts[index].copy(includeScramble = !cuts[index].includeScramble, edited = true)
                                                 }
@@ -1894,7 +1789,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     val videoTag = tagLabel(videoPuzzle, videoCategory)
                                     // a solve tagged the same as the video counts as following it (normalizeClipTag)
                                     val ownTag = !followsVideoTags(item.puzzle, item.category, videoPuzzle, videoCategory)
-                                    if (!isLeftover(item) && (videoTag.isNotEmpty() || ownTag)) {
+                                    if (videoTag.isNotEmpty() || ownTag) {
                                         fun toggleTag() {
                                             if (analyzing || index !in cuts.indices) return
                                             val c = cuts[index]
@@ -1927,10 +1822,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                     // what needs a look, under the line, full width
                                     if (item.timeText.isEmpty()) {
                                         Text(highlightCheck("No time yet. Tap Add time."), style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    if (isLeftover(item)) {
-                                        Text("Left over from before the video. Not a clip.", style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     val warning = checks.warnings[index]
                                     if (warning != null) Text(highlightCheck("check: $warning"), style = MaterialTheme.typography.bodySmall)
@@ -2261,25 +2152,23 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             )
         }
 
-        // ===== (3.2-B) the video's puzzle: from the Setup box, or asked once when a video is imported for the first time =====
-        if ((tagVideoWindow || askPuzzleNew) && footageId != null && !importing) {
-            val asking = !tagVideoWindow
+        // ===== (3.2-B) the video's puzzle, asked once when a video is imported for the first time (4.0: changed later in the Gallery) =====
+        if (askPuzzleNew && footageId != null && !importing) {
             TagDialog(
-                title = if (asking) "Which puzzle is this?" else "Tags for this video",
+                title = "Which puzzle is this?",
                 puzzle = videoPuzzle,
                 // a new video starts on Normal, so picking only the puzzle is enough
-                category = if (asking && videoCategory.isEmpty()) NORMAL_CATEGORY else videoCategory,
+                category = if (videoCategory.isEmpty()) NORMAL_CATEGORY else videoCategory,
                 forClip = false,
-                intro = if (asking) "One puzzle per video works best. Mixed? Untick the odd solves later." else null,
-                dismissLabel = if (asking) "Decide later" else "Cancel",
+                intro = "One puzzle per video works best. Mixed? Untick the odd solves later.",
+                dismissLabel = "Decide later",
                 // (4.0-F) also the cube model and where it was filmed
                 cube = videoCube,
                 place = videoPlace,
                 kinds = TagKind.entries,
                 knownCubes = knownCubes,
-                onDismiss = { tagVideoWindow = false; askPuzzleNew = false },
+                onDismiss = { askPuzzleNew = false },
                 onDone = { choice ->
-                    tagVideoWindow = false
                     askPuzzleNew = false
                     saveVideoTags(choice.puzzle ?: videoPuzzle, choice.category ?: videoCategory)
                     if (choice.cube != null) videoCube = choice.cube
@@ -2437,11 +2326,11 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         }
                         OutlinedButton(onClick = { seekToSec(cuts[editIndex].stopSec) }) { Text("Show it in the video") }
 
-                        // ---- (3.2-D) this clip's own buffers (the Setup box sliders are the video's) ----
+                        // ---- (3.2-D) this clip's own buffers (the video's are set with Clip settings in the Gallery) ----
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(10.dp))
-                        Text("Extra time for this clip", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        PaddingHeading("Padding for this clip", MaterialTheme.typography.titleSmall, bold = true)
                         PadEditor(beforePad.toDouble(), afterPad.toDouble(), pads.first, pads.second) { b, a -> pads = b to a }
                         if (item.note.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))

@@ -12,14 +12,14 @@ Notes on history:
 
 ## [Unreleased]
 
-The saved data is upgraded to database v11 on first start.
+The saved data is upgraded to database v12 on first start.
 
 ### Added
 - **Import several videos at once.** Each new video goes to the Sessions tab and *Find solves* starts on it by itself, one after another. Videos imported before are skipped and counted (with one video, *Imported before* asks as before).
 - **Progress panel** above the tabs: one slim line for the whole batch ("2 of 10 videos done · 34%", also in the notification), each video's own bar on its card; *Cancel all*, and *Scan again* for a cancelled video; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
 - Session cards say **Waiting to scan**, **Finding solves 40%**, **Timer not found** or **Choose the timer**. Waiting scans start again after the app was closed.
 - The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
-- **Filter the Sessions tab:** *Not scanned*, *Timer not found*, *Places to check*.
+- **Filter the Sessions tab:** *Not scanned*, *Timer not found*, *To check* (solves to check and places where a solve may be missing, both).
 - **Select several sessions:** hold a card on the Sessions tab and drag over others (or tap them), then **Find solves**; the bar has *Find solves* filled at the top, *Set tags…* and *Clip settings…* as light blue buttons, then *Delete videos* and *Forget* in red outline; the Clips tab's bar matches (*Export* alone at the top, a full-width *Delete exported files*); a delete that can't happen says why, then **Delete videos** or **Forget**, each with one warning for all of them.
 - **Last copy of a solve:** deleting an exported clip whose original video is gone now warns in red that it is the last copy (also when several are deleted at once).
 - **Cube and place tags.** A video (and a clip, for the cube) can be tagged with the cube model you used (your own list: type a name once, then pick it) and where it was filmed: *Home*, *Competition* or *Other*. Importing one video asks its tags while Find solves runs (*Skip* is fine); with several, tick them on the Sessions tab and tap *Set tags…*.
@@ -28,6 +28,8 @@ The saved data is upgraded to database v11 on first start.
 - *⋮ → Open in editor* on the Sessions tab. A video whose timer wasn't found opens in the editor with the steps to add its solves by hand; its card stops saying *Timer not found* once it has solves.
 - The viewer's *It's fine* looks as in the editor (an amber outlined button, then a green *✓ Checked*).
 - **Clip settings for many clips at once:** tick clips or sessions, then *Clip settings…*: the scramble and the extra time for all of them, the sliders right there (clips with their own setting get them too). With nothing ticked, the light blue **Clip settings** button at the right of *Sort* / *Filter* sets what imported videos start with, and can apply it to every video (it hides while ticking). A note at the top of each window says which of the two it is. Exported files change only when exported again; the window says how many.
+- **Not a solve** in the viewer, next to *It's fine* on a clip flagged *check*: a red outlined button that deletes the solve after a warning (its tags, penalty and note go; an exported file stays, shown as *Solve deleted*). Tapping the viewer's delete button when there is nothing to delete points to the editor for a find that isn't a real solve.
+- An **ⓘ next to Padding** says what the before and after sliders do.
 - **New badge** on clips you haven't opened or exported yet, with *Filter → Only new clips* and *⋮ → Mark all as seen*. Clips saved before the update count as seen.
 
 ### Removed
@@ -35,11 +37,14 @@ The saved data is upgraded to database v11 on first start.
 - The editor's own *Import video*: videos are imported in the Gallery.
 - **The setup by hand** (four dots and a typed number) is gone, with *Read timer here* and the *Backup* part of the Setup box. CubeCut finds the timer by itself; when it can't, add the solves by hand in the editor. Solves found with a setup by hand stay as they are.
 - *Which one is your timer?* offers **Neither of them** instead of *set up by hand*.
+- **The editor's Setup box.** Padding and tags are set in the Gallery (*Clip settings*, *Set tags…*); the editor starts with *Find solves*.
+- **Times already on the timer when the video begins** are no longer kept (they were listed in the editor as *Not a clip*). Saved ones go at the upgrade.
 
 ### Changed
 - **Find solves runs in the background.** You can leave the editor, use the Gallery or open another video while it runs; videos wait their turn. Only the video being scanned is locked (its list, *Forget*, *Delete video* and *Reconnect*). The notification names the video, and one says when all are done.
 - Closing CubeCut from the recent apps no longer stops Find solves.
-- The extra-time sliders are off while their video is scanned.
+- **"Extra time" is now called "Padding"** everywhere.
+- The viewer's *Delete file* is now **Delete exported file**.
 - The Gallery's *Footage* tab is now called **Sessions**.
 - **Smaller app:** the image library OpenCV is no longer needed (the debug APK went from 66 to 40 MB). Find solves reads the same pictures as before.
 

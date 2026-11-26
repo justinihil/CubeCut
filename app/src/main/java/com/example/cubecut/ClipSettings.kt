@@ -113,7 +113,7 @@ private const val PAD_MAX = 8f
 private const val PAD_STEPS = 15
 
 /**
- * (3.2-D) One clip's own extra time ("buffers" in the code). *Same as video* = null (the clip uses the video's sliders, [videoBefore] / [videoAfter]); *Custom*
+ * (3.2-D) One clip's own padding ("buffers" in the code). *Same as video* = null (the clip uses the video's sliders, [videoBefore] / [videoAfter]); *Custom*
  * starts from the video's values. [onChange] gets (before, after) when a choice is made or a slider is let go, not while it moves.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -169,19 +169,60 @@ fun ItsFineButton(onClick: () -> Unit, modifier: androidx.compose.ui.Modifier = 
     )
 }
 
+/**
+ * (4.0) "Not a solve": the red partner of [ItsFineButton] in the viewer (owner, 2026-11-27), for a find that needs a check and turns
+ * out to be no solve at all. It only opens a warning; nothing is deleted before that window's red button.
+ */
+@Composable
+fun NotASolveButton(onClick: () -> Unit, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+    Text(
+        "✕  Not a solve",
+        color = AppColors.danger,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        modifier = modifier
+            .clip(shape)
+            .border(1.dp, AppColors.danger, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    )
+}
+
+/** (4.0) What the padding sliders do, behind the ⓘ next to every *Padding* heading (owner, 2026-11-27: "Padding", not "Extra time"). */
+val PADDING_HELP = listOf(
+    "Seconds added around the solve, so a clip doesn't start or end abruptly.",
+    "Before: used only when the scramble is left out. The clip starts this long before the timer starts.",
+    "After: the clip ends this long after the final time shows."
+)
+
+/** (4.0) The *Padding* heading with its ⓘ, the same in the Clip settings windows, the viewer and the editor's Edit window. */
+@Composable
+fun PaddingHeading(
+    text: String = "Padding",
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.labelLarge,
+    bold: Boolean = false,
+    modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier
+) {
+    androidx.compose.foundation.layout.Row(modifier, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Text(text, style = style, fontWeight = if (bold) FontWeight.Bold else null)
+        InfoButton("Padding", PADDING_HELP)
+    }
+}
+
 /** (4.0) What "It's fine" leaves behind: a green "✓  Checked" (or "✓  Fixed"), in the editor and the viewer. */
 @Composable
 fun CheckedMark(text: String = "\u2713  Checked", modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
     Text(text, color = AppColors.keep, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, modifier = modifier)
 }
 
-/** (4.0) What a *Clip settings* window chose. null = leave it as it is; the extra time is both values or neither. */
+/** (4.0) What a *Clip settings* window chose. null = leave it as it is; the padding is both values or neither. */
 class ClipSettingsChoice(val scramble: Boolean?, val before: Double?, val after: Double?)
 
 /**
- * (4.0) The scramble and the extra time for many clips at once (owner, 2026-11-26): ticked clips or ticked sessions.
- * [scramble] / [before] / [after] are what the clips have now (null = they differ). The sliders are there at once (owner): the extra
- * time changes only if one is moved, so "leave it" needs no extra tap. [effects] are the warning's lines (how many clips, how many had
+ * (4.0) The scramble and the padding for many clips at once (owner, 2026-11-26): ticked clips or ticked sessions.
+ * [scramble] / [before] / [after] are what the clips have now (null = they differ). The sliders are there at once (owner): the
+ * padding changes only if one is moved, so "leave it" needs no extra tap. [effects] are the warning's lines (how many clips, how many had
  * their own setting, how many are exported).
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -219,7 +260,7 @@ fun ClipSettingsDialog(
                     ChoiceChip("With scramble", pickScramble == true) { pickScramble = true }
                     ChoiceChip("Solve only", pickScramble == false) { pickScramble = false }
                 }
-                Text("Extra time", style = MaterialTheme.typography.labelLarge)
+                PaddingHeading()
                 Text(
                     when {
                         padsMoved -> "Every clip gets these."
@@ -285,7 +326,7 @@ fun ClipDefaultsDialog(
                     ChoiceChip("With scramble", s) { s = true }
                     ChoiceChip("Solve only", !s) { s = false }
                 }
-                Text("Extra time", style = MaterialTheme.typography.labelLarge)
+                PaddingHeading()
                 Text("Before the solve: ${"%.1f".format(b)} s", style = MaterialTheme.typography.bodyMedium)
                 Slider(value = b, onValueChange = { b = it }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
                 Text("After the solve: ${"%.1f".format(a)} s", style = MaterialTheme.typography.bodyMedium)
