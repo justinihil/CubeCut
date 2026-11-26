@@ -52,7 +52,7 @@ The owner then merges `dev → main` and tags the release by hand ([release step
 
 | Version | Branch | Theme | DB |
 |---|---|---|---|
-| **4.0** | `dev-v4.0.0` | Find solves runs in the background after import | v9 |
+| **4.0** | `dev-v4.0.0` | Import several videos; Find solves runs in the background; tags and filters | v9, v10 |
 
 The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in two so that the quick wins, which need no database change, ship first. The owner's "v3.2" (Find solves) became 3.3, released 2026-11-26.
 
@@ -60,43 +60,72 @@ The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in t
 
 ## v4.0: Find solves in the background
 
-**Prerequisite:** 3.3 has been measured as reliable on several fonts.
+The plan was agreed with the owner on 2026-11-26: their additions were folded in, with answers A1–E3 of that review. **The owner asked for the whole version to be built in one go and tested at the end.** Each phase is still its own commit, with its docs, CHANGELOG, `assembleDebug` and unit tests. The phone test list comes at the end, grouped by phase (4.0-T). The prerequisite (3.3 measured on several fonts) is met.
 
-The app already opens on the Gallery (Clips). What changes is that **importing no longer opens the editor**.
+What changes for the user: **importing no longer opens the editor and no longer asks "a session or one solve?"**. The user picks one or more videos. Each is scanned in the background, and its result shows on its card.
+
+**Built to change easily** (owner): the tag kinds are one list, giving each kind's choices, whether a clip may differ and whether import asks for it. Every limit is a `private const val` at the top of its file.
 
 ### 4.0-0 Remove the setup by hand ⬜
-Owner, 2026-11-25 ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). First in 4.0: 4.0-A then has no engine to move.
-- **Only when** timers that hide their running time are read (3.3-C), the hints of 3.3 work, and another seven-segment timer than the owner's QiYi was tried if one can be had.
-- Goes: `TimerSetupScreen`, `TimerReader`, `DisplayReaders`, the scan in `SolveAnalyzer` (its constants move to `FinderScan`), *Read timer here*, the *Backup* part of the Setup box, the "by hand" half of the scan report.
-- Stays: the solves found with it; the timer columns, for the place of a found timer.
-- Check whether OpenCV can go too. It is probably most of the app's size, and the new readers don't use it; `FrameSource` hands out its pictures.
+Owner, 2026-11-25 ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). It comes first in 4.0, so 4.0-B has no engine to move. Go given on 2026-11-26 (E2): timers the finder doesn't read yet (Stackmat, GAN, phone timer apps) are added by hand in the editor.
+- Goes: `TimerSetupScreen`, `TimerReader`, `DisplayReaders`, the scan in `SolveAnalyzer` (its constants move to `FinderScan`), *Read timer here*, the *Backup* part of the Setup box, and the "by hand" half of the scan report.
+- Stays: the solves found with it, and the timer columns, which hold the place of a found timer.
+- Check whether OpenCV can go too. It is probably most of the app's size, the new readers don't use it, and `FrameSource` hands out its pictures.
 
-### 4.0-A Background analysis (ADR and refactor) ⬜
+### 4.0-A Rename "Footage" to "Sessions" ⬜
+Owner (C1, C2). Done early, so all new 4.0 text uses the new word.
+- Renamed: the Gallery tab, its ⋮ menu, messages, the user guide, README, glossary and ARCHITECTURE. The README's "Footage: 1080p…" rows are about recording quality, so they say *Video* instead.
+- **The code keeps `Footage`** (the class, the `footage` table, `footageId`). Renaming it would touch 626 uses in 13 files and the database table, with no visible change. The glossary maps the two names.
+- CHANGELOG entries of released versions stay as written.
+
+### 4.0-B Background analysis (ADR and refactor) ⬜
 - Move Find solves out of `EditorScreen` (`runFindSolves`) into an app-wide analysis queue: a Kotlin `object` whose work runs in the foreground service.
-- This needs a new ADR that supersedes [ADR-0011](adr/0011-foreground-service-for-notification-only.md). It also touches [ADR-0003](adr/0003-single-module-plain-compose-state.md).
+- A new ADR supersedes [ADR-0011](adr/0011-foreground-service-for-notification-only.md). It also touches [ADR-0003](adr/0003-single-module-plain-compose-state.md).
 - Invariant 1 becomes a **per-video lock**: only actions on the video being scanned are disabled.
 - Engine ownership (`startUsing` / `stopUsing` / `retireEngine`) moves with the scan.
+- The editor's *Find solves* puts its video in the same queue.
 
-### 4.0-B Import starts the scan ⬜
-- Importing a video starts *Find solves* by itself, in the background. The editor doesn't open, and the app stays navigable (owner, 2026-11-25).
-- **Progress** (owner, 2026-11-25): a discreet section somewhere in the app that the user can expand to see how each imported video is doing. Collapsed, it is a slim bar. Several videos queue.
-- Only the actions that would disturb the scan are disabled.
-- A notification says when the scan is done.
+### 4.0-C Import: several videos, no question, scan by itself ⬜
+The owner's additions "import several videos at once" and "no difference between a session and one solve". Answers A1–A4 and B1–B4.
+- **Several at once** (A2): the same document picker, with several files allowed. There is no limit; the videos queue. Picking one file works as before.
+- **No question** (B): `ImportKindDialog` goes. Every video is scanned, and every found solve is cut and exported the same way, whatever the length of the video (**B3a**, owner 2026-11-26). A one-solve video is a session with one solve: it opens in the editor like any other, and its clip is a copy in `Movies/CubeCut`, so a penalty renames it. To save space, the user can delete the original after export.
+  - Why not "the whole file is the clip" (B3b, weighed and dropped): the saving only holds for untrimmed clips. It needs a length rule, which breaks on big puzzles. A single solve couldn't get a missed second solve. The same video could end up as two different kinds. Every later feature would need two kinds of one-solve video.
+- **No timer found** (B2), whatever the length: the card says *Timer not found*. Tapping it opens the editor, where the user adds the solves by hand.
+- **Imported before** (A1): when several videos are picked, known ones are skipped, and the end says "N were already imported". When one is picked, *Imported before* asks as now.
+- **Progress and results** (A3): a slim bar in the app. Expanded, it shows each video as waiting, scanning (with progress), or done with its result ("12 solves", "1 solve", "Timer not found", "2 places to check"). Results stay until cleared, and a *Timer not found* mark stays on the session card.
+- A notification says when the queue is done. The app stays navigable; only the actions that would disturb a scan are disabled.
+- **Single solves** (B1): the old ones (3.2-F) keep working as they are, and are now listed under Sessions too. The Sessions tab gets a switch at the top: **All · Sessions · Single solves**. *Single solves* means the old ones plus every video with exactly one solve, and the Clips tab's *Single solves* switch means the same. `KnownSingleDialog` stays for when one picked video is an old single solve.
+- **The editor's own *Import video* goes** (A4). Import is only in the Gallery.
+- Competition videos (B4) mostly hold one solve, so they are one-solve sessions. Their timer (often a Stackmat) is untested.
 
-### 4.0-C "New" badge ⬜
-DB v9 (`cuts.seen_ms`). Recommended, to confirm:
+### 4.0-D "New" badge ⬜
+DB v9 (`cuts.seen_ms`). It comes before the test rounds (E3), so each batch's results stand out.
 - The badge goes away when the clip is opened in the viewer or exported, or with *Mark all as seen*.
-- Add a *New* filter chip.
+- A *New* filter chip.
 
-### 4.0-D Review possible missed solves ⬜
-The hints themselves came in 3.3: they are found without the editor and saved with the video, and a hint's card is its own composable. Left for 4.0, where importing no longer opens the editor:
-- When a background scan has hints, they appear as a **popup** (owner, 2026-11-25). Only if the user takes one up does the editor open, at that place. *Nothing here* works from the popup too.
-- To decide: how the popup waits when the user is busy elsewhere in the app, and where hints the user didn't take up can be found again (for example "Might have missed N" on the footage card).
+### 4.0-E Tags and filters ⬜
+DB v10. The owner's additions of penalty, home/competition and cube filters. Answers D1–D7.
+- **One list of tag kinds** in `Tags.kt`: puzzle, type, cube and place. Each entry gives its choices, whether a clip may differ and whether import asks for it. A new tag kind is one entry, plus its column.
+- **Cube** (D1): the cube model ("GAN 12", "RS3M"…), from the user's own list: typed once, then picked. A clip may differ from its video (D6), as with the puzzle.
+- **Place** (D2): *Home*, *Competition* or *Other*. It is set on the video only (D6).
+- **Penalty filter** (D5): Any / With penalty / +2 / DNF / No penalty. It covers only penalties set by hand, because the scan doesn't read them.
+- **Asked on import of one video** (D3): the scan starts at once, and meanwhile a sheet asks for the puzzle, type, cube and place. *Skip* closes it. With several videos, nothing is asked.
+- **Tag many at once** (D4): tick several sessions on the Sessions tab, then *Set tags*.
+- The new filters are on the Clips tab only (D7), with the existing ones.
 
-### 4.0-E The editor as manual mode ⬜
-- What CubeCut can't read is added here by hand (owner, 2026-11-25): no setup by hand any more.
-- The editor stays, for clipping by hand. It is reached from Footage ⋮ *Open in editor*.
-- It is offered when a scan finds nothing, or when the timer isn't visible.
+### 4.0-F Review possible missed solves ⬜
+The hints came in 3.3: they are found without the editor and saved with the video, and a hint's card is its own composable.
+- **No popup on its own** (E1, replacing the popup of 2026-11-25): the card and the result list say "2 places to check", and tapping that opens the popup. The editor opens, at that place, only if the user takes a hint up. *Nothing here* works from the popup too.
+
+### 4.0-G The editor as manual mode ⬜
+- What CubeCut can't read is added here by hand, since the setup by hand is gone (4.0-0).
+- The editor stays for clipping by hand. It is reached from Sessions ⋮ *Open in editor* and from a *Timer not found* card (4.0-C).
+
+### 4.0-T Phone test and test rounds ⬜
+- First, one numbered phone test list for 4.0-0 to 4.0-G, grouped by phase.
+- Then the owner imports batches of videos and puts the ones that didn't work in `D:\CubeCutRef`. Claude finds out why (answer first), and the fixes follow as separate commits. Each round starts a new thread: `Test round: <files and what happened>`.
+- The scan, the reader and `computeClips` change only in these rounds, and are checked against the known-good footage ([algorithms §8](algorithms.md#8-reference-measurements)).
+- The first thing to measure is whether the finder trusts a timer it sees for only one solve.
 
 ### 4.0-Z Release 4.0 ⬜
 
