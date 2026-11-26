@@ -317,6 +317,22 @@ What the QiYi rows show (checked against the keys, 2026-11-25):
 - **Wrong times are dropped or confused strokes:** a leading 1 lost (14.025 as 4.025, 12.393 as 2.393), 3 as 8 (13.704 as 8.704) and 7 as 1 (11.517 as 11.511, 15.837 as 15.831). 7 as 1 is the most common misread on 02.
 - **Cuts are mostly late** (44 of the 50 off by more than 0.02 s; 6 early, all on 02). The key itself is ±1 frame, because the LCD is slow. Video 02 is 30 fps, so one frame (0.033 s) is already more than the report's 0.02 s: its 7 *on the frame* is too strict, and 22 of 28 are within 0.05 s. *Within 0.1 s* is the fairer number for QiYi.
 
+**After 3.3** (PC, the app's own code, no setup; numbers from [§ 3](#3-reading-the-timer), 2026-11-24 to 2026-11-26). Before 3.3 none of the csTimer videos could be set up, and the QiYi was only read by hand (rows above).
+
+| Video | Found | False | Wrong time | On the frame | Worst cut |
+|---|---|---|---|---|---|
+| `ref_cstimer_old_01` / `02` / `03` | 75 / 75 | 0 | 0 | 74 | 0.084 s |
+| `ref_4x4_01` to `03` (over a minute) | 3 / 3 | 0 | 0 | 3 | 0.017 s |
+| `ref_othertimer_01` / `02` (flowtimer.io) | 28 / 28 | 0 | 0 | 28 | 0.017 s |
+| `ref_flowtimer_hidden_01` (running time hidden) | 6 / 6 | 0 | 0 | 6 | 0.000 s |
+| `ref_cstimer_seconds_01` (whole seconds) | 5 / 5 | 0 | 0 | 4 | 0.035 s |
+| `ref_cstimer_digital1_01` / `digital4_01` | 9 / 9 | 0 | 0 | 8 | 0.033 s |
+| `ref_qiyi_old_01` / `02` | 85 / 85 | 0 | 0 | 74 | 0.033 s |
+| `ref_qiyi_old_03` (hidden and hurried stops) | 6 / 9, hints for the other 3 | 0 | 0 | 4 | 0.084 s |
+| **All** | **217 / 220** | **0** | **0** | **201** | 0.084 s |
+
+Phone runs: csTimer 01 25 / 25 (2026-11-24); QiYi 01 and 02 55 / 55 and 30 / 30 (2026-11-25, before close calls); owner's checks of csTimer "solve", "digital 1", "digital 4" and a new flowtimer video (2026-11-26). Most of these videos were used to develop the readers, so these numbers are better than on footage never seen.
+
 **How it works.** An answer key says what a video should give, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
 1. **Timer:** was it found? CubeCut looks by itself (3.3-C), with no setup and nothing from the answer key. If the video also has a setup by hand, that is tried from scratch and graded first, the old way. *NOT FOUND* is a result, and the report still runs.
 2. **Reading:** the display is read 6 times in the 1.1 s after every expected stop (`gradeReading`): right, wrong or unreadable. Reset displays are left out.

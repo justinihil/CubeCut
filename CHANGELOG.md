@@ -12,6 +12,10 @@ Notes on history:
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-26
+
+Find solves without a timer setup. CubeCut finds the timer in the video by itself, reads csTimer, flowtimer.io and QiYi-like displays, and points out where a solve may be missing. The saved data is upgraded to database v8 on first start; solves, tags, penalties, exports and backups from 3.2 carry over.
+
 ### Added
 - **No timer setup any more for csTimer and other solid digits.** *Find solves* finds the timer by itself, learns how its digits look and reads it, also over a minute (`1:04.42`): no corners, no typed number. When two numbers run at the same time it asks which one is the timer. A setup by hand is now only a backup, for when CubeCut finds no timer.
 - **QiYi and similar seven-segment displays are found and read by themselves too**, also when the timer slides on the mat, is hit or is pushed away. Videos set up by hand before are read the new way at the next *Find solves*; solves you changed stay. With csTimer and a QiYi in view, csTimer is used.

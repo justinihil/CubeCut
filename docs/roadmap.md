@@ -241,10 +241,21 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 - Read +2 and DNF marks next to the time, and times of one hour or more.
 - When a mark is read, fill in the 3.2 penalty automatically. The user can still change it.
 
-### 3.3-Z Release prep 3.3 ⬜
+### 3.3-Z Release prep 3.3 🔶
 Write the before and after numbers into [algorithms §8](algorithms.md#8-reference-measurements).
 
 Also phone-test **backup and restore** from 3.2 in the full pass. The owner moved that test here (2026-11-23). Test *Back up now*, *Restore* after a reinstall, *Reconnect videos*, *Reconnect exported clips*, and a restore on a second phone if one is available ([known issue](known-issues.md#not-verified)).
+
+**Decided** (owner, 2026-11-26):
+- As for 3.2: after the phone pass, Claude pushes `dev-v3.3.0` and gives the compare link and PR text; the owner opens the PR. Closing 3.3-Z deletes this whole v3.3 section.
+- 3.3 is the first **GitHub Release**, with the signed APK attached (3.1 and 3.2 were tags only).
+- One phone only: the restore on a second phone stays untested.
+
+Built (2026-11-26):
+- `versionCode 7` / `versionName "3.3.0"`; README version.
+- `[3.3.0] - 2026-11-26` in the CHANGELOG, with a summary line.
+- The after-3.3 numbers in [algorithms § 8](algorithms.md#ground-truth-harness-33-a): 217 of 220 solves found by themselves, none false or wrong.
+- known-issues: lint line numbers, tests, the csTimer-and-QiYi order.
 
 ---
 
