@@ -208,6 +208,11 @@ fun ClipSettingsDialog(
                 androidx.compose.ui.Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                // (4.0) which of the two Clip settings this is (owner, 2026-11-27): the other one is for new imports
+                InfoNote(
+                    title = "Only what you ticked",
+                    text = "New imports stay as they are. To change those, use Clip settings with nothing ticked."
+                )
                 Text("Scramble", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ChoiceChip(if (scramble == null) "Keep as it is (mixed)" else "Keep as it is", pickScramble == null) { pickScramble = null }
@@ -269,7 +274,12 @@ fun ClipDefaultsDialog(
                 androidx.compose.ui.Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("Videos you import from now on start like this.", style = MaterialTheme.typography.bodySmall)
+                // (4.0) which of the two Clip settings this is (owner, 2026-11-27): the other one changes ticked clips
+                InfoNote(
+                    title = "For videos you import from now on",
+                    text = if (videos > 0) "To change clips you have, tick them first, or use Also apply below."
+                    else "To change clips you have, tick them first."
+                )
                 Text("Scramble", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ChoiceChip("With scramble", s) { s = true }
