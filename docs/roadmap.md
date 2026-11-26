@@ -236,7 +236,8 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 
 - The per-video timer columns stay for the backup.
 
-### 3.3-E Penalty marks and long times on the display ⬜
+### 3.3-E Penalty marks and long times on the display (dropped)
+**Dropped by the owner (2026-11-26):** every timer shows penalties differently, so it's too wide a net. Penalties are set by hand in CubeCut. What was planned:
 - Read +2 and DNF marks next to the time, and times of one hour or more.
 - When a mark is read, fill in the 3.2 penalty automatically. The user can still change it.
 

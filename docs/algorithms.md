@@ -348,7 +348,7 @@ A list of times has no places, so it is lined up in order. A missed solve right 
 | **2** | QiYi as you use it: easy and hard, with the manual setup | The result 3.3-C must not fall below; seven-segment digits |
 | 3 | A phone timer app (note its name), Stackmat, GAN; one video with the camera moved mid-session | 3.3-C |
 | 4 | **Edge cases** on any timer: a time already showing at the start, holds over 10 s, many 4s and 7s, a quick reset; glare; moiré / flicker | 3.3-B (dropped) |
-| 5 | The display in different places and sizes in the frame; +2 / DNF marks on the display; a solve over a minute; a mixed-puzzle session | 3.3-C, 3.3-E |
+| 5 | The display in different places and sizes in the frame; +2 / DNF marks on the display; a solve over a minute; a mixed-puzzle session | 3.3-C, 3.3-E (dropped) |
 
 **Timer that can't be set up by hand (csTimer):** nothing to do in the app.
 1. Export the list: csTimer's session manager → `...` on the session → *Export CSV*. The whole session is exported.
