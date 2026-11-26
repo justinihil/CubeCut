@@ -227,7 +227,7 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 - Videos (owner, 2026-11-25): flowtimer with "..." (6 solves), and a friend's TikTok clip of csTimer with whole seconds (5 solves). The old csTimer videos with their running time ignored are the third test.
 
 **csTimer's digit fonts** (owner's videos, 2026-11-26: "digital 1" on the light theme, "digital 4" on the dark one). None of csTimer's five fonts may ship, so they are drawn on the PC only ([numbers](algorithms.md#3-reading-the-timer)).
-- ✅ **"Digital 1"**: Digital Numbers (OFL) added to the bundled fonts (owner's go). Its video: 5 of 5, every cut on the frame.
+- ✅ **"Digital 1"**: Digital Numbers (OFL) added to the bundled fonts (owner's go). Its video: 5 of 5, every cut on the frame. Tested by the owner on the phone (2026-11-26): the light video works, the dark one says *Couldn't find the timer*, as expected.
 - ✅ **A digit in pieces makes a row unreadable**, so "digital 4" gives *Couldn't find the timer* instead of five wrong times.
 - ⬜ **"Digital 2" to "digital 5"** (owner's choice B): read their separate strokes with the seven-segment reader, which then also needs a final-times mode for a timer that hides its running time. To be planned with the owner before building; needs a key for the "digital 4" video.
 
