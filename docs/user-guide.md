@@ -8,7 +8,7 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 2. **The timer** needs nothing: CubeCut finds it by itself, csTimer and other timers with solid digits as well as QiYi-like displays. A timer on the mat may slide or be hit. Keep it in view and readable, also while it runs, for most of the video. **Film with a fixed camera:** a small bump is fine, but if the camera ends up pointing somewhere else, the solves after that can be missed. If two numbers run at the same time, it asks which one is the timer.
 
    **If it finds no timer,** add the solves at the playhead (step 4). There is no setup by hand any more (until 4.0 there was one, as a backup).
-3. **Find solves.** The app reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. You can use other apps meanwhile (a notification shows progress) or press Cancel. Closing CubeCut from the recent apps stops it. While it runs, importing is blocked.
+3. **Find solves.** The app reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. It runs in the background: you can leave the editor, use the Gallery, open another video or use other apps meanwhile (a notification shows progress), or press Cancel. While it runs, this video's list can't be changed. Several videos wait their turn.
 4. **Review** the list. The arrows step through solves. Tapping the timeline selects the solve there; playing the video doesn't change the selection.
    - **Missed solve:** put the playhead on the first frame that shows its final time, tap **Add a missed solve at the playhead**, and type the time. The list jumps to the new solve, which blinks briefly.
    - **? Maybe a missed solve** (dashed card): the timer ran without a final time, was reset, or couldn't be read for long. **Go there** moves the playhead; find the first frame of the final time and add the solve, and the hint goes. **Nothing here** drops it for good (Undo for 8 s). A solve missed without any of these signs gets no hint.
@@ -53,7 +53,7 @@ Picking the same video again says *Already in your Gallery*. The editor's own *I
 - **Typing times:** in the Edit window, use a colon for a minute or more (`1:02.34`). A plain `102.34` there means 102.34 s.
 - **Back up your Gallery:** *⋮ → Backup and restore → Back up now* saves one small file (no videos) where you choose. Keep a copy off the phone. Uninstalling still clears the Gallery; exported files in `Movies/CubeCut` stay.
 - **Restore** (new phone or after a reinstall): copy your videos over, then *Restore from a backup*. Videos already in the Gallery stay as they are. Then tap **Reconnect videos** and pick all the videos at once, and **Reconnect exported clips** and pick the files in `Movies/CubeCut`. Importing a video again also reconnects it.
-- Swiping CubeCut out of recent apps stops Find solves. Some phones' battery savers stop it too: set CubeCut's battery use to *Unrestricted*.
+- Find solves goes on in the background. Some phones' battery savers stop it: set CubeCut's battery use to *Unrestricted*.
 
 ## Troubleshooting
 

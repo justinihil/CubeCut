@@ -1317,6 +1317,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         onDispose { activity?.lifecycle?.removeObserver(observer) }
     }
 
+    // (4.0-B) a scan in the background saved new solves: show them (the first value is the one the Gallery opened with)
+    val scansEnded = AnalysisQueue.finished
+    var scansSeen by remember { mutableStateOf(scansEnded) }
+    LaunchedEffect(scansEnded) {
+        if (scansEnded != scansSeen) {
+            scansSeen = scansEnded
+            ui.refresh++
+        }
+    }
+
     // the two tabs are pages you can swipe between (tapping a tab moves the pager, swiping the pager moves the tab)
     val tabPager = rememberPagerState(initialPage = ui.tab) { 2 }
     LaunchedEffect(ui.tab) { if (tabPager.currentPage != ui.tab) tabPager.animateScrollToPage(ui.tab) }
@@ -2390,7 +2400,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             ui.tab = 0
                             footageMenu = null
                         }) { Text("See its clips") }
-                        if (!canOpenIt) {
+                        // (4.0-B) while its scan waits or runs, nothing may change the video under it
+                        val scanning = AnalysisQueue.isBusy(menuFootage.id)
+                        if (!canOpenIt && !scanning) {
                             TextButton(onClick = {
                                 relinkFor = menuFootage
                                 footageMenu = null
@@ -2411,11 +2423,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(10.dp))
-                        if (menuFootage.trashedMs == 0L && canOpenIt) {
-                            DangerButton("Delete video") { footageMenu = null; confirmTrashFootage = menuFootage }
-                            Spacer(Modifier.height(8.dp))
+                        if (scanning) {
+                            InfoNote("Finding solves in this video. Cancel it to delete or forget the video.")
+                            TextButton(onClick = { AnalysisQueue.cancel(menuFootage.id) }) { Text("Cancel Find solves") }
+                        } else {
+                            if (menuFootage.trashedMs == 0L && canOpenIt) {
+                                DangerButton("Delete video") { footageMenu = null; confirmTrashFootage = menuFootage }
+                                Spacer(Modifier.height(8.dp))
+                            }
+                            DangerButton("Forget this session") { forgetting = menuFootage; footageMenu = null }
                         }
-                        DangerButton("Forget this session") { forgetting = menuFootage; footageMenu = null }
                     }
                 },
                 confirmButton = { Button(onClick = { footageMenu = null }) { Text("Close") } }
@@ -2624,6 +2641,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                     val exportIds = SessionStore.loadExports(context, forgetTarget.id).map { it.id }
                                     SessionStore.delete(context, forgetTarget)
                                     ThumbCache.forgetFootage(context, forgetTarget.id, exportIds)
+                                    withContext(Dispatchers.Main) { AnalysisQueue.forget(forgetTarget.id) }
                                     ""
                                 } catch (e: Exception) {
                                     "Couldn't forget \"${forgetTarget.title}\": ${e.message ?: e.javaClass.simpleName}"

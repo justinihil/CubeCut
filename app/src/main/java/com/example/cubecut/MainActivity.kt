@@ -368,6 +368,10 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
     // ---- saved sessions (version 3) ----
     var footageId by remember { mutableStateOf<Long?>(null) }    // this video's saved record (null = none yet, or still loading it)
+    // (4.0-B) Find solves runs in AnalysisQueue, for the whole app. While this video waits or is scanned there, the list is locked
+    // (invariant 1, now per video), and the cuts shown here are the ones from before the scan: they must not be saved over its result
+    // until they are loaded again (staleCuts). `analyzing` (below, with reportRunning) is that lock.
+    var staleCuts by remember { mutableStateOf(false) }
     var pendingSeek by remember { mutableStateOf(request.seekSec) }    // a solve to jump to once the video has loaded (from a Gallery clip)
     var scrollToSelected by remember { mutableStateOf(false) }          // after opening from a Gallery clip: bring its row into view
 
@@ -407,7 +411,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             undoHint = null
         }
     }
-    var analyzing by remember { mutableStateOf(false) }
+    var reportRunning by remember { mutableStateOf(false) }      // (3.3-A, debug builds) the scan report reads this video
+    val analyzing by remember { derivedStateOf { reportRunning || AnalysisQueue.isBusy(footageId) } }
     var analysisStatus by remember { mutableStateOf("") }
     var editIndex by remember { mutableStateOf(-1) }             // which cut is open in the edit window (-1 = none)
     // deleting an exported solve asks first: the solve and its export (null = not asking); the one waiting for Android's answer
@@ -435,9 +440,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var addCutAt by remember { mutableStateOf<Double?>(null) }    // "Add a missed solve" (+ Cut at playhead): where the new solve stops (its time window is open)
     var cutBlockedBy by remember { mutableStateOf(-1) }          // "Add a missed solve" (+ Cut at playhead) on a spot inside this solve: the warning window
     var cutBlockedAt by remember { mutableStateOf(0.0) }         // ...and where that spot was
-    var analysisDone by remember { mutableStateOf(0) }           // progress of Find solves
+    var analysisDone by remember { mutableStateOf(0) }           // progress of the scan report
     var analysisTotal by remember { mutableStateOf(0) }
-    var cancelScan by remember { mutableStateOf(false) }         // the Cancel button of Find solves
+    var cancelScan by remember { mutableStateOf(false) }         // the scan report's Cancel
     var scanReport by remember { mutableStateOf<ScanResult?>(null) }   // what the last scan learned (for the warnings)
     var scanned by remember { mutableStateOf(false) }            // Find solves has run on this video (now or in an earlier visit)
     var setupExpanded by remember { mutableStateOf(true) }       // the Setup box: open at first, closes after Find solves
@@ -626,8 +631,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     }
 
     // version 3: every change to the cuts or the settings is saved on the phone (after a short pause, so a burst of edits is one write)
-    LaunchedEffect(footageId, cuts.toList(), beforePad, afterPad, scrambleAll) {
+    LaunchedEffect(footageId, cuts.toList(), beforePad, afterPad, scrambleAll, staleCuts) {
         val id = footageId ?: return@LaunchedEffect
+        if (staleCuts || AnalysisQueue.isBusy(id)) return@LaunchedEffect      // (4.0-B) the scan saves; these cuts are reloaded after it
         delay(400)
         val snapshot = cuts.toList()
         val before = beforePad
@@ -740,123 +746,87 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         keepTimelineOn(ms)
     }
 
-    // the real work behind the "Find solves" button (only called after the user pressed Continue). (3.3-C) CubeCut finds the timer itself
-    // (4.0-0: there is no setup by hand any more). [near] = the number the user chose when it asked.
+    // the "Find solves" button (only called after the user pressed Continue). (4.0-B) The scan runs in AnalysisQueue: this saves the
+    // list as it is now, puts the video in the queue, and the effect below takes the result back. [near] = the number the user chose
+    // when two ran.
     fun runFindSolves(near: Area? = null) {
-        val uri = videoUri
-        val dur = durationMs
-        if (uri != null && dur > 0 && !analyzing) {
-            exoPlayer.pause()
-            scope.launch {
-                analyzing = true
-                timerNotFound = false
-                timerQuestion = null
-                setupExpanded = false                   // fold the Setup box away as soon as the scan starts
-                cancelScan = false
-                analysisDone = 0
-                analysisTotal = 100
-                analysisStatus = "Starting..."
-                AnalysisService.start(context)          // keeps the work alive while you use other apps
-                var finishedText: String? = null
+        val id = footageId ?: run { analysisStatus = "This video couldn't be saved, so it can't be scanned."; return }
+        if (videoUri == null || durationMs <= 0 || analyzing) return
+        exoPlayer.pause()
+        timerNotFound = false
+        timerQuestion = null
+        setupExpanded = false                   // fold the Setup box away as soon as the scan starts
+        staleCuts = true                        // from now on the scan's result counts, not this list
+        val snapshot = cuts.toList()
+        val moves = HashMap(pendingMoves)
+        pendingMoves.clear()
+        scope.launch {
+            val f = withContext(Dispatchers.IO) {
                 try {
-                    val started = System.currentTimeMillis()
-                    val auto = withContext(Dispatchers.Default) {
-                        analyzeByItself(
-                            context, uri, dur, near,
-                            onProgress = { finding, percent ->
-                                analysisDone = percent
-                                analysisTotal = 100
-                                analysisStatus = if (finding) "Looking for the timer..." else "Reading the timer along the video: $percent%"
-                                AnalysisService.update(context, percent, 100)
-                            },
-                            isCancelled = { cancelScan || !isActive }
-                        )
-                    }
-                    // two numbers run: ask which one is the timer
-                    if (auto.choices.isNotEmpty()) {
-                        val picture = withContext(Dispatchers.IO) { grabFrame(context, uri, (auto.choices[0].t * 1000).toLong()) }
-                        if (picture != null) {
-                            timerQuestion = TimerQuestion(auto.choices, picture)
-                            throw NeedsUser("Which number is your timer?")
-                        }
-                    }
-                    val report = auto.scan ?: run {
-                        timerNotFound = true
-                        throw NeedsUser("Couldn't find the timer.")
-                    }
-                    // only its place is remembered (for the picture in the Edit window): the next scan finds it again
-                    val numbers = auto.numbers
-                    if (numbers != null) footageId?.let { id ->
-                        withContext(Dispatchers.IO) { try { SessionStore.saveFoundTimer(context, id, numbers) } catch (e: Exception) { } }
-                    }
-                    // a re-scan keeps what you changed: see mergeRescan (RescanMerge.kt)
-                    val saved = cuts.toList()
-                    val found = report.solves.map { r -> normalizeIncluded(CutItem(r.stopSec, r.timeText, r.include, r.note, scrambleAll)) }
-                    val exportedStops: List<Double> = footageId?.let { id ->
-                        withContext(Dispatchers.IO) {
-                            try { SessionStore.loadExports(context, id).map { it.stopSec } } catch (e: Exception) { emptyList() }
-                        }
-                    } ?: emptyList()
-                    val merged = mergeRescan(saved, found, exportedStops)
-                    cuts.clear()
-                    rowBoxes.clear()
-                    selectedCut = -1
-                    cuts.addAll(merged.cuts)
-                    scanReport = report
-                    val firstScan = !scanned            // (3.1) hand-added solves alone don't make this a re-scan
-                    scanned = true
-                    footageId?.let { id ->
-                        withContext(Dispatchers.IO) { try { SessionStore.markScanned(context, id) } catch (e: Exception) { } }
-                    }
-                    // (3.3-C) where a solve may be missing; what was dismissed before stays away
-                    hints = mergeHints(hints, hintsOf(report))
-                    undoHint = null
-                    footageId?.let { id ->
-                        val now = hints
-                        withContext(Dispatchers.IO) { try { SessionStore.saveHints(context, id, now) } catch (e: Exception) { } }
-                    }
-                    val maybeMissed = hintsToShow(hints, merged.cuts).size
-                    val seconds = (System.currentTimeMillis() - started) / 1000
-                    // counted exactly like the list: every real solve, and every cut the "Only solves to check" switch would show
-                    // (the scan's notes AND the timing checks, after the merge)
-                    val nowChecks = checkCuts(merged.cuts, computeClips(merged.cuts, beforePad.toDouble(), afterPad.toDouble(), dur / 1000.0))
-                    val solveCount = merged.cuts.count { !isLeftover(it) }
-                    val toCheck = merged.cuts.indices.count { merged.cuts[it].noteNeedsCheck() || nowChecks.warnings.containsKey(it) }
-                    freezeList(nowChecks.warnings)      // (3.1-D) the cuts were replaced: the filtered list is picked again
-                    analysisStatus = if (saved.isEmpty()) {
-                        "Done in ${seconds}s: $solveCount solves, $toCheck to check" + (if (maybeMissed > 0) ", $maybeMissed maybe missed" else "")
-                    } else {
-                        (if (firstScan) "Done" else "Re-scan done") + " in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "") +
-                                (if (maybeMissed > 0) ". $maybeMissed maybe missed" else "")
-                    }
-                    finishedText = analysisStatus
-                    setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: ScanCancelled) {
-                    analysisStatus = "Cancelled."
-                } catch (e: NeedsUser) {
-                    analysisStatus = e.message ?: ""
-                    finishedText = analysisStatus
+                    SessionStore.saveSession(context, id, snapshot, beforePad, afterPad, scrambleAll, moves)
+                    SessionStore.getFootage(context, id)
                 } catch (e: Exception) {
-                    analysisStatus = "Find solves stopped: ${e.message ?: e.javaClass.simpleName}"
-                } finally {
-                    analyzing = false
-                    AnalysisService.stop(context)
+                    null
                 }
-                finishedText?.let { AnalysisService.notifyDone(context, it) }
             }
+            if (f == null) {
+                staleCuts = false
+                for ((from, to) in moves) pendingMoves[from] = to
+                analysisStatus = "Couldn't save the list first, so Find solves didn't start."
+                return@launch
+            }
+            analysisStatus = ""
+            AnalysisQueue.enqueue(context, f, near)
         }
     }
 
-    // (3.3-A, debug builds) the scan report: tries the setup, the reading and Find solves WITHOUT touching the list or this editor's timer
-    // engine, then compares with [truth] (see ScanReport.kt). It sets `analyzing`, so nothing else reads the video meanwhile.
+    // (4.0-B) a scan of this video ended: load what it saved, and say how it went. Also when the video is opened after its scan
+    // ended elsewhere (then it shows the question or "Couldn't find the timer" here too). Each scan is taken back once (handledRun).
+    val scanJob = AnalysisQueue.jobOf(footageId)
+    var handledRun by remember { mutableStateOf(-1) }
+    LaunchedEffect(footageId, scanJob?.run, scanJob?.state) {
+        val id = footageId ?: return@LaunchedEffect
+        val job = scanJob ?: return@LaunchedEffect
+        if (job.state.isActive) {
+            staleCuts = true
+            return@LaunchedEffect
+        }
+        if (handledRun == job.run) return@LaunchedEffect
+        handledRun = job.run
+        val outcome = job.outcome
+        if (job.state == ScanState.DONE) {
+            val loaded = withContext(Dispatchers.IO) {
+                try { Pair(SessionStore.loadCuts(context, id), SessionStore.loadHints(context, id)) } catch (e: Exception) { null }
+            }
+            if (footageId != id) return@LaunchedEffect          // another video was opened meanwhile
+            if (loaded != null) {
+                pendingMoves.clear()
+                cuts.clear()
+                rowBoxes.clear()
+                selectedCut = -1
+                cuts.addAll(loaded.first)
+                hints = loaded.second
+                undoHint = null
+                freezeList(checkCuts(cuts, computeClips(cuts, beforePad.toDouble(), afterPad.toDouble(), durationMs / 1000.0)).warnings)
+            }
+            scanReport = outcome?.report
+            scanned = true
+            setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job
+        }
+        timerNotFound = job.state == ScanState.NO_TIMER
+        timerQuestion = if (job.state == ScanState.ASKS) outcome?.question else null
+        analysisStatus = outcome?.text ?: ""
+        staleCuts = false
+    }
+
+    // (3.3-A, debug builds) the scan report: finds the timer, reads it and finds solves WITHOUT touching the list, then compares with
+    // [truth] (see ScanReport.kt). It sets `reportRunning`, so nothing else reads the video from here meanwhile.
     fun runScanReport(truth: GroundTruth, videoName: String) {
         val uri = videoUri
         val dur = durationMs
-        if (uri == null || dur <= 0 || analyzing) return
+        if (uri == null || dur <= 0 || analyzing || AnalysisQueue.anyBusy) return
         exoPlayer.pause()
-        analyzing = true
+        reportRunning = true
         scope.launch {
             cancelScan = false
             analysisDone = 0
@@ -879,7 +849,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             } catch (e: Exception) {
                 analysisStatus = "Scan report stopped: ${e.message ?: e.javaClass.simpleName}"
             } finally {
-                analyzing = false
+                reportRunning = false
             }
         }
     }
@@ -1202,14 +1172,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     // back to the Gallery: save the latest edits first (the autosave waits a moment), then close the editor
     // [showSolve]: the Gallery opens that solve's clip in the viewer (the View button); null = the Footage tab, pointing out this video
     fun leaveToGallery(showSolve: Int? = null) {
-        if (analyzing) {
-            status = "Find solves is running. Let it finish or cancel it first."
+        if (reportRunning) {
+            status = "The scan report is running. Let it finish or cancel it first."
             return
         }
         val openSec = if (showSolve != null) cuts.getOrNull(showSolve)?.stopSec else null     // the solve to show in the Gallery
         scope.launch {
             val id = footageId
-            if (id != null) {
+            // (4.0-B) a scan of this video goes on in the background and saves its own result: this list is from before it
+            if (id != null && !staleCuts && !AnalysisQueue.isBusy(id)) {
                 val snapshot = cuts.toList()
                 val before = beforePad
                 val after = afterPad
@@ -1256,7 +1227,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     Text(statusText, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 }
                 Spacer(Modifier.width(4.dp))
-                TextButton(onClick = { leaveToGallery() }, enabled = !analyzing) { Text("Gallery") }
+                TextButton(onClick = { leaveToGallery() }, enabled = !reportRunning) { Text("Gallery") }
                 Button(onClick = {
                     picker.launch(arrayOf("video/*"))
                 }, enabled = !analyzing) { Text("Import video") }
@@ -1584,7 +1555,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                         listOf("Used when the scramble is left out.", "The clip starts this long before the timer started.")
                                     )
                                 }
-                                Slider(value = beforePad, onValueChange = { beforePad = it }, valueRange = 0f..8f, steps = 15)
+                                Slider(value = beforePad, onValueChange = { beforePad = it }, valueRange = 0f..8f, steps = 15, enabled = !analyzing)
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("After the solve: ${"%.1f".format(afterPad)} s", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                                     InfoButton(
@@ -1592,7 +1563,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                         listOf("Every clip ends this long after the final time first shows.")
                                     )
                                 }
-                                Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15)
+                                Slider(value = afterPad, onValueChange = { afterPad = it }, valueRange = 0f..8f, steps = 15, enabled = !analyzing)
 
                                 // (3.2-B) the puzzle of the whole video; odd solves are unticked on their cards below
                                 Spacer(Modifier.height(12.dp))
@@ -1621,6 +1592,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 }
 
                 // ===== Find solves: right under the box it depends on (a re-run doesn't need the box opened) =====
+                // (4.0-B) the progress is the queue's (or the scan report's)
+                val progressPercent = if (reportRunning) (if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0) else scanJob?.percent ?: 0
+                val waitingInQueue = !reportRunning && scanJob?.state == ScanState.WAITING
                 Spacer(Modifier.height(6.dp))
                 Button(
                     onClick = { showFindConfirm = true },
@@ -1628,7 +1602,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        if (analyzing) "Working... ${if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0}%"
+                        if (analyzing) "Working... $progressPercent%"
                         // (3.1) "again" only after a real scan: solves added by hand don't count
                         else if (scanned) "Find solves again" else "Find solves"
                     )
@@ -1641,7 +1615,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 }
 
                 if (analyzing) {
-                    val fraction = if (analysisTotal > 0) analysisDone.toFloat() / analysisTotal else 0f
+                    val fraction = progressPercent / 100f
                     val shown by animateFloatAsState(targetValue = fraction, label = "findSolvesProgress")
                     Spacer(Modifier.height(6.dp))
                     Card(
@@ -1651,7 +1625,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         Column(Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "Finding solves...",
+                                    if (reportRunning) "Scan report..." else if (waitingInQueue) "Waiting for other videos..." else "Finding solves...",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.weight(1f)
@@ -1672,11 +1646,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             Spacer(Modifier.height(6.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "You can use other apps meanwhile. A notification shows progress.",
+                                    if (reportRunning) "Your list doesn't change."
+                                    else (if (scanJob?.finding == true) "Looking for the timer. " else if (waitingInQueue) "" else "Reading the timer. ") +
+                                            "You can leave the editor or use other apps. A notification shows progress.",
                                     style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.weight(1f)
                                 )
-                                TextButton(onClick = { cancelScan = true }) { Text("Cancel") }
+                                TextButton(onClick = {
+                                    if (reportRunning) cancelScan = true else footageId?.let { AnalysisQueue.cancel(it) }
+                                }) { Text("Cancel") }
                             }
                         }
                     }
@@ -2059,7 +2037,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 videoUri = videoUri,
                 durationSec = durationMs / 1000.0,
                 listSolves = { expectedFromCuts(cuts) },
-                canRun = videoUri != null && durationMs > 0 && !analyzing && !importing,
+                canRun = videoUri != null && durationMs > 0 && !analyzing && !importing && !AnalysisQueue.anyBusy,
                 result = scanToolResult,
                 onResultClose = { scanToolResult = null },
                 onRun = { truth, name -> runScanReport(truth, name) }
@@ -2074,7 +2052,12 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             TimerQuestionDialog(
                 question = q,
                 onChoose = { timerQuestion = null; runFindSolves(it.box) },
-                onNeither = { timerQuestion = null; timerNotFound = true; analysisStatus = "" },   // the solves are added by hand then
+                onNeither = {                           // the solves are added by hand then
+                    timerQuestion = null
+                    timerNotFound = true
+                    analysisStatus = ""
+                    footageId?.let { AnalysisQueue.settleWithoutTimer(it) }
+                },
                 onDismiss = { timerQuestion = null; analysisStatus = "Cancelled." }
             )
         }

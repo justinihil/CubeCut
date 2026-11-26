@@ -31,8 +31,8 @@ import androidx.core.content.ContextCompat
 /**
  * A "foreground service": it does no work itself. Its only job is to show a notification while Find solves is running, which tells
  * Android "this app is busy, please don't put it to sleep" - so the work keeps going when you switch to another app.
- * The progress bar is set with update(context, percent, 100).
- * The actual work still happens in MainActivity (runFindSolves).
+ * The progress bar is set with update(context, percent, 100, label).
+ * (4.0-B) The work happens in AnalysisQueue, which starts this service while videos are waiting or being scanned (ADR-0018).
  *
  * Android asks what kind of work it is. Reading a video is "media processing" (the right label, which Google Play checks), but that
  * label only exists from Android 15; on Android 11 to 14 it is "data sync" (the closest one there). Both must be listed for the
@@ -96,11 +96,11 @@ class AnalysisService : Service() {
             )
         }
 
-        private fun buildProgressNotification(context: Context, done: Int, total: Int) =
+        private fun buildProgressNotification(context: Context, done: Int, total: Int, label: String = "Reading the timer") =
             NotificationCompat.Builder(context, PROGRESS_CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle("Finding solves")
-                .setContentText(if (total > 0) "Reading the timer: ${done * 100 / total}%" else "Starting...")
+                .setContentText(if (total > 0) "$label: ${done * 100 / total}%" else "Starting...")
                 .setProgress(total, done, total == 0)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -119,11 +119,11 @@ class AnalysisService : Service() {
         }
 
         /** Call as the work progresses: updates the progress bar in the notification. */
-        fun update(context: Context, done: Int, total: Int) {
+        fun update(context: Context, done: Int, total: Int, label: String = "Reading the timer") {
             if (!running) return
             try {
                 context.getSystemService(NotificationManager::class.java)
-                    ?.notify(NOTIFICATION_ID, buildProgressNotification(context, done, total))
+                    ?.notify(NOTIFICATION_ID, buildProgressNotification(context, done, total, label))
             } catch (e: Exception) {
             }
         }

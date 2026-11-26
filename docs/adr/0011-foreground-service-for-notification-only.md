@@ -1,6 +1,6 @@
 # ADR-0011: Foreground service only for the notification; work stays in the screen
 
-- **Status:** Accepted (documented retroactively)
+- **Status:** Superseded by [ADR-0018](0018-app-wide-analysis-queue.md) (4.0-B): the work moved out of the screen into an app-wide queue; the service still only shows the notification
 - **Date:** 1.0.0; service type changed in the 3.0.0 review fixes
 
 ## Context

@@ -17,6 +17,8 @@ Notes on history:
 - *Which one is your timer?* offers **Neither of them** instead of *set up by hand*.
 
 ### Changed
+- **Find solves runs in the background.** You can leave the editor, use the Gallery or open another video while it runs; videos wait their turn. Only the video being scanned is locked (its list, *Forget*, *Delete video* and *Reconnect*). The notification names the video, and one says when all are done.
+- The extra-time sliders are off while their video is scanned.
 - The Gallery's *Footage* tab is now called **Sessions**.
 - **Smaller app:** the image library OpenCV is no longer needed (the debug APK went from 66 to 40 MB). Find solves reads the same pictures as before.
 

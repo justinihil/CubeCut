@@ -35,10 +35,12 @@ flowchart TB
     SS["SessionStore.kt<br/>SQLite"]
     CE2["ClipExporter object<br/>MediaMuxer → MediaStore"]
     TH["Thumbnails.kt · MediaTools.kt"]
+    AQ["AnalysisQueue.kt<br/>Find solves for the whole app"]
     AS["AnalysisService.kt<br/>foreground notification"]
   end
-  MA --> AU & RM & CE1 & SS & TL & AS & TH
-  GA --> SS & CE1 & CE2 & RM & TH
+  MA --> AQ & RM & CE1 & SS & TL & TH
+  GA --> AQ & SS & CE1 & CE2 & RM & TH
+  AQ --> AU & AS & SS & RM
   AU --> FS & TF & SF & MS
   CE2 --> CE1
 ```
@@ -78,27 +80,31 @@ The Gallery and Editor both open `AboutDialog` from the credit line. The Gallery
 ## Data flow
 
 ### Find solves
-`runFindSolves` calls `analyzeByItself` (`AutoScan.kt`) on one frame source: `findTimer` → `scanFoundTimer`, or for a seven-segment timer `findSegments` → `SegmentTracker.follow` → `scanSegments`, or for a timer found by its final times `scanHeldTimer`. It can end with a question (`TimerQuestionDialog`) or *Couldn't find the timer* (`NeedsUser`); the solves are then added by hand. (Until 4.0-0 a timer set up by hand was the backup: [ADR-0017](docs/adr/0017-finder-first-setup-by-hand-as-backup.md).)
+(4.0-B) Find solves runs in **`AnalysisQueue`**, for the whole app ([ADR-0018](docs/adr/0018-app-wide-analysis-queue.md)). The editor's `runFindSolves` saves the list, then `AnalysisQueue.enqueue`; the queue scans one video after another and saves the result itself; the editor (if open on that video) and the Gallery reload when it ends. A scan calls `analyzeByItself` (`AutoScan.kt`) on one frame source: `findTimer` → `scanFoundTimer`, or for a seven-segment timer `findSegments` → `SegmentTracker.follow` → `scanSegments`, or for a timer found by its final times `scanHeldTimer`. It can end with a question (`TimerQuestionDialog`) or *Couldn't find the timer* (`NeedsUser`); the solves are then added by hand. (Until 4.0-0 a timer set up by hand was the backup: [ADR-0017](docs/adr/0017-finder-first-setup-by-hand-as-backup.md).)
 ```mermaid
 sequenceDiagram
   participant E as EditorScreen.runFindSolves
+  participant Q as AnalysisQueue
   participant A as analyzeByItself (AutoScan)
   participant F as AutoSource (FrameSource)
   participant P as finders and scans (pure)
   participant M as mergeRescan / checkCuts
   participant DB as SessionStore
-  E->>E: analyzing = true, AnalysisService.start
-  E->>A: Dispatchers.Default, isCancelled = cancelScan || !isActive
+  E->>DB: saveSession (the list as it is), staleCuts = true
+  E->>Q: enqueue(footage) (analyzing = isBusy(footageId))
+  Q->>Q: AnalysisService.start, one video at a time
+  Q->>A: Dispatchers.Default, isCancelled = job.cancelAsked
   loop each picture asked for
     P->>F: gray(t)
     F-->>P: GrayPic (Y plane) or fallback retriever frame
   end
   P-->>A: ScanResult(FoundSolve list, readableFraction, trace)
-  A-->>E: AutoScanResult (scan, timer place, or the choices to ask)
-  E->>DB: saveFoundTimer, loadExports (exported stops)
-  E->>M: mergeRescan(saved, found, exportedStops)
-  E->>DB: markScanned, saveHints, then the 400 ms debounced saveSession
-  E->>E: AnalysisService.stop/notifyDone, analyzing = false
+  A-->>Q: AutoScanResult (scan, timer place, or the choices to ask)
+  Q->>DB: saveFoundTimer, loadCuts and loadExports again
+  Q->>M: mergeRescan(saved, found, exportedStops)
+  Q->>DB: saveSession, markScanned, saveHints
+  Q->>Q: job DONE / NO_TIMER / ASKS, finished++, AnalysisService.stop/notifyDone
+  Q-->>E: the job's state changes: loadCuts, loadHints, staleCuts = false
 ```
 
 ### Export (Gallery only)
@@ -114,7 +120,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 
 ## Invariants (break these and something breaks)
 
-1. **Nothing touches the video or `cuts` while `analyzing` is true.** `CodecSource` and the scans' memos are not thread-safe. Any new editor action must be disabled while `analyzing`. In the Gallery the equivalent guard is a running batch export (`batchDone >= 0`).
+1. **Nothing touches a video or its `cuts` while it is being scanned.** Since 4.0-B the lock is **per video**: `AnalysisQueue.isBusy(footageId)`. In the editor `analyzing` is that lock (or the debug scan report): any new editor action that changes the list must be disabled while it is true, and a list shown while its video is scanned is stale (`staleCuts`) and must never be saved. In the Gallery, Forget, Delete video and Reconnect are off for a busy video, and the equivalent guard for exports is a running batch export (`batchDone >= 0`). `CodecSource` and the scans' memos are not thread-safe: each scan opens its own.
 2. *(Gone in 4.0-0: the timer engine and its native memory went with the setup by hand. The number is kept so the others don't move.)*
 3. **`footageId` is set to null first and set last when the editor switches videos.** This stops the debounced autosave from writing one video's cuts into another video's record.
 4. **Any user change to a cut sets `edited = true`** (or `user_edited` in SQL). Otherwise a re-scan overwrites it. The all-clips scramble switch is a video setting, so it does **not** count. See [ADR-0013](docs/adr/0013-rescan-merge-keeps-user-edits.md).
@@ -162,7 +168,8 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Thumbnails and the Edit window's frame picture | `ThumbCache` (`Thumbnails.kt`): `get`, `peek`, `frame`, `timerFrame` (zoomed onto the timer) |
 | Notes, info buttons, message colours | `Notes.kt` (`InfoNote`, `InfoButton`, `kindOfMessage`) |
 | Colours, dark mode | `Theme.kt` (`CubeCutTheme`, `AppColors`, `ThemeMode`) |
-| Background notification during Find solves | `AnalysisService.kt` |
+| Background notification during Find solves | `AnalysisService.kt`, started and stopped by `AnalysisQueue` |
+| Find solves in the background, the queue, the per-video lock | `AnalysisQueue.kt` ([ADR-0018](docs/adr/0018-app-wide-analysis-queue.md)); in the editor `runFindSolves` and the effect on `scanJob`; in the Gallery the reload on `AnalysisQueue.finished` |
 | Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf`; many exported files at once: `startBatchTrash` and `PendingTrash.batch` (one request) |
 | Destructive-action warnings | `DangerButton`, `EffectLine`, `FootageHeader` (`Gallery.kt`) |
 | Permissions, SDK, backup, signing | [docs/android.md](docs/android.md) |

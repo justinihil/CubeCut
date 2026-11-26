@@ -80,12 +80,13 @@ Owner (C1, C2). Done early, so all new 4.0 text uses the new word.
 - CHANGELOG entries of released versions stay as written. ADRs stay as written too (they record what was true then).
 - **Built 2026-11-26**; phone test in 4.0-T.
 
-### 4.0-B Background analysis (ADR and refactor) ⬜
+### 4.0-B Background analysis (ADR and refactor) 🔶
 - Move Find solves out of `EditorScreen` (`runFindSolves`) into an app-wide analysis queue: a Kotlin `object` whose work runs in the foreground service.
 - A new ADR supersedes [ADR-0011](adr/0011-foreground-service-for-notification-only.md). It also touches [ADR-0003](adr/0003-single-module-plain-compose-state.md).
 - Invariant 1 becomes a **per-video lock**: only actions on the video being scanned are disabled.
 - Engine ownership (`startUsing` / `stopUsing` / `retireEngine`) moves with the scan.
 - The editor's *Find solves* puts its video in the same queue.
+- **Built 2026-11-26** ([ADR-0018](adr/0018-app-wide-analysis-queue.md)); phone test in 4.0-T. There was no engine left to move (4.0-0). The extra-time sliders are off while the video is scanned, because the scan saves them.
 
 ### 4.0-C Import: several videos, no question, scan by itself ⬜
 The owner's additions "import several videos at once" and "no difference between a session and one solve". Answers A1–A4 and B1–B4.
