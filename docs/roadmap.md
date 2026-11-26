@@ -137,7 +137,7 @@ The hints came in 3.3: they are found without the editor and saved with the vide
 - **Built 2026-11-26**; phone test in 4.0-T. The editor shows *Couldn't find the timer* at once for a video whose background scan found none (also after a restart), with the way to add solves by hand. The card's *Timer not found* goes once solves were added.
 
 ### 4.0-T Phone test and test rounds ⬜
-- First, one numbered phone test list for 4.0-0 to 4.0-G, grouped by phase.
+- First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:CubeCutRef4.0-phone-test.md` (38 steps).
 - Then the owner imports batches of videos and puts the ones that didn't work in `D:\CubeCutRef`. Claude finds out why (answer first), and the fixes follow as separate commits. Each round starts a new thread: `Test round: <files and what happened>`.
 - The scan, the reader and `computeClips` change only in these rounds, and are checked against the known-good footage ([algorithms §8](algorithms.md#8-reference-measurements)).
 - The first thing to measure is whether the finder trusts a timer it sees for only one solve.
