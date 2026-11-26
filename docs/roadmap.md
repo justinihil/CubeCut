@@ -111,7 +111,8 @@ The owner rule "change the reader only when asked" is lifted for this version. E
 - The too-fast check stays as a safety net.
 - Start: [algorithms §1–4](algorithms.md); `SolveAnalyzer.kt`.
 
-### 3.3-C Find and read the timer by itself 🔶
+### 3.3-C Find and read the timer by itself ✅
+**Closed by the owner (2026-11-26).** csTimer's "digital 2" and "digital 3" stay weak ([known issue](known-issues.md#limitations-by-design)); a video of them would reopen that item.
 **Goal (owner, 2026-11-24):** import raw footage, and CubeCut finds the timer, learns how it looks and reads it. Borders, font, angle and place must not matter. No corners, no typed number. `TimerSetupScreen` stays only as a backup, until 4.0-0.
 
 **Planned method:**
@@ -230,7 +231,7 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 - ✅ **"Digital 1"**: Digital Numbers (OFL) added to the bundled fonts (owner's go). Its video: 5 of 5, every cut on the frame. Tested by the owner on the phone (2026-11-26): the light video works, the dark one says *Couldn't find the timer*, as expected.
 - ✅ **A digit in pieces makes a row unreadable**, so "digital 4" gives *Couldn't find the timer* instead of five wrong times.
 - ✅ **"Digital 4" and "digital 5"** (owner's choice B): read with the seven-segment reader, which now also finds a timer by its final times, last, when nothing else was found. The "digital 4" video: 4 of 4, 3 on the frame, and the time already on screen at the start flagged ([numbers](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-26): the "digital 4" video works, and the "digital 1" and QiYi videos still do.
-- ⬜ **"Digital 2" and "digital 3"** stay weak (drawn: 4 and 2 of 18): their digits break into many pieces. Only with a video of them.
+- Left as a known limit: **"digital 2" and "digital 3"** stay weak (drawn: 4 and 2 of 18): their digits break into many pieces. Only with a video of them.
 
 - The per-video timer columns stay for the backup.
 
