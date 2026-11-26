@@ -11,13 +11,13 @@
 
 ## Decision
 - `minSdk 30`, and the Android 7–10 code paths were removed.
-- Release builds contain only `arm64-v8a`.
+- Release builds contain only `arm64-v8a`. Debug builds too since 2026-11-24 (owner decision), so a debug APK can be sent to the phone.
 - `optimization { enable = false }` for release.
 
 ## Consequences
 - Don't add `SDK_INT` checks below 30.
-- 32-bit phones can't install the app.
+- 32-bit phones and x86 emulators can't install the app.
 - The APK isn't shrunk. Turning R8 on needs a release-build test and probably keep rules in `app/src/main/keepRules/rules.keep`.
 
 ## Alternatives considered
-- Moving `abiFilters` to `defaultConfig`: declined, and the Gradle setup stays as it is.
+- Moving `abiFilters` to `defaultConfig`: declined. Each build type has its own line.

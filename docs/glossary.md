@@ -12,7 +12,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Time** | The solve time as displayed, e.g. `11.263` or `1:02.34` | `timeText`; seconds via `parseTimeSeconds` |
 | **Clip** | The piece of video exported for one solve. Always computed, never stored | `Clip`, `computeClips` |
 | **Solve only / with scramble** | The two clip modes. *Solve only* starts at the time on the timer plus the before buffer, counted back from the cut. *With scramble* starts where the previous cut's clip ended | `includeScramble` (per cut), `scrambleAll` (per video: the editor's all-clips switch, or the Gallery's selection switch with a whole video ticked), `Clip.withScramble` |
-| **Before / after buffer** | Extra seconds before the solve (solve-only clips) and after the cut (all clips). Default 2.5 s. From 3.2 a clip can have its own (*Custom*) instead of following the video | Per video: `Footage.beforePad` / `afterPad`, `footage.before_pad` / `after_pad`. Per clip: `CutItem.beforePad` / `afterPad`, `cuts.before_pad` / `after_pad` (null = follows the video), `PadEditor` (`ClipSettings.kt`) |
+| **Extra time** (before / after; "buffer" in code and older docs) | Extra seconds before the solve (solve-only clips) and after the cut (all clips). Default 2.5 s. From 3.2 a clip can have its own (*Custom*) instead of *Same as video* | Per video: `Footage.beforePad` / `afterPad`, `footage.before_pad` / `after_pad`. Per clip: `CutItem.beforePad` / `afterPad`, `cuts.before_pad` / `after_pad` (null = follows the video), `PadEditor` (`ClipSettings.kt`) |
 | **Puzzle / type tag** | What was solved (3x3, Megaminx…, or *Other* with a typed name) and how (*Type*: Normal, OH, BLD, Relay, PLL attack, or *Other*). Set on a video; a clip follows it unless the clip has its own. *Not this puzzle* (editor) = the clip is not tagged. In the code the type is called *category* | `PUZZLES`, `CATEGORIES`, `NO_TAG`, `resolveTag`, `tagLabel` (`Tags.kt`); `TagDialog` (`TagPicker.kt`); `Footage.puzzle` / `category`, `CutItem.puzzle` / `category` (`''` = follows the video), `GalleryClip.puzzle` / `category` / `tagText`, `updateFootageTags`, `updateCutTags` |
 | **Penalty (+2 / DNF)** | +2 can be added several times; DNF shows the time in brackets. The time on the timer is kept as it was filmed. Shown as `13.263 (+2)`, `15.263 (+2×2)`, `DNF(11.263)`; in file names `13.263s_plus2`, `15.263s_plus2x2`, `DNF_11.263s` | `CutItem.plus2Count`, `CutItem.dnf`, `cuts.plus2_count` / `dnf`, `updateCutPenalty`; `Penalty.kt` (`shownTime`, `titleTime`, `fileTimePart`, `penalisedSeconds`, `renamedExportName`); `PenaltyPicker`, `rememberExportRenamer` (`ClipSettings.kt`) |
 | **Shared on** | The platforms a clip was posted to, separate from the note. Set with the viewer's chips; *Filter* → *Shared on: X* / *Not shared yet* | `CutItem.sharedOn`, `GalleryClip.sharedList`, `cuts.shared_on`, `encodeSharedOn` / `decodeSharedOn`, `toggleShared`, `sharedMatches`, `updateCutSharedOn`, `GalleryUiState.sharedFilter`, `SocialChip` |
@@ -27,6 +27,8 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Not found again** | An untouched cut that the latest Find solves didn't see | `NOT_FOUND_AGAIN_NOTE` (`mergeRescan`) |
 | **Find solves / scan** | Reading the timer along the whole video to find the cuts | `runFindSolves`, `SolveAnalyzer.analyze` / `scan`, `analyzing` flag |
 | **Re-scan** | Find solves on a video that already has cuts. The results are merged | `mergeRescan`, `RescanResult` |
+| **Ground truth / reference video** | (3.3-A) A video whose correct solves are known: a JSON file fixed by hand, or only the times in order (csTimer's export) | `GroundTruth`, `ExpectedSolve`, `parseTimesList`, `src/test/resources/groundtruth/` |
+| **Scan report** | (3.3-A, debug builds) Grades finding the timer, reading and Find solves against the ground truth without changing the list. Runs even when there is no timer | `ScanReportHost`, `runScanReport`, `runScanReportStages`, `gradeReading`, `compareScan`, `compareTimes`, `scanReportText`, `timesReportText` |
 | **Set up timer / timer setup** | Marking the display's corners and typing the number shown, so the reader can learn the layout | `TimerSetupScreen`, `TimerVision.createSetup`, `TimerSetup`, `saveTimerSetup` |
 | **Read timer here** | A one-off read at the playhead, with the debug picture | `engine.readFrame` in `EditorScreen` |
 | **Exported** | A file exists in `Movies/CubeCut`, is not trashed, and opens | Table `exports`, `ExportedClip`, `recordExports` |
@@ -48,7 +50,13 @@ Domain words, what they mean in CubeCut, and their names in the code.
 |---|---|
 | **Hold** | The stretch during which a stopped timer keeps showing its final time |
 | **Look-alike** | Two readings of the same length that differ in one digit by 1↔4 or 1↔7, the reader's known errors (`confusable`) |
-| **Reader** | Turns a straightened black-and-white picture of the display into digits. `DisplayReader`; `SegmentReader` (seven-segment), `GlyphReader` (placeholder) |
+| **Reader** | Turns a straightened black-and-white picture of the display into digits. `DisplayReader`; `SegmentReader` (seven-segment). Solid digits are read without one: `SolidDigits.kt` |
+| **Held timer** | A timer found by its final times, because it shows no running time with decimals. `FoundTimer.held` |
+| **Finder** | Finds the timer by itself: a number that rises with the clock, then freezes. `TimerFinder.kt` |
+| **Grid** | Where the digits of a seven-segment number stand: slope, lean, distances. `SegmentGrid` |
+| **Hint** | A stretch of the video where a solve may be missing, and why. Never a clip. `MissedHint` |
+| **Set up by hand** | The backup: a timer marked with four dots and a typed number, used only when the finder finds none (until 4.0). `TimerReader.kt` |
+| **Confirmed by the clock** | Start to stop, from the running readings, equals the time on the display. `FinderScan.checkClock`, `CLOCK_NOTE` |
 | **Verified / unverified setup** | Verified means the learned layout reproduces the typed number exactly. Unverified means the closest layout was saved with a warning |
 | **Fixed-camera mode** | Setup for plain screens: the saved corners are used without shape tracking (`TimerSetup.fixedPosition`) |
 | **Quick read** | Reading at the display's previous position without running the shape finder (`lastQuad`) |

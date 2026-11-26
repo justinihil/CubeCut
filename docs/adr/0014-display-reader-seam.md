@@ -1,6 +1,6 @@
 # ADR-0014: Digit reading behind a DisplayReader seam; seven-segment only for now
 
-- **Status:** Accepted (documented retroactively)
+- **Status:** Accepted (documented retroactively). Solid digits no longer go through it: [ADR-0016](0016-find-the-timer-without-ml.md)
 - **Date:** 1.1.0
 
 ## Context
@@ -15,7 +15,7 @@ csTimer screens and other 7-segment displays needed support, and "any font" was 
 ## Consequences
 - A new font is added in one file, without touching the scan or the UI.
 - Readers must return `null` when unsure, because the vote depends on it.
-- The current setup flow still needs the user to mark the display and type the number shown. Removing that ([roadmap](../roadmap.md) phases 3.3-C and 3.3-D) is a bigger change than adding a reader.
+- The current setup flow still needs the user to mark the display and type the number shown. Removing that ([roadmap](../roadmap.md) phase 3.3-C) is a bigger change than adding a reader.
 
 ## Alternatives considered
 - Approach 2 (any font, probably a small TFLite classifier) was deferred. See [ADR-0001](0001-offline-classic-cv-no-ml.md) for the open question about whether that counts as ML.

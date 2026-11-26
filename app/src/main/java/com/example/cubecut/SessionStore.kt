@@ -94,7 +94,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 7
+    private const val DB_VERSION = 8
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -148,6 +148,7 @@ object SessionStore {
             )
             db.execSQL("CREATE INDEX cuts_by_footage ON cuts(footage_id)")
             createExportsTable(db)
+            createHintsTable(db)
         }
 
         private fun createExportsTable(db: SQLiteDatabase) {
@@ -164,6 +165,20 @@ object SessionStore {
                         "trashed_ms INTEGER NOT NULL DEFAULT 0)"
             )
             db.execSQL("CREATE INDEX exports_by_footage ON exports(footage_id)")
+        }
+
+        private fun createHintsTable(db: SQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE hints (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                        "footage_id INTEGER NOT NULL REFERENCES footage(id) ON DELETE CASCADE, " +
+                        "from_sec REAL NOT NULL, " +
+                        "to_sec REAL NOT NULL, " +
+                        "seek_sec REAL NOT NULL, " +
+                        "reason TEXT NOT NULL, " +
+                        "dismissed INTEGER NOT NULL DEFAULT 0)"
+            )
+            db.execSQL("CREATE INDEX hints_by_footage ON hints(footage_id)")
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -223,6 +238,10 @@ object SessionStore {
                         db.update("cuts", v, "id = ?", arrayOf(c.getLong(0).toString()))
                     }
                 }
+            }
+            if (oldVersion < 8) {
+                // version 8 (CubeCut 3.3): where a solve may be missing, found by Find solves (MissedSolves.kt)
+                createHintsTable(db)
             }
         }
     }
@@ -802,7 +821,7 @@ object SessionStore {
      * again, gives it one. Its exports come back without a link too (Reconnect exported clips). All or nothing. Returns false when
      * the video was already here.
      */
-    fun restoreVideo(context: Context, f: Footage, cuts: List<CutItem>, exports: List<ExportedClip>): Boolean {
+    fun restoreVideo(context: Context, f: Footage, cuts: List<CutItem>, exports: List<ExportedClip>, hints: List<MissedHint> = emptyList()): Boolean {
         val d = db(context)
         d.beginTransaction()
         try {
@@ -829,6 +848,7 @@ object SessionStore {
             putPad(v, "trim_end_sec", f.trimEndSec)
             val id = d.insertOrThrow("footage", null, v)
             saveSession(context, id, cuts, f.beforePad, f.afterPad, f.scrambleAll)
+            saveHints(context, id, hints)
             recordExports(context, id, exports.map {
                 ExportedClip(0L, id, it.stopSec, it.timeText, "", it.fileName, it.offsetSec, it.exportedMs)
             })
@@ -906,9 +926,32 @@ object SessionStore {
         db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
     }
 
-    /** The remembered timer corners (8 numbers), or null if none were saved. */
-    fun timerCornersOf(f: Footage): DoubleArray? {
-        if (f.timerFrameMs < 0 || f.timerTyped.isEmpty()) return null
+    /**
+     * (3.3-C) Remembers where CubeCut found the timer by itself: the box around its numbers, in frame pixels. In the same columns as a
+     * setup by hand, with no typed number and no picture time, which is how the two are told apart. A setup by hand wins: it is never overwritten
+     * (it may be there without being usable right now).
+     */
+    fun saveFoundTimer(context: Context, footageId: Long, box: Area) {
+        val c = doubleArrayOf(
+            box.left.toDouble(), box.top.toDouble(), box.right.toDouble(), box.top.toDouble(),
+            box.right.toDouble(), box.bottom.toDouble(), box.left.toDouble(), box.bottom.toDouble()
+        )
+        val v = ContentValues()
+        v.put("timer_frame_ms", -1L)
+        v.put("timer_corners", c.joinToString(","))
+        db(context).update("footage", v, "id = ? AND timer_typed = ''", arrayOf(footageId.toString()))
+    }
+
+    /** (3.3-C) Forgets the timer of this video, set up by hand or found. Its solves stay. */
+    fun clearTimerSetup(context: Context, footageId: Long) = saveTimerSetup(context, footageId, -1L, DoubleArray(0), "")
+
+    /** The corners of a timer set up BY HAND (8 numbers), or null if there is none. */
+    fun timerCornersOf(f: Footage): DoubleArray? = if (f.timerFrameMs < 0 || f.timerTyped.isEmpty()) null else cornersIn(f)
+
+    /** Where the timer is in this video (8 numbers), set up by hand or found, or null. For pictures only, not for reading it. */
+    fun timerPlaceOf(f: Footage): DoubleArray? = cornersIn(f)
+
+    private fun cornersIn(f: Footage): DoubleArray? {
         val parts = f.timerCorners.split(',').mapNotNull { it.trim().toDoubleOrNull() }
         return if (parts.size == 8) parts.toDoubleArray() else null
     }
@@ -1023,6 +1066,48 @@ object SessionStore {
             }
         }
         return TrashData(videos, clips)
+    }
+
+    /** (3.3-C) Where a solve may be missing in this video, also the hints the user dismissed. A reason this version doesn't know is left out. */
+    fun loadHints(context: Context, footageId: Long): List<MissedHint> =
+        db(context).query(
+            "hints", arrayOf("from_sec", "to_sec", "seek_sec", "reason", "dismissed"), "footage_id = ?", arrayOf(footageId.toString()), null, null, "from_sec"
+        ).use { c ->
+            val out = ArrayList<MissedHint>()
+            while (c.moveToNext()) {
+                val reason = HintReason.entries.firstOrNull { it.key == c.getString(3) } ?: continue
+                out.add(MissedHint(c.getDouble(0), c.getDouble(1), c.getDouble(2), reason, c.getInt(4) == 1))
+            }
+            out
+        }
+
+    /** (3.3-C) Replaces the hints of this video. */
+    fun saveHints(context: Context, footageId: Long, hints: List<MissedHint>) {
+        val d = db(context)
+        d.beginTransaction()
+        try {
+            d.delete("hints", "footage_id = ?", arrayOf(footageId.toString()))
+            for (h in hints) {
+                val v = ContentValues()
+                v.put("footage_id", footageId)
+                v.put("from_sec", h.fromSec)
+                v.put("to_sec", h.toSec)
+                v.put("seek_sec", h.seekSec)
+                v.put("reason", h.reason.key)
+                v.put("dismissed", if (h.dismissed) 1 else 0)
+                d.insertOrThrow("hints", null, v)
+            }
+            d.setTransactionSuccessful()
+        } finally {
+            d.endTransaction()
+        }
+    }
+
+    /** (3.3-C) The user says there is nothing at this hint, or takes that back. */
+    fun setHintDismissed(context: Context, footageId: Long, hint: MissedHint, dismissed: Boolean) {
+        val v = ContentValues()
+        v.put("dismissed", if (dismissed) 1 else 0)
+        db(context).update("hints", v, "footage_id = ? AND ABS(seek_sec - ?) < 0.0005", arrayOf(footageId.toString(), hint.seekSec.toString()))
     }
 
     /** Remembers that Find solves has just run on this session. */

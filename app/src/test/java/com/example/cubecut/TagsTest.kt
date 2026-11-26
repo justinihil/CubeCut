@@ -108,4 +108,24 @@ class TagsTest {
         assertEquals("", unticked.tagText)
         assertEquals("3x3 OH", GalleryClip(f, 0, 1, CutItem(10.0, "9.000", true, "", true), null, false).tagText)
     }
+
+    // ------------------------------------------------------------ a clip tagged the same as its video follows it
+
+    @Test
+    fun normalizeClipTag_sameAsVideoIsStoredAsFollow() {
+        assertEquals("", normalizeClipTag("3x3", "3x3"))       // same as the video: no distinction
+        assertEquals("", normalizeClipTag("", "3x3"))
+        assertEquals("4x4", normalizeClipTag("4x4", "3x3"))    // a different puzzle stays its own
+        assertEquals(NO_TAG, normalizeClipTag(NO_TAG, "3x3"))  // "not this puzzle" stays
+        assertEquals("", normalizeClipTag(NO_TAG, ""))         // not tagged in a video that isn't tagged either
+        assertEquals("Skewb", normalizeClipTag("Skewb", ""))
+    }
+
+    @Test
+    fun followsVideoTags_ignoresTheSameTagStoredOnTheClip() {
+        assertTrue(followsVideoTags("3x3", "", "3x3", "OH"))
+        assertTrue(followsVideoTags("3x3", "OH", "3x3", "OH"))
+        assertFalse(followsVideoTags("3x3", "BLD", "3x3", "OH"))
+        assertFalse(followsVideoTags(NO_TAG, NO_TAG, "3x3", ""))
+    }
 }

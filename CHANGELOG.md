@@ -12,6 +12,32 @@ Notes on history:
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-26
+
+Find solves without a timer setup. CubeCut finds the timer in the video by itself, reads csTimer, flowtimer.io and QiYi-like displays, and points out where a solve may be missing. The saved data is upgraded to database v8 on first start; solves, tags, penalties, exports and backups from 3.2 carry over. Backup and restore from 3.2 now also passed a phone test: a backup, a restore after a reinstall, and reconnecting videos and exported clips.
+
+### Added
+- **No timer setup any more for csTimer and other solid digits.** *Find solves* finds the timer by itself, learns how its digits look and reads it, also over a minute (`1:04.42`): no corners, no typed number. When two numbers run at the same time it asks which one is the timer. A setup by hand is now only a backup, for when CubeCut finds no timer.
+- **QiYi and similar seven-segment displays are found and read by themselves too**, also when the timer slides on the mat, is hit or is pushed away. Videos set up by hand before are read the new way at the next *Find solves*; solves you changed stay. With csTimer and a QiYi in view, csTimer is used.
+- **Timers that hide their running time ("solve", "...") or show whole seconds** are found too, by their final times. Times on the screen for less than a second can be enough. A time that nothing confirms is kept and marked *check*.
+- **csTimer's "digital 1", "digital 4" and "digital 5" fonts** are read too, also with the running time hidden. "Digital 2" and "digital 3" mostly aren't: *Find solves* says it couldn't find the timer, rather than giving wrong times.
+- **Hints where a solve may be missing**, between the solves in the editor: the timer ran without a final time, was reset, or couldn't be read for long. *Go there* moves the playhead, *Nothing here* drops the hint for good. They are saved with the video and are in the backup file.
+- **Solves the running timer doesn't confirm** are kept and marked *check*, for example a test tap, or a time misread by a digit. So are solves whose stop was hidden: their cut is worked out from the running time.
+- **1-frame buttons** in the editor's *Edit* window (◂ 1 frame / 1 frame ▸), so a cut can sit exactly on the first frame of the final time. One step is one frame of that video (30 or 60 fps).
+- **Puzzle logos:** a small flat drawing for each puzzle (a grid for 2x2 to 7x7, a pentagon for Megaminx, and so on; a plain cube for *Other*). They show in the viewer's details, on the puzzle buttons of the *Which puzzle is this?* window, in a corner of tagged clip and video pictures in the Gallery, and on the *Puzzle:* line while ticking clips.
+
+### Fixed
+- **Back** on the timer setup screen cancels the setup instead of leaving the editor.
+
+### Changed
+- The Setup box says *CubeCut finds the timer by itself*. The setup by hand (four dots and a typed number) is in a small *Backup* part under it, and is only used when no timer is found; *Remove the backup* drops it. The *Edit* window zooms onto a found timer too.
+- The *Find solves* window says more clearly that you can use other apps meanwhile, but closing CubeCut from the recent apps stops it.
+- The estimated time before *Find solves* is lower.
+- The About window names the open fonts behind the new digit reader.
+- The viewer's details (swipe up) are sorted into groups: the time and anything that needs a look first, then *Export* / *Editor* / *Delete file* with the export status under them, then **Solve** (puzzle, penalty), **Clip** (scramble, extra time), **Note and sharing**, and the video it comes from. *Reconnect video* moved from the bottom to the top. The clip's start and end times in the video are no longer listed.
+- A clip tagged the same puzzle as its video is no longer shown differently: the tag window has no separate *As the video* button (the video's puzzle is simply chosen), the viewer drops *From the video*, and the editor's solve card stays ticked instead of saying *own tag*.
+- **Buffers are now called "Extra time"** everywhere, with one line saying what it is: seconds kept before the solve starts and after the timer stops. *Follow video* is now *Same as video*. Nothing about how clips are cut changed.
+
 ## [3.2.0] - 2026-11-23
 
 Organise your clips. How solves are found, how digits are read and the default clip times did **not** change. The saved data is upgraded to database v7 on first start; solves, notes and exports from 3.1 carry over, and *Shared on* starts from the platform names already in each note.

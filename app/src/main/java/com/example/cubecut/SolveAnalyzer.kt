@@ -32,7 +32,8 @@ class FoundSolve(
 /** Everything the scan learned. */
 class ScanResult(
     val solves: List<FoundSolve>,
-    val readableFraction: Double            // 0..1: how many of the sampled frames had a readable timer
+    val readableFraction: Double,           // 0..1: how many of the sampled frames had a readable timer
+    val trace: ScanTrace = ScanTrace()      // (3.3-C) what was seen along the way, to tell where a solve may be missing
 )
 
 /** Thrown inside the scan when the user pressed Cancel. */

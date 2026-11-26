@@ -14,12 +14,13 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 | Persisted URI read grants for imported videos | Android (`takePersistableUriPermission` in `SessionStore.keepAccess`) | Restarts, not reinstall. Capped at 512 grants; *Forget* releases one |
 | Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` | — |
 
-## Schema (DB version 7)
+## Schema (DB version 8)
 
 ```mermaid
 erDiagram
   footage ||--o{ cuts : "footage_id (ON DELETE CASCADE)"
   footage ||--o{ exports : "footage_id (ON DELETE CASCADE)"
+  footage ||--o{ hints : "footage_id (ON DELETE CASCADE)"
   footage {
     int id PK
     text uri "persisted SAF content:// link"
@@ -33,9 +34,9 @@ erDiagram
     real before_pad "default 2.5"
     real after_pad "default 2.5"
     int scramble_all "default 1"
-    int timer_frame_ms "v3; -1 = never set up"
+    int timer_frame_ms "v3; -1 = not set up by hand"
     text timer_corners "v3; 8 doubles, comma separated"
-    text timer_typed "v3"
+    text timer_typed "v3; '' = not set up by hand"
     int trashed_ms "v4; 0 = not in trash"
     text puzzle "v7; '' = not tagged"
     text category "v7; '' = not tagged"
@@ -73,6 +74,15 @@ erDiagram
     int exported_ms
     int trashed_ms "v4; 0 = not in trash"
   }
+  hints {
+    int id PK "v8"
+    int footage_id FK
+    real from_sec "where a solve may be missing"
+    real to_sec
+    real seek_sec "where Go there puts the playhead"
+    text reason "HintReason.key: ran, reset, unreadable"
+    int dismissed "1 = the user said Nothing here"
+  }
 ```
 
 Migrations (`onUpgrade`) only add, one `if (oldVersion < N)` block per version:
@@ -85,6 +95,7 @@ Migrations (`onUpgrade`) only add, one `if (oldVersion < N)` block per version:
 | v5 | `user_edited`, plus a one-off guess at which old cuts were edited |
 | v6 | `reviewed` |
 | v7 | `footage`: `puzzle`, `category`, `kind`, `trim_start_sec`, `trim_end_sec`. `cuts`: `puzzle`, `category`, `plus2_count`, `dnf`, `before_pad`, `after_pad`, `shared_on`, plus a one-off fill of `shared_on` from the platform names in `user_note` (the note is left as it is) |
+| v8 | `hints` table |
 
 ### v7 fields (3.2)
 
@@ -93,7 +104,7 @@ Added in 3.2-A with no UI; the later 3.2 phases build the screens. Every default
 | Field | Meaning | Set by |
 |---|---|---|
 | `footage.puzzle`, `footage.category` | The video's tags. `''` = not tagged | `updateFootageTags` (a video setting, so no `user_edited`) |
-| `cuts.puzzle`, `cuts.category` | The clip's own tags. `''` = follows the video; `'-'` (`NO_TAG`) = not tagged even if the video is (the editor's *not this puzzle* untick, 3.2-B). A typed *Other* name is stored as typed (`cleanTag`). `resolveTag` / `GalleryClip.puzzle` / `.category` resolve this | `updateCutTags`; the editor's untick goes through `saveSession` with `edited` set |
+| `cuts.puzzle`, `cuts.category` | The clip's own tags. `''` = follows the video; `'-'` (`NO_TAG`) = not tagged even if the video is (the editor's *not this puzzle* untick, 3.2-B). A typed *Other* name is stored as typed (`cleanTag`). A clip tag that comes out the same as its video's is written as `''` (`normalizeClipTag`, from 3.3), so it follows the video; rows written before that may still hold the video's name and show the same. `resolveTag` / `GalleryClip.puzzle` / `.category` resolve this | `updateCutTags`; the editor's untick goes through `saveSession` with `edited` set |
 | `cuts.plus2_count`, `cuts.dnf` | The penalty (3.2-C). `time_text` keeps what the timer showed, so the solve-only start and the export link don't move. Only what is shown (`shownTime`, `clipTitle`), the sort and *best* (`GalleryClip.seconds` = `penalisedSeconds`: +2 s each, DNF = none) and the file name (`fileTimePart`) use the penalty. DNF and +2 exclude each other in the UI | `updateCutPenalty` (viewer sheet); the Edit window through `saveSession` with `edited` set |
 | `cuts.before_pad`, `cuts.after_pad` | The clip's own buffers in seconds (3.2-D: *Follow video* / *Custom*). NULL = follows the video's slider. `computeClips` uses them for that clip only; its `after_pad` also moves where the next scramble starts | `updateCutPads` (viewer sheet); the Edit window through `saveSession` with `edited` set |
 | `cuts.shared_on` | Where the clip was shared: names from `SOCIAL_PLATFORMS`, comma separated (`encodeSharedOn` / `decodeSharedOn`) | `updateCutSharedOn` (the viewer's *Shared on* chips, 3.2-E). The note is separate text; the one-off v7 fill was the only time it was read from the note |
@@ -112,6 +123,14 @@ There is no `onDowngrade`, so installing an older APK over a newer database cras
 3. same `size_bytes` + `duration_ms` (skipped if the size is unknown), so a renamed file is still recognised.
 
 On a match it refreshes the stored uri, name and size, and returns `isNew = false`. `findKnown` applies the same rules without changing anything. Both *Import video* buttons call it first, and a known video shows *Imported before* (*Open saved* / *Cancel*) before `openOrCreate` runs, so Cancel leaves no trace. Opening a session from the Gallery doesn't ask. `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
+
+## The timer columns
+
+`timer_corners` with a typed number is a setup **by hand**, the backup ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)): it is set up again when the video is opened (`timerCornersOf`). `timer_corners` with an empty `timer_typed` and `timer_frame_ms` −1 is where CubeCut **found** the timer by itself (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` never overwrites a setup by hand. What the finder learned isn't stored; every scan learns it again.
+
+## Hints (v8)
+
+Where a solve may be missing (`MissedSolves.kt`, 3.3-C). `saveHints` replaces a video's hints after every *Find solves*; `mergeHints` keeps the dismissed ones and leaves out a new hint that overlaps one. Nothing links to a cut: a hint isn't shown while a cut lies in it (`hintsToShow`), so adding or deleting a solve never changes the table. `setHintDismissed` finds its row by `seek_sec`.
 
 ## How exports link to cuts
 
@@ -142,7 +161,7 @@ Clips are worked out with `clipsFor(footage, cuts)`: `computeClips` for a sessio
 
 ## Backup file (3.2-G)
 
-`Backup.kt` ([ADR-0015](adr/0015-user-saved-backup-file.md)). One JSON object: `app` = `"CubeCut"`, `format` = `BACKUP_FORMAT` (1), `made_ms`, and `videos`: one object per `footage` row with every column **except** `id`, `uri` and `trashed_ms`, plus its `cuts` (every column except `id` / `footage_id`; `shared_on` as stored) and its live `exports` (`stop_sec`, `time_text`, `file_name`, `offset_sec`, `exported_ms`; no uri). A trim or per-clip pad that is NULL is JSON `null`.
+`Backup.kt` ([ADR-0015](adr/0015-user-saved-backup-file.md)). One JSON object: `app` = `"CubeCut"`, `format` = `BACKUP_FORMAT` (1), `made_ms`, and `videos`: one object per `footage` row with every column **except** `id`, `uri` and `trashed_ms`, plus its `cuts` (every column except `id` / `footage_id`; `shared_on` as stored) and its live `exports` (`stop_sec`, `time_text`, `file_name`, `offset_sec`, `exported_ms`; no uri) and, since 3.3, its `hints` (missing in older files: none). A trim or per-clip pad that is NULL is JSON `null`.
 
 - **Restore** (`Backup.restore` → `SessionStore.restoreVideo`, one transaction per video): a video that `matchVideo` finds among the saved ones is skipped (the phone wins). Others are inserted with `uri = ''` and `trashed_ms = 0`, their cuts through `saveSession` (so `user_edited` etc. come back as saved) and their exports through `recordExports` with `uri = ''`. `canOpen('')` is false, so they show as missing until reconnected.
 - **`matchVideo`**: same name + size, else same size (> 0), with the length within `SAME_LENGTH_MS` (1 s) either way. Used by restore and by **Reconnect videos** (`reconnectVideos`, only videos that can't be opened and aren't trashed).

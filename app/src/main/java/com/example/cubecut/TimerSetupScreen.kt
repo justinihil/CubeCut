@@ -17,6 +17,7 @@
 package com.example.cubecut
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -98,6 +99,9 @@ fun TimerSetupScreen(
     onCancel: () -> Unit,
     onSave: (DoubleArray, String) -> Unit
 ) {
+    // Back closes this screen, like Cancel. Without it, Back would reach the editor's and leave the video
+    BackHandler { if (!busy) onCancel() }
+
     var center by remember { mutableStateOf<Offset?>(null) }   // the spot you tapped, in frame pixels
     var typed by remember { mutableStateOf("") }
     val c = center
