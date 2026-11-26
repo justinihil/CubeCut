@@ -38,9 +38,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -198,6 +200,9 @@ private const val THUMB_ASPECT = 0.75f
 /** The height in pixels of the still pictures shown in the full-screen viewer while swiping (bigger than the grid's). */
 private const val VIEWER_PICTURE_HEIGHT = 900
 
+/** (4.0-E) The warnings for several videos name at most this many, then "and N more". */
+private const val VIDEO_LIST_MAX = 5
+
 /** (4.0-C) The extra time before and after a solve that a newly imported video starts with (the same as the editor's). */
 private const val NEW_VIDEO_PAD = 2.5f
 
@@ -238,9 +243,13 @@ fun isNewClip(c: GalleryClip, ui: GalleryUiState?): Boolean =
  * A video or an exported clip that is about to be moved to the phone's trash (or brought back from it). [batch] holds the exported
  * clips ticked in the Gallery's selection (3.1-E): they all go in one trash request, so Android asks only once.
  */
-class PendingTrash(val footage: Footage?, val export: ExportedClip?, val trashing: Boolean, val batch: List<ExportedClip> = emptyList()) {
+class PendingTrash(
+    val footage: Footage?, val export: ExportedClip?, val trashing: Boolean, val batch: List<ExportedClip> = emptyList(),
+    val videos: List<Footage> = emptyList()     // (4.0-E) the videos ticked on the Sessions tab, in one request too
+) {
     val uriString: String get() = footage?.uri ?: export?.uri ?: ""
-    val name: String get() = footage?.title ?: export?.fileName ?: if (batch.size == 1) batch[0].fileName else "${batch.size} files"
+    val name: String get() = footage?.title ?: export?.fileName ?: if (videos.isNotEmpty()) "${videos.size} videos"
+        else if (batch.size == 1) batch[0].fileName else "${batch.size} files"
 }
 
 /** What the Gallery should point out after loading: a video on the Footage tab, or a clip on the Clips tab. */
@@ -376,6 +385,8 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var openClip by mutableStateOf<Pair<Long, Double>?>(null)     // (session id, stop time) of a clip to open as soon as the data has loaded
     var selecting by mutableStateOf(false)                        // choosing clips to export (long-press a clip, or a video's Export clips...)
     var selected by mutableStateOf<Set<String>>(emptySet())       // the chosen clips (their listKey)
+    var selectingVideos by mutableStateOf(false)                  // (4.0-E) ticking videos on the Sessions tab (long-press a card)
+    var selectedVideos by mutableStateOf<Set<Long>>(emptySet())   // ...and the ticked ones (footage ids)
     // "you were just here": once the data has loaded, the Gallery scrolls to this video or clip and lights it up briefly
     var flashFootage by mutableStateOf<Long?>(null)               // the video the editor was just closed on (Footage tab)
     var flashClip by mutableStateOf<GalleryClip?>(null)           // the clip the viewer was just closed on (Clips tab)
@@ -928,17 +939,20 @@ private fun scanBadgeText(f: Footage): Pair<String, Boolean>? {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FootageCell(
     f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier,
-    highlight: Float = 0f, onMenu: () -> Unit, onClick: () -> Unit
+    highlight: Float = 0f, selecting: Boolean = false, selected: Boolean = false, onLongClick: () -> Unit = { },
+    onMenu: () -> Unit, onClick: () -> Unit
 ) {
     Box(
         modifier
             .fillMaxWidth()
             .aspectRatio(THUMB_ASPECT)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .then(if (selecting && selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Thumb(footageThumbKey(f), if (openable) Uri.parse(f.uri) else null, f.durationMs / 10, Modifier.fillMaxSize())
         if (hidden) Box(Modifier.fillMaxSize().background(Color(0x66000000)))
@@ -952,6 +966,7 @@ private fun FootageCell(
         }
         if (columns <= 4) {
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                if (selecting) SelectMark(selected, 24.dp)
                 if (f.trashedMs > 0) Badge("In trash", RED) else if (!openable) Badge("Video deleted", RED)
                 if ((stats?.check ?: 0) > 0) Badge("${stats?.check} to check", AMBER, Color.Black)
                 val scan = scanBadgeText(f)
@@ -981,18 +996,23 @@ private fun FootageCell(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FootageRow(
-    f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, highlight: Float = 0f, onMenu: () -> Unit, onClick: () -> Unit
+    f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, highlight: Float = 0f,
+    selecting: Boolean = false, selected: Boolean = false, onLongClick: () -> Unit = { }, onMenu: () -> Unit, onClick: () -> Unit
 ) {
     Row(
         Modifier
             .fillMaxWidth()
             .flashRow(highlight, MaterialTheme.colorScheme.primary)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (selecting) {
+            Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) { SelectMark(selected, 24.dp) }
+        }
         Box {
             Thumb(
                 footageThumbKey(f), if (openable) Uri.parse(f.uri) else null, f.durationMs / 10,
@@ -1224,6 +1244,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var relinkFor by remember { mutableStateOf<Footage?>(null) }        // the session whose video is being picked again
     var askExport by remember { mutableStateOf(false) }                 // the "Export N clips?" window
     var askDelete by remember { mutableStateOf(false) }                 // (3.1-E) the "Delete N exported files?" window
+    var askDeleteVideos by remember { mutableStateOf<List<Footage>?>(null) }   // (4.0-E) "Delete N videos?" for the ticked sessions
+    var forgettingMany by remember { mutableStateOf<List<Footage>?>(null) }    // (4.0-E) "Forget N sessions?" for the ticked sessions
     var tagSelection by remember { mutableStateOf(false) }              // (3.2-B) the "Set puzzle" window for the chosen clips
     var tagFootage by remember { mutableStateOf<Footage?>(null) }       // (3.2-B) the video whose "Puzzle for this video" window is open
     var batchDone by remember { mutableStateOf(-1) }                    // clips exported so far in a batch export (-1 = not exporting)
@@ -1248,6 +1270,25 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     fun exitSelection() {
         ui.selecting = false
         ui.selected = emptySet()
+    }
+    // (4.0-E) ticking videos on the Sessions tab. A video in the scan queue can't be ticked: nothing may delete or forget it meanwhile.
+    fun exitVideoSelection() {
+        ui.selectingVideos = false
+        ui.selectedVideos = emptySet()
+    }
+    fun toggleVideo(f: Footage) {
+        if (AnalysisQueue.isBusy(f.id)) {
+            message = "\"${f.title}\" is being scanned. Wait, or cancel it in the progress list."
+            return
+        }
+        ui.selectedVideos = if (f.id in ui.selectedVideos) ui.selectedVideos - f.id else ui.selectedVideos + f.id
+        if (ui.selectedVideos.isEmpty()) ui.selectingVideos = false
+    }
+    fun startVideoSelection(f: Footage) {
+        if (ui.selecting) return
+        ui.selectingVideos = true
+        ui.selectedVideos = emptySet()
+        toggleVideo(f)
     }
     fun toggleSelect(clip: GalleryClip, openable: Map<Long, Boolean>) {
         if (!selectable(clip, openable)) {
@@ -1355,6 +1396,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
     BackHandler(enabled = ui.selecting) { exitSelection() }
+    BackHandler(enabled = ui.selectingVideos) { exitVideoSelection() }
+    LaunchedEffect(ui.tab) { if (ui.tab != 1 && ui.selectingVideos) exitVideoSelection() }     // (a swipe to the Clips tab ends it)
 
     /**
      * Tapping a video on the Sessions tab opens it in the editor; a video that can't be opened shows its options instead (Reconnect).
@@ -1603,15 +1646,18 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             if (p.footage != null) SessionStore.setFootageTrashed(context, p.footage.id, stamp)
                             else if (p.export != null) SessionStore.setExportTrashed(context, p.export, stamp)
                             for (e in p.batch) SessionStore.setExportTrashed(context, e.id, stamp)
+                            for (f in p.videos) SessionStore.setFootageTrashed(context, f.id, stamp)
                         } catch (e: Exception) {
                         }
                     }
                     message = when {
+                        p.videos.size > 1 -> "Deleted ${p.videos.size} videos. You can bring them back from Recently deleted."
                         p.batch.size > 1 -> "Deleted ${p.batch.size} files. You can bring them back from Recently deleted."
                         p.trashing -> "Deleted \"${p.name}\". You can bring it back from Recently deleted."
                         else -> "Restored \"${p.name}\"."
                     }
                     if (p.batch.isNotEmpty()) exitSelection()
+                    if (p.videos.isNotEmpty()) exitVideoSelection()
                     ui.refresh++
                 }
             } else {
@@ -1645,6 +1691,28 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         try {
             val request = MediaStore.createTrashRequest(context.contentResolver, found.map { it.second }, true)
             pendingTrash = PendingTrash(null, null, true, found.map { it.first })
+            trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        } catch (e: Exception) {
+            pendingTrash = null
+            message = "Couldn't ask Android: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    /**
+     * (4.0-E) Moves the original videos of the ticked sessions to the trash, in one request (Android asks once). A video picked from a
+     * folder view can't be trashed from here: it is left out and named.
+     */
+    fun startVideoTrash(videos: List<Footage>) {
+        val found = videos.mapNotNull { f -> SessionStore.mediaStoreUriOf(f.uri)?.let { f to it } }
+        val left = videos.filter { f -> found.none { it.first.id == f.id } }
+        if (found.isEmpty()) {
+            message = "Can't delete these videos from here. They were picked from a folder view: delete them in your Files app instead."
+            return
+        }
+        try {
+            val request = MediaStore.createTrashRequest(context.contentResolver, found.map { it.second }, true)
+            pendingTrash = PendingTrash(null, null, true, videos = found.map { it.first })
+            if (left.isNotEmpty()) message = "Left out, picked from a folder view: " + left.joinToString(", ") { it.title } + "."
             trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
         } catch (e: Exception) {
             pendingTrash = null
@@ -1805,6 +1873,30 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         TextButton(onClick = { tagSelection = true }, enabled = batchDone < 0) { Text("Set puzzle\u2026") }
                     }
                 }
+            } else if (ui.selectingVideos && d != null) {
+                // (4.0-E) ticking videos: how many, All / None, and what can be done with all of them
+                val tickedVideos = d.footage.filter { it.id in ui.selectedVideos }
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { exitVideoSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
+                    Column(Modifier.weight(1f)) {
+                        Text("${tickedVideos.size} selected", style = MaterialTheme.typography.titleLarge)
+                        Text("Tap videos to tick them", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    }
+                    TextButton(onClick = {
+                        val all = d.footage.filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
+                        ui.selectedVideos = if (ui.selectedVideos.containsAll(all)) emptySet() else all
+                        if (ui.selectedVideos.isEmpty()) ui.selectingVideos = false
+                    }) { Text(if (ui.selectedVideos.size == d.footage.count { !AnalysisQueue.isBusy(it.id) }) "None" else "All") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+                    OutlinedButton(
+                        onClick = { askDeleteVideos = tickedVideos },
+                        enabled = tickedVideos.any { it.trashedMs == 0L && d.openable[it.id] == true } && batchDone < 0
+                    ) { Text("Delete videos") }
+                    OutlinedButton(onClick = { forgettingMany = tickedVideos }, enabled = tickedVideos.isNotEmpty() && batchDone < 0) {
+                        Text("Forget")
+                    }
+                }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
                     painter = painterResource(R.drawable.cubecut_logo),
@@ -1855,7 +1947,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
 
             // ===== the two tabs =====
             TabRow(selectedTabIndex = ui.tab) {
-                Tab(selected = ui.tab == 0, onClick = { ui.tab = 0 }, text = { Text("Clips") })
+                Tab(selected = ui.tab == 0, onClick = { if (!ui.selectingVideos) ui.tab = 0 }, text = { Text("Clips") })
                 Tab(selected = ui.tab == 1, onClick = { if (!ui.selecting) ui.tab = 1 }, text = { Text("Sessions") })
             }
 
@@ -2133,8 +2225,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                     FootageCell(
                                         f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns, Modifier.animateItem(),
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
+                                        selecting = ui.selectingVideos, selected = f.id in ui.selectedVideos,
+                                        onLongClick = { if (ui.selectingVideos) toggleVideo(f) else startVideoSelection(f) },
                                         onMenu = { footageMenu = f }
-                                    ) { openFootage(f, d.openable[f.id] == true) }
+                                    ) { if (ui.selectingVideos) toggleVideo(f) else openFootage(f, d.openable[f.id] == true) }
                                 }
                             }
                         } else {
@@ -2143,9 +2237,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                     FootageRow(
                                         f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden,
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
+                                        selecting = ui.selectingVideos, selected = f.id in ui.selectedVideos,
+                                        onLongClick = { if (ui.selectingVideos) toggleVideo(f) else startVideoSelection(f) },
                                         onMenu = { footageMenu = f }
                                     ) {
-                                        openFootage(f, d.openable[f.id] == true)
+                                        if (ui.selectingVideos) toggleVideo(f) else openFootage(f, d.openable[f.id] == true)
                                     }
                                 }
                             }
@@ -2279,15 +2375,24 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val withFile = ticked.filter { it.exported != null }
             val files = withFile.mapNotNull { it.exported }
             val leavingN = withFile.count { it.exportOnly || it.solveDeleted }   // nothing but the file is left: the clip disappears
+            val lastCopyN = withFile.count { it.exportOnly }                     // (4.0-E) ...and its original video is gone
             val noFileN = ticked.size - withFile.size
             AlertDialog(
                 onDismissRequest = { askDelete = false },
                 title = { Text(if (files.size == 1) "Delete 1 exported file?" else "Delete ${files.size} exported files?") },
                 text = {
                     Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        if (lastCopyN > 0) {
+                            InfoNote(
+                                kind = NoteKind.PROBLEM,
+                                title = if (lastCopyN == 1) "1 is the last copy of its solve" else "$lastCopyN are the last copy of their solve",
+                                text = "Their original videos are deleted. Restore within about 30 days, then they're gone for good.",
+                                modifier = Modifier.padding(bottom = 10.dp)
+                            )
+                        }
                         EffectLine(Effect.GOES, "${clipsText(files.size, "file")} in Movies/CubeCut ${if (files.size == 1) "goes" else "go"} to the phone's trash")
                         if (leavingN > 0) EffectLine(Effect.GOES, "${clipsText(leavingN, "clip")} ${if (leavingN == 1) "leaves" else "leave"} the Gallery (only the file was left)")
-                        EffectLine(Effect.STAYS, "Solves, cuts and notes stay in CubeCut")
+                        if (leavingN < files.size) EffectLine(Effect.STAYS, "Solves, cuts and notes stay in CubeCut")
                         EffectLine(Effect.UNDO, "Restore from Recently deleted within about 30 days")
                         Spacer(Modifier.height(8.dp))
                         if (noFileN > 0) {
@@ -2767,6 +2872,94 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }) { Text("Save") }
                 },
                 dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (4.0-E) "Delete N videos?": the ticked sessions' original videos, in one trash request (ADR-0008) =====
+        val trashingVideos = askDeleteVideos
+        if (trashingVideos != null && d != null) {
+            val can = trashingVideos.filter { it.trashedMs == 0L && d.openable[it.id] == true }
+            val cannot = trashingVideos.size - can.size
+            val its = can.flatMap { d.clipsOf(it.id) }
+            val exportedN = its.count { it.exported != null }
+            val notExportedN = its.count { it.cut.included && it.exported == null && !it.exportOnly }
+            AlertDialog(
+                onDismissRequest = { askDeleteVideos = null },
+                title = { Text(if (can.size == 1) "Delete 1 original video?" else "Delete ${can.size} original videos?") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        BulletLines(can.take(VIDEO_LIST_MAX).map { it.title } + (if (can.size > VIDEO_LIST_MAX) listOf("and ${can.size - VIDEO_LIST_MAX} more") else emptyList()))
+                        Spacer(Modifier.height(12.dp))
+                        EffectLine(Effect.GOES, "${clipsText(can.size, "video")} ${if (can.size == 1) "goes" else "go"} to the phone's trash")
+                        if (exportedN > 0) EffectLine(Effect.STAYS, "${clipsText(exportedN, "exported clip")} ${if (exportedN == 1) "stays and keeps" else "stay and keep"} playing")
+                        if (notExportedN > 0) EffectLine(Effect.GOES, "${clipsText(notExportedN, "clip")} not exported ${if (notExportedN == 1) "leaves" else "leave"} the Gallery")
+                        EffectLine(Effect.UNDO, "Restore them within about 30 days. After that they're gone for good.")
+                        Spacer(Modifier.height(8.dp))
+                        if (cannot > 0) {
+                            Text(
+                                "${clipsText(cannot, "ticked video")} ${if (cannot == 1) "is" else "are"} already deleted or missing. Nothing happens to ${if (cannot == 1) "it" else "them"}.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text("Android asks you to confirm next.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton(if (can.size == 1) "Delete 1 video" else "Delete ${can.size} videos") {
+                            askDeleteVideos = null
+                            startVideoTrash(can)
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { askDeleteVideos = null }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (4.0-E) "Forget N sessions?": CubeCut's records of the ticked videos; the files are untouched =====
+        val forgetMany = forgettingMany
+        if (forgetMany != null && d != null) {
+            val cutsN = forgetMany.sumOf { it.cutCount }
+            val exportedN = forgetMany.sumOf { f -> d.clipsOf(f.id).count { it.exported != null } }
+            AlertDialog(
+                onDismissRequest = { forgettingMany = null },
+                title = { Text(if (forgetMany.size == 1) "Forget 1 session?" else "Forget ${forgetMany.size} sessions?") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        BulletLines(forgetMany.take(VIDEO_LIST_MAX).map { it.title } + (if (forgetMany.size > VIDEO_LIST_MAX) listOf("and ${forgetMany.size - VIDEO_LIST_MAX} more") else emptyList()))
+                        Spacer(Modifier.height(12.dp))
+                        if (cutsN > 0) EffectLine(Effect.GOES, "${clipsText(cutsN, "saved solve")}, with your fixes and notes")
+                        if (exportedN > 0) EffectLine(Effect.GOES, "${clipsText(exportedN, "exported clip")} ${if (exportedN == 1) "leaves" else "leave"} the Clips list")
+                        EffectLine(Effect.STAYS, "The videos stay on your phone")
+                        if (exportedN > 0) EffectLine(Effect.STAYS, "The exported files stay in Movies/CubeCut")
+                        Spacer(Modifier.height(10.dp))
+                        InfoNote(kind = NoteKind.PROBLEM, title = "Can't be undone", text = "Importing a video again starts from zero.")
+                        Spacer(Modifier.height(12.dp))
+                        DangerButton(if (forgetMany.size == 1) "Forget 1 session" else "Forget ${forgetMany.size} sessions") {
+                            forgettingMany = null
+                            scope.launch {
+                                var failed = 0
+                                withContext(Dispatchers.IO) {
+                                    for (f in forgetMany) {
+                                        try {
+                                            // (the exported files' ids are read first: deleting the session removes their records)
+                                            val exportIds = SessionStore.loadExports(context, f.id).map { it.id }
+                                            SessionStore.delete(context, f)
+                                            ThumbCache.forgetFootage(context, f.id, exportIds)
+                                            withContext(Dispatchers.Main) { AnalysisQueue.forget(f.id) }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            failed++
+                                        }
+                                    }
+                                }
+                                message = "Forgot ${clipsText(forgetMany.size - failed, "session")}." + (if (failed > 0) " $failed couldn't be forgotten." else "")
+                                exitVideoSelection()
+                                ui.refresh++
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { forgettingMany = null }) { Text("Cancel") } }
             )
         }
 
@@ -4261,17 +4454,30 @@ fun ClipViewer(
 
         val trashTarget = exportedFor(current)
         if (confirmTrash && trashTarget != null) {
+            // (4.0-E) the original video is gone: this file is all that is left of the solve, and the clip leaves the Gallery with it
+            val lastCopy = !sourceOk && current.index >= 0
             AlertDialog(
                 onDismissRequest = { confirmTrash = false },
                 title = { Text("Delete this exported file?") },
                 text = {
-                    BulletLines(
-                        listOf(
-                            "${trashTarget.fileName} (in Movies/CubeCut) goes to the phone's trash and leaves your gallery apps. Android asks you to confirm next.",
-                            "Restore it from Recently deleted within about 30 days. After that it's gone for good.",
-                            "The solve, its cut and your note stay in CubeCut."
+                    Column {
+                        if (lastCopy) {
+                            InfoNote(
+                                kind = NoteKind.PROBLEM,
+                                title = "This is the last copy of this solve",
+                                text = if (footage.trashedMs > 0) "Its original video is in the trash. Restore the video to keep the solve."
+                                else "Its original video is deleted.",
+                                modifier = Modifier.padding(bottom = 10.dp)
+                            )
+                        }
+                        BulletLines(
+                            listOf(
+                                "${trashTarget.fileName} (in Movies/CubeCut) goes to the phone's trash and leaves your gallery apps. Android asks you to confirm next.",
+                                "Restore it from Recently deleted within about 30 days. After that it's gone for good.",
+                                if (lastCopy || current.solveDeleted) "The clip leaves the Gallery." else "The solve, its cut and your note stay in CubeCut."
+                            )
                         )
-                    )
+                    }
                 },
                 confirmButton = { Button(onClick = { confirmTrash = false; onTrashExport(trashTarget) }) { Text("Delete") } },
                 dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Cancel") } }

@@ -37,6 +37,9 @@ The **Sessions** tab's switch shows **All**, **Sessions** or **Single solves** (
 
 ## Things to know
 
+- **Several sessions at once:** on the Sessions tab, long-press a card, then tap others to tick them. **Delete videos** moves their original videos to the phone's trash (exported clips stay and keep playing; one confirmation for all), **Forget** removes CubeCut's records of them (the files stay). Each warns first. A video being scanned can't be ticked.
+- **The last copy of a solve:** when a clip's original video is deleted, its exported clip still shows and plays. Deleting that file warns in red that it is the last copy; it goes to the phone's trash for about 30 days.
+
 - **New clips** (blue *New* badge) are clips CubeCut found that you haven't opened or exported yet: handy after importing a batch. Opening a clip in the viewer or exporting it clears its badge; *⋮ → Mark all as seen* clears them all. *Filter → Only new clips* shows just those.
 
 - **Long videos warm the phone** and use battery during Find solves. Plug it in for a long session.

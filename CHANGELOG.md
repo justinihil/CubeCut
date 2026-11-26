@@ -19,6 +19,8 @@ The saved data is upgraded to database v10 on first start.
 - **Progress panel** above the tabs: one slim line while scans run; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
 - Session cards say **Waiting to scan**, **Finding solves 40%**, **Timer not found** or **Choose the timer**. Waiting scans start again after the app was closed.
 - The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
+- **Select several sessions:** long-press a card on the Sessions tab, tick others, then **Delete videos** or **Forget**, each with one warning for all of them.
+- **Last copy of a solve:** deleting an exported clip whose original video is gone now warns in red that it is the last copy (also when several are deleted at once).
 - **New badge** on clips you haven't opened or exported yet, with *Filter → Only new clips* and *⋮ → Mark all as seen*. Clips saved before the update count as seen.
 
 ### Removed

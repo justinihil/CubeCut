@@ -108,11 +108,12 @@ DB v10 (`cuts.seen_ms`). It comes before the test rounds (E3), so each batch's r
 - A *New* filter chip.
 - **Built 2026-11-26**; phone test in 4.0-T. The badge is blue, on the clip's picture (and "New" in list rows); the filter is *Only new clips*; *Mark all as seen* is in the Gallery's ⋮ menu. A cut you changed or added is never new, and the upgrade marks every saved clip as seen.
 
-### 4.0-E Sessions: select several ⬜
+### 4.0-E Sessions: select several 🔶
 The owner's addition of 2026-11-26.
 - **Ticking on the Sessions tab**, as on the Clips tab: a long press starts it, and taps tick cards.
 - **Forget** and **Delete video** for all ticked sessions, behind one warning with totals. *Delete video* trashes only the videos (owner): exported clips stay and keep playing, and clips that were not exported leave the Gallery, as for one video. One Android confirmation covers all of them. Videos that can't be trashed (missing, or picked from a folder view) are skipped and named.
 - **The last copy of a solve** (owner): an exported clip whose original video is gone already stays in the Clips tab and keeps playing (*Export only*), and *Forget* stays as it is. Its *Delete file* warning now says so: a red note "This is the last copy of this solve. Its original video is deleted." If the original is still in the trash, it says "Restore the video to keep the solve." Then: "Restore within about 30 days, then it's gone for good." It no longer says "the solve stays in CubeCut", which isn't true here. It isn't called irreversible: the file goes to the phone's trash ([ADR-0008](adr/0008-never-delete-permanently.md)).
+- **Built 2026-11-26**; phone test in 4.0-T. Also (not asked, flagged to the owner): the Clips tab's *Delete N exported files?* says in red how many are the last copy of their solve, and drops "Solves stay in CubeCut" when none of them does.
 
 ### 4.0-F Tags and filters ⬜
 DB v11. The owner's additions of penalty, home/competition and cube filters. Answers D1–D7.
