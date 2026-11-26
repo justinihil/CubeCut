@@ -52,7 +52,7 @@ The owner then merges `dev → main` and tags the release by hand ([release step
 
 | Version | Branch | Theme | DB |
 |---|---|---|---|
-| **4.0** | `dev-v4.0.0` | Import several videos; Find solves runs in the background; tags and filters | v9, v10 |
+| **4.0** | `dev-v4.0.0` | Import several videos; Find solves runs in the background; select several sessions; tags and filters | v9, v10 |
 
 The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in two so that the quick wins, which need no database change, ship first. The owner's "v3.2" (Find solves) became 3.3, released 2026-11-26.
 
@@ -103,21 +103,27 @@ DB v9 (`cuts.seen_ms`). It comes before the test rounds (E3), so each batch's re
 - The badge goes away when the clip is opened in the viewer or exported, or with *Mark all as seen*.
 - A *New* filter chip.
 
-### 4.0-E Tags and filters ⬜
+### 4.0-E Sessions: select several ⬜
+The owner's addition of 2026-11-26.
+- **Ticking on the Sessions tab**, as on the Clips tab: a long press starts it, and taps tick cards.
+- **Forget** and **Delete video** for all ticked sessions, behind one warning with totals. *Delete video* trashes only the videos (owner): exported clips stay and keep playing, and clips that were not exported leave the Gallery, as for one video. One Android confirmation covers all of them. Videos that can't be trashed (missing, or picked from a folder view) are skipped and named.
+- **The last copy of a solve** (owner): an exported clip whose original video is gone already stays in the Clips tab and keeps playing (*Export only*), and *Forget* stays as it is. Its *Delete file* warning now says so: a red note "This is the last copy of this solve. Its original video is deleted." If the original is still in the trash, it says "Restore the video to keep the solve." Then: "Restore within about 30 days, then it's gone for good." It no longer says "the solve stays in CubeCut", which isn't true here. It isn't called irreversible: the file goes to the phone's trash ([ADR-0008](adr/0008-never-delete-permanently.md)).
+
+### 4.0-F Tags and filters ⬜
 DB v10. The owner's additions of penalty, home/competition and cube filters. Answers D1–D7.
 - **One list of tag kinds** in `Tags.kt`: puzzle, type, cube and place. Each entry gives its choices, whether a clip may differ and whether import asks for it. A new tag kind is one entry, plus its column.
 - **Cube** (D1): the cube model ("GAN 12", "RS3M"…), from the user's own list: typed once, then picked. A clip may differ from its video (D6), as with the puzzle.
 - **Place** (D2): *Home*, *Competition* or *Other*. It is set on the video only (D6).
 - **Penalty filter** (D5): Any / With penalty / +2 / DNF / No penalty. It covers only penalties set by hand, because the scan doesn't read them.
 - **Asked on import of one video** (D3): the scan starts at once, and meanwhile a sheet asks for the puzzle, type, cube and place. *Skip* closes it. With several videos, nothing is asked.
-- **Tag many at once** (D4): tick several sessions on the Sessions tab, then *Set tags*.
+- **Tag many at once** (D4): tick several sessions on the Sessions tab (4.0-E), then *Set tags*.
 - The new filters are on the Clips tab only (D7), with the existing ones.
 
-### 4.0-F Review possible missed solves ⬜
+### 4.0-G Review possible missed solves ⬜
 The hints came in 3.3: they are found without the editor and saved with the video, and a hint's card is its own composable.
 - **No popup on its own** (E1, replacing the popup of 2026-11-25): the card and the result list say "2 places to check", and tapping that opens the popup. The editor opens, at that place, only if the user takes a hint up. *Nothing here* works from the popup too.
 
-### 4.0-G The editor as manual mode ⬜
+### 4.0-H The editor as manual mode ⬜
 - What CubeCut can't read is added here by hand, since the setup by hand is gone (4.0-0).
 - The editor stays for clipping by hand. It is reached from Sessions ⋮ *Open in editor* and from a *Timer not found* card (4.0-C).
 
