@@ -73,11 +73,12 @@ Owner, 2026-11-25 ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md))
 - OpenCV goes too: `FrameSource` hands out `GrayPic`s with the same grey values (OpenCV's formula and rounding), so the readers see the same pictures. Debug APK 66 → 40 MB.
 - **Built 2026-11-26**; phone test in 4.0-T. The *Which one is your timer?* question offers *Neither of them* instead of the setup by hand: the solves are then added by hand. A found timer now replaces the place of an old setup by hand.
 
-### 4.0-A Rename "Footage" to "Sessions" ⬜
+### 4.0-A Rename "Footage" to "Sessions" 🔶
 Owner (C1, C2). Done early, so all new 4.0 text uses the new word.
 - Renamed: the Gallery tab, its ⋮ menu, messages, the user guide, README, glossary and ARCHITECTURE. The README's "Footage: 1080p…" rows are about recording quality, so they say *Video* instead.
 - **The code keeps `Footage`** (the class, the `footage` table, `footageId`). Renaming it would touch 626 uses in 13 files and the database table, with no visible change. The glossary maps the two names.
-- CHANGELOG entries of released versions stay as written.
+- CHANGELOG entries of released versions stay as written. ADRs stay as written too (they record what was true then).
+- **Built 2026-11-26**; phone test in 4.0-T.
 
 ### 4.0-B Background analysis (ADR and refactor) ⬜
 - Move Find solves out of `EditorScreen` (`runFindSolves`) into an app-wide analysis queue: a Kotlin `object` whose work runs in the foreground service.

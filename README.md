@@ -23,7 +23,7 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 | | |
 |---|---|
 | Phone | **Samsung Galaxy S25 Ultra**, and only that phone |
-| Footage | **1080p at 30 fps and 60 fps** |
+| Video | **1080p at 30 fps and 60 fps** |
 | Camera | **Fixed on a tripod**, with the timer's display in view |
 | Timers | **QiYi Bluetooth Timer** (LCD display), csTimer in its default font, "digital 1" or "digital 4" and flowtimer.io, found automatically, on recordings of one desk. Before 4.0, csTimer's "Digital 2" font could also be set up by hand; that setup is gone, and "Digital 2" is mostly not read: add those solves by hand |
 
@@ -42,7 +42,7 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 |---|---|
 | Phone | **Android 11 or newer**, **64-bit (arm64)** |
 | Timer | **Solid digits**, such as csTimer, and **seven-segment displays**, such as QiYi Smart Timer: found automatically. Either may hide its running time, and a solid-digit one may show whole seconds (at least three different times in the video). Stackmat, GAN and LED displays are not tested |
-| Footage | A fixed camera works best, with the display in view and the final time held for about 1.5 s or more |
+| Video | A fixed camera works best, with the display in view and the final time held for about 1.5 s or more |
 
 ## Install
 

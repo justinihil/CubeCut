@@ -58,19 +58,19 @@ There is no nav graph. `AppRoot` (`MainActivity.kt`) holds `editor: EditorReques
 ```mermaid
 stateDiagram-v2
   [*] --> ClipsTab
-  ClipsTab --> FootageTab: swipe / tab
-  FootageTab --> ClipsTab: swipe / tab
+  ClipsTab --> SessionsTab: swipe / tab
+  SessionsTab --> ClipsTab: swipe / tab
   ClipsTab --> Selecting: long-press / drag
   Selecting --> ClipsTab: ✕ / Back
   Selecting --> ExportDialog: Export
-  FootageTab --> SessionOptions: ⋮
+  SessionsTab --> SessionOptions: ⋮
   ClipsTab --> ClipViewer: tap clip (ui.detail)
   Selecting --> ClipViewer: corner arrows
   ClipViewer --> ClipsTab: Back (flashClip)
   ClipViewer --> Editor: Editor button (seekSec)
-  FootageTab --> Editor: tap video (openFootage)
+  SessionsTab --> Editor: tap video (openFootage)
   ClipsTab --> Editor: Import video (OpenDocument)
-  Editor --> FootageTab: Gallery button / Back (flashFootage)
+  Editor --> SessionsTab: Gallery button / Back (flashFootage)
   Editor --> ClipViewer: View on a card (ui.openClip)
 ```
 The Gallery and Editor both open `AboutDialog` from the credit line. The Gallery's ⋮ menu opens Settings, Sort, Filter and Recently deleted. Each dialog is a boolean or nullable "target" flag in the screen that owns it.
@@ -148,11 +148,11 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Measuring a scan change (simulated and real footage) | `FinderScanTest`, `HeldTimerTest`, `SegmentFinderTest`, `MissedSolvesTest`, `ReferenceVideoTest` (`src/test`); ground-truth files in `src/test/resources/groundtruth/`; `GroundTruth.kt`; the debug *Scan report* (`ScanReport.kt`, `EditorScreen.runScanReport`). See [algorithms § 8](docs/algorithms.md#ground-truth-harness-33-a) |
 | Adding a missed solve | `startManualCut` (`MainActivity.kt`); `solveAtPlayhead` / `solveOverlappedBy` (`RescanMerge.kt`) |
 | Importing a video, re-import of a known video | An `OpenDocument` launcher (`picker` in `GalleryScreen`, which also handles relink, or in `EditorScreen`) → `keepAccess` → `findImportedBefore` (`Reimport.kt`; a known video shows `ReimportDialog` first) → the editor's "when a video is chosen" effect on `videoUri` → `SessionStore.openOrCreate` (returns `isNew`). (3.2-F) The Gallery asks `ImportKindDialog` first for a new video; a known single solve shows `KnownSingleDialog`; the editor's picker refuses a single solve |
-| Single solves | `SingleSolve.kt`; `clipsFor` / `singleRange` (`ClipExporter.kt`); `createSingle` / `updateSingle`, the missing-single case in `loadGallery`; in `Gallery.kt`: `exportable` (untrimmed = no export), the Footage tab and Filter list leave them out, the viewer's time bar (`ClipViewer.setTime`) and *Edit* (`singleEdit`), *Delete video* / *Forget this solve* |
+| Single solves | `SingleSolve.kt`; `clipsFor` / `singleRange` (`ClipExporter.kt`); `createSingle` / `updateSingle`, the missing-single case in `loadGallery`; in `Gallery.kt`: `exportable` (untrimmed = no export), the Sessions tab and Filter list leave them out, the viewer's time bar (`ClipViewer.setTime`) and *Edit* (`singleEdit`), *Delete video* / *Forget this solve* |
 | Check filter, stepping through checks, *It's fine* | `stepCut`, `checkCut`, the *Only show solves to check* filter (frozen list: `frozen`, `inList`, `freezeList`) and `needsCheck` in `EditorScreen`; `checkCuts` (`RescanMerge.kt`); `CutItem.noteNeedsCheck()` |
 | Database tables, migrations, video identity | `SessionStore.kt` (`Helper.onCreate` / `onUpgrade`, `openOrCreate`); [data-model](docs/data-model.md) |
 | What the Gallery shows, tags, "Solve deleted" | `SessionStore.loadGallery`, `GalleryClip` |
-| Puzzle and type tags | `Tags.kt` (lists, `resolveTag`, `tagLabel`), `TagDialog` (`TagPicker.kt`), logos `PuzzleIcon` / `PuzzleBadge` (`PuzzleIcons.kt`; a new puzzle in `PUZZLES` needs a case in `puzzleShapes` or it gets the plain cube); editor: Setup box section 3, the card untick and the import question in `EditorScreen`; Gallery: `TagFilterSection`, `setTagsForSelected` (whole video → `updateFootageTags`, like the scramble switch), the Footage menu and the viewer sheet (`ClipViewer.setTags`) |
+| Puzzle and type tags | `Tags.kt` (lists, `resolveTag`, `tagLabel`), `TagDialog` (`TagPicker.kt`), logos `PuzzleIcon` / `PuzzleBadge` (`PuzzleIcons.kt`; a new puzzle in `PUZZLES` needs a case in `puzzleShapes` or it gets the plain cube); editor: Setup box section 3, the card untick and the import question in `EditorScreen`; Gallery: `TagFilterSection`, `setTagsForSelected` (whole video → `updateFootageTags`, like the scramble switch), the Sessions ⋮ menu and the viewer sheet (`ClipViewer.setTags`) |
 | Gallery sort / filter / persisted UI settings | `ClipKey`, `FootageSort`, `ExportFilter`, `sortClips`, `GalleryUiState` (`Gallery.kt`; tag and *Shared on* filters: `puzzleFilter`, `categoryFilter`, `sharedFilter`) |
 | *Shared on* | The viewer sheet's chips (`ClipViewer.toggleSharedOn`, `SocialChip`); `toggleShared`, `sharedMatches`, `SOCIAL_PLATFORMS` (`SessionStore.kt`); the Filter dialog |
 | Multi-select, batch export and batch delete | `dragToSelect`, `selectable` / `exportable`, `runBatchExport`, `exportFromSession`, `setScrambleForSelected` (whole video → `SessionStore.setVideoScramble`), `startBatchTrash` and the `askDelete` dialog (`Gallery.kt`) |

@@ -849,7 +849,7 @@ private fun ClipRow(
                 formatDate(dateOf(clip.footage)) +
                         (if (clip.index >= 0) "  |  " + clip.placeText else "") +
                         (if (clip.tagText.isNotEmpty()) "  |  " + clip.tagText else "") +
-                        (if (clip.solveDeleted) "  |  exported, solve deleted" else if (clip.exportOnly) "  |  export only (raw footage gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
+                        (if (clip.solveDeleted) "  |  exported, solve deleted" else if (clip.exportOnly) "  |  export only (raw video gone)" else if (clip.exported != null) "  |  exported" else "  |  not exported") +
                         (if (!clip.cut.included) "  |  left over" else "") +
                         (if (clip.needsCheck) "  |  check" else "") +
                         (if (clip.sharedList.isNotEmpty()) "  |  " + clip.sharedList.joinToString(", ") else ""),
@@ -1722,7 +1722,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             // ===== the two tabs =====
             TabRow(selectedTabIndex = ui.tab) {
                 Tab(selected = ui.tab == 0, onClick = { ui.tab = 0 }, text = { Text("Clips") })
-                Tab(selected = ui.tab == 1, onClick = { if (!ui.selecting) ui.tab = 1 }, text = { Text("Footage") })
+                Tab(selected = ui.tab == 1, onClick = { if (!ui.selecting) ui.tab = 1 }, text = { Text("Sessions") })
             }
 
             // ===== view switch, sort and filter =====
@@ -3888,7 +3888,7 @@ fun ClipViewer(
                     // what a tap on a greyed-out button says (short, and says what to do instead)
                     val noVideoHint = if (current.solveDeleted) "This solve was deleted in the editor. Only its exported file is left."
                     else if (!sourceOk) "The original video is missing. Tap Reconnect video above to use it again."
-                    else "This clip no longer matches a solve. Open the video in the editor from the Footage tab."
+                    else "This clip no longer matches a solve. Open the video in the editor from the Sessions tab."
                     val noFileHint = if (exportedFile == null && single) "Not exported, so there's no copy to delete. To remove the solve, use Forget below."
                     else if (exportedFile == null) "Not exported yet, so there's no file to delete.\nWrong solve? Tap Editor to fix or delete it."
                     else "This file is already in the phone's trash. Restore it from Recently deleted."

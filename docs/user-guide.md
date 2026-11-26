@@ -26,7 +26,7 @@ If the timer can't be read, nothing is blocked. You can always add solves by han
 2. It opens in the player straight away. Pause on the stopped timer and type its time in the bar at the top, then *Save*.
 3. Swipe up for the details: penalty, puzzle, note and *Shared on*, as for any clip.
 4. **Trim** is optional (**Edit** in the details). Off: the whole file is the clip and nothing needs exporting. On: drag the two handles; the clip is exported as a copy. End it just after the timer stops: the end is the solve's stop.
-5. Single solves are in the **Clips** tab only, not under Footage. **Delete video** and **Forget this solve** are at the bottom of the details.
+5. Single solves are in the **Clips** tab only, not under Sessions. **Delete video** and **Forget this solve** are at the bottom of the details.
 
 Picking the same video again says *Already in your Gallery*. The editor's own *Import video* is for sessions only.
 

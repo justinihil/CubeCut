@@ -17,6 +17,7 @@ Notes on history:
 - *Which one is your timer?* offers **Neither of them** instead of *set up by hand*.
 
 ### Changed
+- The Gallery's *Footage* tab is now called **Sessions**.
 - **Smaller app:** the image library OpenCV is no longer needed (the debug APK went from 66 to 40 MB). Find solves reads the same pictures as before.
 
 ## [3.3.0] - 2026-11-26

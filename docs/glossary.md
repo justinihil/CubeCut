@@ -6,7 +6,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 
 | Term (as the UI says it) | Meaning | In code |
 |---|---|---|
-| **Footage / video / session** | One imported raw recording, plus everything saved about it | `Footage`, table `footage`, `footageId`; "session" in older names (`OpenedSession`, `SessionStore`) |
+| **Session / video** (*footage* in the code) | One imported raw recording, plus everything saved about it. The Gallery's **Sessions** tab lists them (called *Footage* until 4.0-A, 2026-11-26; the code keeps the old name, [roadmap 4.0-A](roadmap.md)) | `Footage`, table `footage`, `footageId`, `GalleryUiState.tab` 1; "session" in older names (`OpenedSession`, `SessionStore`) |
 | **Solve** | One timed attempt found in the footage | A `CutItem` that is not a left-over |
 | **Cut / stop / first frame** | The first frame on which the stopped timer shows the final time. Everything is measured from it | `CutItem.stopSec`, `cuts.stop_sec`, `FoundSolve.stopSec` |
 | **Time** | The solve time as displayed, e.g. `11.263` or `1:02.34` | `timeText`; seconds via `parseTimeSeconds` |
@@ -36,7 +36,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Forget (session)** | Delete CubeCut's records of a video. The file is untouched | `SessionStore.delete`, `releaseAccess` |
 | **Reconnect video** | Attach a new file link to a saved session | `SessionStore.relink` |
 | **Backup / restore / reconnect in bulk** | A JSON file of the saved data (no videos) the user saves; restore adds what the phone lacks; *Reconnect videos* / *Reconnect exported clips* match many picked files at once | `Backup.write` / `restore`, `BackupDialog` (`Backup.kt`), `SessionStore.restoreVideo` / `reconnectVideos` / `reconnectExports`, `matchVideo`, `matchExport`, `BACKUP_FORMAT` |
-| **Gallery: Clips / Footage tabs** | The two tabs of the start screen | `GalleryScreen`, `GalleryUiState.tab` (0 = Clips, 1 = Footage) |
+| **Gallery: Clips / Sessions tabs** | The two tabs of the start screen (*Sessions* was *Footage* before 4.0) | `GalleryScreen`, `GalleryUiState.tab` (0 = Clips, 1 = Sessions) |
 | **Viewer** | The full-screen clip player with the swipe-up sheet | `ClipViewer`, `ui.detail` |
 | **Replay** | The viewer's auto-replay switch: clips loop while it is on | `GalleryUiState.autoReplay`, `REPEAT_MODE_ONE` |
 | **Editor** | The per-video screen for finding and fixing solves | `EditorScreen`, `EditorRequest` |
