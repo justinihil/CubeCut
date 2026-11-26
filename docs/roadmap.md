@@ -131,9 +131,10 @@ The hints came in 3.3: they are found without the editor and saved with the vide
 - **No popup on its own** (E1, replacing the popup of 2026-11-25): the card and the result list say "2 places to check", and tapping that opens the popup. The editor opens, at that place, only if the user takes a hint up. *Nothing here* works from the popup too.
 - **Built 2026-11-26**; phone test in 4.0-T. The card shows an amber "N places to check" (grid: a badge; list: a button), the progress list *Check N*. *Go there* opens the editor with the playhead exactly at the hint. The editor still shows its hints in the list, as in 3.3.
 
-### 4.0-H The editor as manual mode ⬜
+### 4.0-H The editor as manual mode 🔶
 - What CubeCut can't read is added here by hand, since the setup by hand is gone (4.0-0).
 - The editor stays for clipping by hand. It is reached from Sessions ⋮ *Open in editor* and from a *Timer not found* card (4.0-C).
+- **Built 2026-11-26**; phone test in 4.0-T. The editor shows *Couldn't find the timer* at once for a video whose background scan found none (also after a restart), with the way to add solves by hand. The card's *Timer not found* goes once solves were added.
 
 ### 4.0-T Phone test and test rounds ⬜
 - First, one numbered phone test list for 4.0-0 to 4.0-G, grouped by phase.

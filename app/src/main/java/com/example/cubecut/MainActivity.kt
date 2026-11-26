@@ -573,6 +573,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 videoCategory = opened.footage.category
                 videoCube = opened.footage.cube
                 videoPlace = opened.footage.place
+                // (4.0-H) its last scan in the background found no timer: say so at once (the solves are added by hand here)
+                timerNotFound = opened.footage.scanState == SCAN_NO_TIMER
                 knownCubes = withContext(Dispatchers.IO) {
                     try { orderTags(SessionStore.listFootage(context).map { it.cube } + opened.cuts.map { it.cube }, emptyList()) } catch (e: Exception) { emptyList() }
                 }
@@ -1540,7 +1542,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                             "Just press Find solves.",
                                             "Keep the timer in view and readable, also while it runs.",
                                             "Film with a fixed camera. A small bump is fine.",
-                                            "It reads csTimer-like digits and QiYi-like displays."
+                                            "It reads csTimer-like digits and QiYi-like displays.",
+                                            "Not found? Add each solve by hand with Add a missed solve."
                                         )
                                     )
                                 }
@@ -1676,7 +1679,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         BulletLines(
                             listOf(
                                 "Is the timer in view and readable while it runs?",
-                                "Put the playhead on the first frame of a final time and tap Add a missed solve."
+                                "Put the playhead on the first frame of a final time and tap Add a missed solve.",
+                                "Stackmat, GAN and phone timer apps aren't read yet: add their solves this way."
                             )
                         )
                     }

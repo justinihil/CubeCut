@@ -939,7 +939,8 @@ private fun scanBadgeText(f: Footage): Pair<String, Boolean>? {
     return when {
         state == ScanState.WAITING -> Pair("Waiting to scan", false)
         state == ScanState.SCANNING -> Pair("Finding solves ${job.percent}%", false)
-        state == ScanState.NO_TIMER || (state == null && f.scanState == SCAN_NO_TIMER) -> Pair("Timer not found", true)
+        // (4.0-H) once solves were added by hand, "not found" is no longer news
+        (state == ScanState.NO_TIMER || (state == null && f.scanState == SCAN_NO_TIMER)) && f.cutCount == 0 -> Pair("Timer not found", true)
         state == ScanState.ASKS || (state == null && f.scanState == SCAN_ASKS) -> Pair("Choose the timer", true)
         else -> null
     }
@@ -2696,6 +2697,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                         Spacer(Modifier.height(8.dp))
                         // the Clips tab then shows only this video's clips; the "Video: ..." chip there undoes it
+                        // (4.0-H) the editor is the manual mode: add what CubeCut couldn't read, or clip by hand
+                        if (canOpenIt && !menuFootage.isSingle) {
+                            TextButton(onClick = { footageMenu = null; onOpenEditor(EditorRequest(Uri.parse(menuFootage.uri), null)) }) { Text("Open in editor") }
+                        }
                         TextButton(onClick = {
                             ui.hidden = d.footage.map { it.id }.filter { it != menuFootage.id }.toSet()
                             ui.save()
