@@ -8,7 +8,7 @@
 
 ## Decision
 - **No ML.** Solid digits are read by comparing joined blobs with example digits (`SolidDigits.kt`).
-- **The examples ship with the app** (`assets/digit_shapes.bin`, 72 KB): 11 families, all under the SIL Open Font License. Chosen by the owner over the phone's own fonts, so that what is measured on the PC holds on every phone.
+- **The examples ship with the app** (`assets/digit_shapes.bin`, 74 KB): 12 families, all under the SIL Open Font License (Digital Numbers, a seven-segment screen font, added 2026-11-26 for csTimer's "digital 1"). Chosen by the owner over the phone's own fonts, so that what is measured on the PC holds on every phone.
 - **Pure Kotlin, no OpenCV and no Android** in the reader, so unit tests and the reference videos on the PC run exactly the code the phone runs.
 - **Digit examples of the video itself replace the fonts** once all ten digits were seen, named by the clock.
 - **Unsure which number is the timer:** ask, with a picture of it. Otherwise don't ask (owner).

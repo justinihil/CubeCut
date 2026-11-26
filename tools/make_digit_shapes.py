@@ -1,7 +1,8 @@
 """Makes app/src/main/assets/digit_shapes.bin: the example digits 0-9 of a few open-licence fonts (SolidDigits.kt reads it).
 
 Only needed again when the fonts change. Needs Pillow. The fonts are not in the repo: put each in <fonts>/<family>/ as
-v.ttf (variable), or r.ttf and b.ttf (regular and bold), from https://github.com/google/fonts (folder ofl/).
+v.ttf (variable), or r.ttf and b.ttf (regular and bold), from https://github.com/google/fonts (folder ofl/);
+digitalnumbers/r.ttf is Digital Numbers (https://github.com/mcanthony/digital-numbers-font, dist/), a seven-segment look like csTimer's "digital" fonts.
 
     python tools/make_digit_shapes.py <fonts> app/src/main/assets/digit_shapes.bin
 
@@ -12,7 +13,7 @@ Format (gzip): "CCDS", version 1, number of styles, SIZE; then per style: name l
 import gzip, os, sys
 from PIL import Image, ImageDraw, ImageFont
 
-FAMILIES = ['arimo', 'barlow', 'courierprime', 'jetbrainsmono', 'lato', 'montserrat', 'oswald', 'ptserif', 'roboto', 'robotomono', 'sharetechmono']
+FAMILIES = ['arimo', 'barlow', 'courierprime', 'digitalnumbers', 'jetbrainsmono', 'lato', 'montserrat', 'oswald', 'ptserif', 'roboto', 'robotomono', 'sharetechmono']
 SIZE = 64
 
 

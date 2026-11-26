@@ -65,6 +65,15 @@ private const val MAX_GAP_WITH_MARK = 1.2
 /** A row steeper than this (height per width) is not a row of digits. */
 private const val MAX_SLOPE = 0.8
 
+/**
+ * A digit in pieces: two bars above each other, each this tall (in digit heights), together nearly a whole digit. Some seven-segment
+ * screen fonts (csTimer's "digital 4") draw a 1 or a 7 like that. This reader can't read it and would leave it out (13.153 read as 13.53), so
+ * a row with one in it or next to it isn't read at all. Normal fonts never have such pieces: their parts are joined.
+ */
+private const val PIECE_MIN = 0.3
+private const val PIECE_MAX = 0.62
+private const val PIECES_TOGETHER = 0.8
+
 /** One time seen in a picture. [text] is as shown, e.g. "12.69" or "1:04.42"; [height] is the digits' height in pixels. */
 class TimeRow(
     val text: String,
@@ -648,6 +657,7 @@ private fun readRow(
     val heights = row.map { it.h }.sorted()
     val n = heights.size
     val height = if (n % 2 == 1) heights[n / 2].toDouble() else (heights[n / 2 - 1] + heights[n / 2]) / 2.0
+    if (hasDigitInPieces(blobs, row, height)) return null
     return TimeRow(
         text, read.likeness.min(), height * shrink,
         row.minOf { it.x0 } * shrink + offX, row.minOf { it.y0 } * shrink + offY,
@@ -657,6 +667,24 @@ private fun readRow(
 }
 
 private enum class Mark { NONE, POINT, COLON }
+
+/** Whether a digit in pieces (see [PIECE_MIN]) stands among the digits of [row], or within one [height] before or after them. */
+private fun hasDigitInPieces(blobs: Blobs, row: List<Blob>, height: Double): Boolean {
+    val top = row.minOf { it.y0 }
+    val bottom = row.maxOf { it.y1 }
+    val from = row.first().x0 - height
+    val to = row.last().x1 + height
+    val pieces = blobs.list.filter { b ->
+        b !in row && b.x1 >= from && b.x0 <= to && b.h >= PIECE_MIN * height && b.h <= PIECE_MAX * height && b.w < 0.8 * height &&
+                b.y0 >= top - 0.15 * height && b.y1 <= bottom + 0.15 * height
+    }
+    for (upper in pieces) for (lower in pieces) {
+        if (lower.y0 < upper.y0 + 0.6 * upper.h) continue
+        val overlap = min(upper.x1, lower.x1) - max(upper.x0, lower.x0) + 1
+        if (overlap >= 0.5 * min(upper.w, lower.w) && lower.y1 - upper.y0 + 1 >= PIECES_TOGETHER * height) return true
+    }
+    return false
+}
 
 /**
  * What stands between these two digits. A decimal point: a small blob near the line they stand on. A colon: two blobs of the same size

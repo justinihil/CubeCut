@@ -22,7 +22,7 @@ A changed version must say so in a reasonable way, for example in its About wind
 
 ## Fonts used for the example digits
 
-CubeCut contains pictures of the digits 0-9 made from these fonts, each under the SIL Open Font License 1.1: Arimo, Barlow, Courier Prime, JetBrains Mono, Lato, Montserrat, Oswald, PT Serif, Roboto, Roboto Mono and Share Tech Mono. The fonts themselves are not included. Their copyright lines and the licence text are in `app/src/main/assets/digit_fonts_license.txt`, which must stay in the app.
+CubeCut contains pictures of the digits 0-9 made from these fonts, each under the SIL Open Font License 1.1: Arimo, Barlow, Courier Prime, Digital Numbers, JetBrains Mono, Lato, Montserrat, Oswald, PT Serif, Roboto, Roboto Mono and Share Tech Mono. The fonts themselves are not included. Their copyright lines and the licence text are in `app/src/main/assets/digit_fonts_license.txt`, which must stay in the app.
 
 This section is information about those fonts, not an additional term.
 

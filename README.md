@@ -25,7 +25,7 @@ Anything not listed under "Tested" is unknown, not "probably fine".
 | Phone | **Samsung Galaxy S25 Ultra**, and only that phone |
 | Footage | **1080p at 30 fps and 60 fps** |
 | Camera | **Fixed on a tripod**, with the timer's display in view |
-| Timers | **QiYi Bluetooth Timer** (LCD display), csTimer in its default font and flowtimer.io, found automatically, on recordings of one desk. **csTimer in the "Digital 2" font**, with csTimer's "use small font after decimal point" option **turned off**, set up by hand |
+| Timers | **QiYi Bluetooth Timer** (LCD display), csTimer in its default font or "digital 1" and flowtimer.io, found automatically, on recordings of one desk. **csTimer in the "Digital 2" font**, with csTimer's "use small font after decimal point" option **turned off**, set up by hand |
 
 **Not tested** (it may work, it may not)
 

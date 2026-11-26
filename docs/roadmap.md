@@ -220,11 +220,16 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 
    Built with 4.0 in mind: finding, saving and the card don't depend on the editor. Check it with the reference videos: no hint where nothing is missing, one where a solve is taken out.
 
-**After QiYi: timers that don't show a running time with decimals** (owner's request, 2026-11-25). Built for both: found by their final times ([how, and numbers](algorithms.md#3-reading-the-timer)); waiting for the owner's phone test. Owner: a time that can't be confirmed is kept and marked *check*. Still open: csTimer's own "solve" screen (a short video).
-- 🟡 **Whole seconds while running**, decimals only when stopped. Whole numbers still rise with the clock, and the moment each second changes gives the start, so the clock check can stay. The inspection countdown must not count (it doesn't agree with any time).
-- 🟡 **Running time hidden** ("solve", "..."). Nothing rises: look for a big time that appears, stays and changes after each solve. No clock check, so more solves to check; a tap to choose the timer may be needed.
+**After QiYi: timers that don't show a running time with decimals** (owner's request, 2026-11-25). Built for both: found by their final times ([how, and numbers](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-26): "works well", also a new flowtimer video and csTimer's own "solve" screen. Owner: a time that can't be confirmed is kept and marked *check*.
+- ✅ **Whole seconds while running**, decimals only when stopped. Whole numbers still rise with the clock, and the moment each second changes gives the start, so the clock check can stay. The inspection countdown must not count (it doesn't agree with any time).
+- ✅ **Running time hidden** ("solve", "..."). Nothing rises: look for a big time that appears, stays and changes after each solve. No clock check, so more solves to check; a tap to choose the timer may be needed.
 - A QiYi in view of such a video must not be taken for the timer.
 - Videos (owner, 2026-11-25): flowtimer with "..." (6 solves), and a friend's TikTok clip of csTimer with whole seconds (5 solves). The old csTimer videos with their running time ignored are the third test.
+
+**csTimer's digit fonts** (owner's videos, 2026-11-26: "digital 1" on the light theme, "digital 4" on the dark one). None of csTimer's five fonts may ship, so they are drawn on the PC only ([numbers](algorithms.md#3-reading-the-timer)).
+- ✅ **"Digital 1"**: Digital Numbers (OFL) added to the bundled fonts (owner's go). Its video: 5 of 5, every cut on the frame.
+- ✅ **A digit in pieces makes a row unreadable**, so "digital 4" gives *Couldn't find the timer* instead of five wrong times.
+- ⬜ **"Digital 2" to "digital 5"** (owner's choice B): read their separate strokes with the seven-segment reader, which then also needs a final-times mode for a timer that hides its running time. To be planned with the owner before building; needs a key for the "digital 4" video.
 
 - The per-video timer columns stay for the backup.
 

@@ -179,8 +179,12 @@ class MissedSolvesTest {
         for ((x, stop) in h.zip(listOf(139.5, 220.05, 254.25, 292.04))) assertTrue("$x", stop > x.fromSec && stop < x.toSec)
     }
 
-    /** Every solve is taken out in turn: its final time can't be read ([alsoRunning]: the running time neither). */
-    private fun takenOut(alsoRunning: Boolean): Map<String, Pair<Int, Int>> = traces().filter { "hidden" !in it.name && "seconds" !in it.name }.associate { t ->
+    /**
+     * Every solve is taken out in turn: its final time can't be read ([alsoRunning]: the running time neither). Not for timers whose running time
+     * is hidden or in whole seconds (by name, or nothing seen running, like csTimer's "digital 1" video): their hints are weaker, as known-issues says.
+     */
+    private fun takenOut(alsoRunning: Boolean): Map<String, Pair<Int, Int>> =
+        traces().filter { "hidden" !in it.name && "seconds" !in it.name && it.trace.running.isNotEmpty() }.associate { t ->
         var told = 0
         for ((i, s) in t.solves.withIndex()) {
             val (stop, sec) = s

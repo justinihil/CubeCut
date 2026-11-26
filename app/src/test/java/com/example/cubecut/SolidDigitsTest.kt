@@ -38,7 +38,7 @@ class SolidDigitsTest {
 
     @Test
     fun assetHasAllDigitsOfEveryStyle() {
-        assertEquals(21, styles.size)
+        assertEquals(22, styles.size)
         for (s in styles) {
             assertEquals(10, s.digits.size)
             for (d in s.digits) assertTrue(s.name, d.any { it.toInt() != 0 })
