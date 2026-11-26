@@ -288,6 +288,18 @@ enum class ClipKey(val label: String, val short: String) {
     }
 }
 
+/** (4.0) The Sessions tab's filter (owner, 2026-11-26): how each video's scan stands. */
+enum class ScanFilter(val label: String) {
+    ANY("Any"),
+    NOT_SCANNED("Not scanned"),          // never scanned, not waiting or being scanned, and not "Timer not found"
+    NO_TIMER("Timer not found"),
+    TO_CHECK("Places to check");
+
+    companion object {
+        fun from(name: String?): ScanFilter = ScanFilter.entries.firstOrNull { it.name == name } ?: ANY
+    }
+}
+
 /** (4.0-C) Which videos the Sessions tab lists (owner, 2026-11-26): a switch at its top. */
 enum class FootageKind(val label: String) {
     ALL("All"),
@@ -296,6 +308,18 @@ enum class FootageKind(val label: String) {
 
     companion object {
         fun from(name: String?): FootageKind = FootageKind.entries.firstOrNull { it.name == name } ?: ALL
+    }
+}
+
+/** (4.0) Does video [f] pass the Sessions tab's scan filter? [job]: its job in the scan queue, if any; [hints]: its places to check. */
+fun scanFilterMatches(filter: ScanFilter, f: Footage, job: ScanJob?, hints: Int): Boolean {
+    val state = job?.state
+    val noTimer = state == ScanState.NO_TIMER || (state == null && f.scanState == SCAN_NO_TIMER)
+    return when (filter) {
+        ScanFilter.ANY -> true
+        ScanFilter.NOT_SCANNED -> !f.isSingle && f.lastScanMs == 0L && state?.isActive != true && !noTimer
+        ScanFilter.NO_TIMER -> noTimer
+        ScanFilter.TO_CHECK -> hints > 0
     }
 }
 
@@ -403,6 +427,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var clipKeys by mutableStateOf(ClipKey.parse(prefs.getString("clip_keys", null)))
     var footageSort by mutableStateOf(FootageSort.from(prefs.getString("footage_sort", null)))
     var footageKind by mutableStateOf(FootageKind.from(prefs.getString("footage_kind", null)))   // (4.0-C) the Sessions tab's switch
+    var scanFilter by mutableStateOf(ScanFilter.from(prefs.getString("scan_filter", null)))       // (4.0) the Sessions tab's filter
     var exportFilter by mutableStateOf(ExportFilter.from(prefs.getString("export_filter", null)))
     var checkOnly by mutableStateOf(prefs.getBoolean("check_only", false))   // show only clips that need a check
     var newOnly by mutableStateOf(prefs.getBoolean("new_only", false))       // (4.0-D) show only new clips
@@ -445,6 +470,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("clip_keys", clipKeys.joinToString(",") { it.name })
             .putString("footage_sort", footageSort.name)
             .putString("footage_kind", footageKind.name)
+            .putString("scan_filter", scanFilter.name)
             .putString("export_filter", exportFilter.name)
             .putBoolean("check_only", checkOnly)
             .putBoolean("new_only", newOnly)
@@ -1600,6 +1626,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var asking by remember { mutableStateOf<ScanJob?>(null) }                   // (4.0-C) the progress panel's "Choose": which number?
     var hintsFor by remember { mutableStateOf<Long?>(null) }                    // (4.0-G) the video whose "places to check" window is open
     var clipSettingsFor by remember { mutableStateOf<ClipSettingsAsk?>(null) }   // (4.0) the "Clip settings" window for many clips
+    var showScanFilter by remember { mutableStateOf(false) }                    // (4.0) the Sessions tab's Filter window
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     /** (4.0-C) Saves the new videos [uris] and queues their scans. [skipped]: picked videos that were imported before. */
@@ -1830,6 +1857,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val statsById: Map<Long, FootageStats> = remember(d) {
         if (d == null) emptyMap() else d.footage.associate { it.id to statsOf(d.clipsOf(it.id)) }
     }
+    // (4.0-C) the Sessions tab's videos: every video, also single solves; the switch picks sessions or single solves, (4.0) the filter
+    // how their scan stands. Worked out again when a scan ends (AnalysisQueue.finished)
+    val scansDone = AnalysisQueue.finished
+    val shownVideos: List<Footage> = remember(d, ui.footageSort, ui.footageKind, ui.scanFilter, scansDone) {
+        if (d == null) emptyList() else {
+            val picked = when (ui.footageKind) {
+                FootageKind.ALL -> d.footage
+                FootageKind.SESSIONS -> d.footage.filter { !isOneSolve(it, statsById[it.id]) }
+                FootageKind.SINGLES -> d.footage.filter { isOneSolve(it, statsById[it.id]) }
+            }.filter { f -> scanFilterMatches(ui.scanFilter, f, AnalysisQueue.jobOf(f.id), d.hints[f.id]?.size ?: 0) }
+            sortFootage(picked, ui.footageSort, statsById)
+        }
+    }
+
     // the Clips tab's clips, filtered and sorted
     val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.seenKeys, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter, ui.cubeFilter, ui.placeFilter, ui.penaltyFilter) {
         if (d == null) emptyList()
@@ -1974,51 +2015,53 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }
                 }
             } else if (ui.selectingVideos && d != null) {
-                // (4.0-E) ticking videos: how many, All / None, and what can be done with all of them
+                // (4.0-E) ticking videos: laid out like the Clips tab's bar (owner, 2026-11-26). First row: close, how many, All / None,
+                // the red bin (Delete videos) and the main action (Find solves, filled). Second row: the settings, then Forget in red.
                 val tickedVideos = d.footage.filter { it.id in ui.selectedVideos }
+                val pickable = shownVideos.filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
+                val allOn = pickable.isNotEmpty() && ui.selectedVideos.containsAll(pickable)
+                val canTrash = tickedVideos.any { it.trashedMs == 0L && d.openable[it.id] == true } && batchDone < 0
+                val scannable = tickedVideos.filter { !it.isSingle && d.openable[it.id] == true }
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { exitVideoSelection() }) { Text("\u2715", style = MaterialTheme.typography.titleLarge) }
                     Column(Modifier.weight(1f)) {
                         Text("${tickedVideos.size} selected", style = MaterialTheme.typography.titleLarge)
-                        Text("Tap videos to tick them", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        Text("Tap or hold and drag to tick", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     TextButton(onClick = {
-                        val all = d.footage.filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
-                        ui.selectedVideos = if (ui.selectedVideos.containsAll(all)) emptySet() else all
+                        ui.selectedVideos = if (allOn) ui.selectedVideos - pickable else ui.selectedVideos + pickable
                         if (ui.selectedVideos.isEmpty()) ui.selectingVideos = false
-                    }) { Text(if (ui.selectedVideos.size == d.footage.count { !AnalysisQueue.isBusy(it.id) }) "None" else "All") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
-                    OutlinedButton(
-                        onClick = { askDeleteVideos = tickedVideos },
-                        enabled = tickedVideos.any { it.trashedMs == 0L && d.openable[it.id] == true } && batchDone < 0
-                    ) { Text("Delete videos") }
-                    OutlinedButton(onClick = { forgettingMany = tickedVideos }, enabled = tickedVideos.isNotEmpty() && batchDone < 0) {
-                        Text("Forget")
+                    }) { Text(if (allOn) "None" else "All") }
+                    IconButton(onClick = { askDeleteVideos = tickedVideos }, enabled = canTrash) {
+                        TrashIcon(if (canTrash) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
                     }
-                    OutlinedButton(onClick = { tagVideos = tickedVideos; tagVideosAtImport = false }, enabled = tickedVideos.isNotEmpty()) {
-                        Text("Set tags\u2026")
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
-                    // (4.0) Find solves for every ticked video (a re-scan keeps what was changed, ADR-0013)
-                    OutlinedButton(
+                    // (4.0) Find solves for every ticked video, one after another (a re-scan keeps what was changed, ADR-0013)
+                    Button(
                         onClick = {
-                            val vids = tickedVideos.filter { !it.isSingle && d.openable[it.id] == true && !AnalysisQueue.isBusy(it.id) }
+                            val vids = scannable.filter { !AnalysisQueue.isBusy(it.id) }
                             for (f in vids) AnalysisQueue.enqueue(context, f)
                             message = if (vids.isEmpty()) "None of these can be scanned now." else "Finding solves in ${clipsText(vids.size, "video")}, one after another."
                             exitVideoSelection()
                         },
-                        enabled = tickedVideos.any { !it.isSingle && d.openable[it.id] == true }
+                        enabled = scannable.isNotEmpty()
                     ) { Text("Find solves") }
+                }
+                Row(Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { tagVideos = tickedVideos; tagVideosAtImport = false }, enabled = tickedVideos.isNotEmpty()) {
+                        Text("Set tags\u2026")
+                    }
                     // (4.0) the scramble and extra time of every clip of the ticked videos
-                    OutlinedButton(
+                    TextButton(
                         onClick = {
                             val vids = tickedVideos.filter { !it.isSingle }
                             clipSettingsFor = ClipSettingsAsk("Clip settings for ${clipsText(vids.size, "video")}", vids, emptyList())
                         },
                         enabled = tickedVideos.any { !it.isSingle }
                     ) { Text("Clip settings\u2026") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { forgettingMany = tickedVideos }, enabled = tickedVideos.isNotEmpty() && batchDone < 0) {
+                        Text("Forget", color = if (tickedVideos.isNotEmpty() && batchDone < 0) AppColors.danger else Color.Unspecified)
+                    }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
@@ -2094,12 +2137,17 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     OutlinedButton(onClick = { showFilter = true }) { Text(if (ui.filterActive) "Filter \u2022" else "Filter") }
                 } else {
                     SortMenu(ui.footageSort.label, FootageSort.entries.map { it to it.label }) { ui.footageSort = it; ui.save() }
+                    OutlinedButton(onClick = { showScanFilter = true }) { Text(if (ui.scanFilter != ScanFilter.ANY) "Filter \u2022" else "Filter") }
                 }
             }
             if (ui.tab == 1) {
                 // (4.0-C) sessions and single solves in one list, or one of them
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 4.dp)) {
                     for (k in FootageKind.entries) ChoiceChip(k.label, ui.footageKind == k) { ui.footageKind = k; ui.save() }
+                }
+                // (4.0) the scan filter, as a chip that removes it
+                if (ui.scanFilter != ScanFilter.ANY) {
+                    Row(Modifier.padding(bottom = 4.dp)) { ActiveFilterChip("Scan: " + ui.scanFilter.label) { ui.scanFilter = ScanFilter.ANY; ui.save() } }
                 }
             }
             if (ui.tab == 0) {
@@ -2324,15 +2372,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             }
                         }
                     } else {
-                        // (4.0-C) every video, also single solves; the switch above picks sessions or single solves
-                        val shown = remember(d, ui.footageSort, ui.footageKind) {
-                            val picked = when (ui.footageKind) {
-                                FootageKind.ALL -> d.footage
-                                FootageKind.SESSIONS -> d.footage.filter { !isOneSolve(it, statsById[it.id]) }
-                                FootageKind.SINGLES -> d.footage.filter { isOneSolve(it, statsById[it.id]) }
-                            }
-                            sortFootage(picked, ui.footageSort, statsById)
-                        }
+                        val shown = shownVideos
                         // (4.0) hold a card, then drag over others to tick them all, as on the Clips tab (owner, 2026-11-26)
                         fun videoIndexAt(pos: Offset): Int? = if (ui.footageGrid) {
                             footageGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
@@ -3112,6 +3152,21 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }) { Text("Save") }
                 },
                 dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (4.0) the Sessions tab's filter: how each video's scan stands =====
+        if (showScanFilter) {
+            AlertDialog(
+                onDismissRequest = { showScanFilter = false },
+                title = { Text("Filter videos") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChips("Scan", ScanFilter.entries.map { it to it.label }, ui.scanFilter) { ui.scanFilter = it; ui.save() }
+                        Text("Not scanned: never scanned, and not waiting for a scan.", style = MaterialTheme.typography.bodySmall)
+                    }
+                },
+                confirmButton = { Button(onClick = { showScanFilter = false }) { Text("Done") } }
             )
         }
 

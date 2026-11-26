@@ -151,10 +151,12 @@ The owner's notes of 2026-11-26, after the first phone test step:
 - **"It's fine" in the viewer** looks as in the editor: the amber outlined button, then a green "✓ Checked" (`ItsFineButton`, `CheckedMark`, shared).
 - **A cancelled video stays in Sessions** (owner: makes sense, preferred), and its row offers **Scan again** besides *Open*. **Find solves** for ticked sessions; **Cancel all** while a batch runs (asks first; the videos stay).
 - **Hold and drag** to tick sessions, as on the Clips tab.
+- **A filter on the Sessions tab** (owner; the tag filters stay on the Clips tab, D7): *Not scanned*, *Timer not found*, *Places to check* (the last two added alongside, flagged to the owner).
+- **The selection bar on the Sessions tab** is laid out like the Clips tab's: ✕, count, All/None (of what the filter shows), the red bin (Delete videos), **Find solves** filled; below, *Set tags…*, *Clip settings…*, and *Forget* in red.
 - **Built 2026-11-26**; phone test steps 45 to 50.
 
 ### 4.0-T Phone test and test rounds ⬜
-- First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:\CubeCutRef\v4.0-phone-test.md` (50 steps).
+- First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:\CubeCutRef\v4.0-phone-test.md` (53 steps).
 - Then the owner imports batches of videos and puts the ones that didn't work in `D:\CubeCutRef`. Claude finds out why (answer first), and the fixes follow as separate commits. Each round starts a new thread: `Test round: <files and what happened>`.
 - The scan, the reader and `computeClips` change only in these rounds, and are checked against the known-good footage ([algorithms §8](algorithms.md#8-reference-measurements)).
 - The first thing to measure is whether the finder trusts a timer it sees for only one solve.

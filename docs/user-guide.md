@@ -40,7 +40,8 @@ The **Sessions** tab's switch shows **All**, **Sessions** or **Single solves** (
 
 ## Things to know
 
-- **Several sessions at once:** on the Sessions tab, hold a card and drag over others to tick them, as on the Clips tab (or hold one, then tap others). **Find solves** scans all of them, one after another. **Delete videos** moves their original videos to the phone's trash (exported clips stay and keep playing; one confirmation for all), **Forget** removes CubeCut's records of them (the files stay). Each warns first. A video being scanned can't be ticked.
+- **Filter the Sessions tab** (*Filter*): **Not scanned** (never scanned and not waiting), **Timer not found**, or **Places to check**. Handy after a big import: filter, tick them all, then *Find solves*.
+- **Several sessions at once:** on the Sessions tab, hold a card and drag over others to tick them, as on the Clips tab (or hold one, then tap others). The bar at the top then works like the Clips tab's: **All/None**, the red bin (**Delete videos**) and **Find solves** (scans all of them, one after another); under it *Set tags…*, *Clip settings…* and a red **Forget**. *All* ticks only what the filter shows. **Delete videos** moves their original videos to the phone's trash (exported clips stay and keep playing; one confirmation for all), **Forget** removes CubeCut's records of them (the files stay). Each warns first. A video being scanned can't be ticked.
 - **The last copy of a solve:** when a clip's original video is deleted, its exported clip still shows and plays. Deleting that file warns in red that it is the last copy; it goes to the phone's trash for about 30 days.
 
 - **New clips** (blue *New* badge) are clips CubeCut found that you haven't opened or exported yet: handy after importing a batch. Opening a clip in the viewer or exporting it clears its badge; *⋮ → Mark all as seen* clears them all. *Filter → Only new clips* shows just those.

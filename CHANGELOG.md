@@ -19,7 +19,8 @@ The saved data is upgraded to database v11 on first start.
 - **Progress panel** above the tabs: one slim line for the whole batch ("2 of 10 videos done · 34%", also in the notification), each video's own bar on its card; *Cancel all*, and *Scan again* for a cancelled video; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
 - Session cards say **Waiting to scan**, **Finding solves 40%**, **Timer not found** or **Choose the timer**. Waiting scans start again after the app was closed.
 - The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
-- **Select several sessions:** hold a card on the Sessions tab and drag over others (or tap them), then **Find solves**, then **Delete videos** or **Forget**, each with one warning for all of them.
+- **Filter the Sessions tab:** *Not scanned*, *Timer not found*, *Places to check*.
+- **Select several sessions:** hold a card on the Sessions tab and drag over others (or tap them), then **Find solves**; the bar is laid out like the Clips tab's (red bin for *Delete videos*, *Find solves* filled, a red *Forget*), then **Delete videos** or **Forget**, each with one warning for all of them.
 - **Last copy of a solve:** deleting an exported clip whose original video is gone now warns in red that it is the last copy (also when several are deleted at once).
 - **Cube and place tags.** A video (and a clip, for the cube) can be tagged with the cube model you used (your own list: type a name once, then pick it) and where it was filmed: *Home*, *Competition* or *Other*. Importing one video asks its tags while Find solves runs (*Skip* is fine); with several, tick them on the Sessions tab and tap *Set tags…*.
 - **Filters** for cube, place and penalty (*With penalty*, *+2*, *DNF*, *No penalty*).
