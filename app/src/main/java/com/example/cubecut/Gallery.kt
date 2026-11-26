@@ -203,7 +203,7 @@ private const val VIEWER_PICTURE_HEIGHT = 900
 /** (4.0-E) The warnings for several videos name at most this many, then "and N more". */
 private const val VIDEO_LIST_MAX = 5
 
-/** (4.0-C) The extra time before and after a solve that a newly imported video starts with (the same as the editor's). */
+/** (4.0-C) The extra time before and after a solve that a newly imported video starts with, until Settings changes it (`newBefore`). */
 private const val NEW_VIDEO_PAD = 2.5f
 
 private const val MIN_COLUMNS = 2
@@ -251,6 +251,12 @@ class PendingTrash(
     val name: String get() = footage?.title ?: export?.fileName ?: if (videos.isNotEmpty()) "${videos.size} videos"
         else if (batch.size == 1) batch[0].fileName else "${batch.size} files"
 }
+
+/**
+ * (4.0) What a *Clip settings* window changes: [wholeVideos] get it as their video setting (every clip follows it again); [clips] are
+ * ticked clips of videos only partly ticked, changed one by one. [allVideos]: from Settings, every video.
+ */
+class ClipSettingsAsk(val title: String, val wholeVideos: List<Footage>, val clips: List<GalleryClip>, val allVideos: Boolean = false)
 
 /** What the Gallery should point out after loading: a video on the Footage tab, or a clip on the Clips tab. */
 private class FlashTarget(val footageId: Long?, val clip: GalleryClip?)
@@ -410,6 +416,10 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var placeFilter by mutableStateOf(prefs.getString("place_filter", null))               // (4.0-F) null = any place, "" = not tagged
     var penaltyFilter by mutableStateOf(PenaltyFilter.from(prefs.getString("penalty_filter", null)))   // (4.0-F)
     var themeMode by mutableStateOf(ThemeMode.from(prefs.getString("theme", null)))  // light, dark or as the phone (the whole app)
+    // (4.0) what a newly imported video's clips start with: Settings -> Clip settings
+    var newScramble by mutableStateOf(prefs.getBoolean("new_scramble", DEFAULT_INCLUDE_SCRAMBLE))
+    var newBefore by mutableStateOf(prefs.getFloat("new_before", NEW_VIDEO_PAD))
+    var newAfter by mutableStateOf(prefs.getFloat("new_after", NEW_VIDEO_PAD))
     // sessions switched off in the Clips tab (everything else is shown, so a new session shows up by itself)
     var hidden by mutableStateOf(
         (prefs.getString("hidden", "") ?: "").split(',').mapNotNull { it.toLongOrNull() }.toSet()
@@ -442,6 +452,9 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putString("category_filter", categoryFilter)
             .putString("shared_filter", sharedFilter)
             .putString("cube_filter", cubeFilter)
+            .putBoolean("new_scramble", newScramble)
+            .putFloat("new_before", newBefore)
+            .putFloat("new_after", newAfter)
             .putString("place_filter", placeFilter)
             .putString("penalty_filter", penaltyFilter.name)
             .putString("theme", themeMode.name)
@@ -1380,6 +1393,51 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
     /**
+     * (4.0) Applies a *Clip settings* choice. Whole videos take it as their video setting (no `edited`, every clip follows again);
+     * clips of partly ticked videos are changed one by one (`edited`), their extra time as their own when it differs from the video's.
+     * Exported files don't change: the window said so.
+     */
+    fun applyClipSettings(ask: ClipSettingsAsk, choice: ClipSettingsChoice) {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                for (f in ask.wholeVideos) {
+                    try { SessionStore.applyVideoClipSettings(context, f.id, choice.scramble, choice.before, choice.after) } catch (e: Exception) { }
+                }
+                for (c in ask.clips) {
+                    try {
+                        if (choice.scramble != null && c.cut.includeScramble != choice.scramble) {
+                            SessionStore.updateCutScramble(context, c.footage.id, c.cut.stopSec, choice.scramble)
+                        }
+                        if (choice.before != null && choice.after != null) {
+                            val same = Math.abs(choice.before - c.footage.beforePad) < 0.01 && Math.abs(choice.after - c.footage.afterPad) < 0.01
+                            SessionStore.updateCutPads(context, c.footage.id, c.cut.stopSec, if (same) null else choice.before, if (same) null else choice.after)
+                        }
+                    } catch (e: Exception) { }
+                }
+            }
+            val n = ask.clips.size + ask.wholeVideos.sumOf { f -> data?.clipsOf(f.id)?.count { it.index >= 0 } ?: 0 }
+            message = "Clip settings changed for ${clipsText(n, "clip")}."
+            if (ui.selecting) exitSelection()
+            if (ui.selectingVideos) exitVideoSelection()
+            ui.refresh++
+        }
+    }
+
+    /** (4.0) The ticked clips as a *Clip settings* request: videos with every clip ticked count as whole videos. */
+    fun clipSettingsOfTicked(loaded: GalleryData): ClipSettingsAsk {
+        val chosen = loaded.clips.filter { it.listKey in ui.selected && it.index >= 0 && !it.footage.isSingle }
+        val whole = chosen.groupBy { it.footage.id }.filter { (id, group) ->
+            val keys = group.map { it.listKey }.toSet()
+            loaded.clips.filter { it.footage.id == id && it.index >= 0 }.all { it.listKey in keys }
+        }.keys
+        return ClipSettingsAsk(
+            "Clip settings for ${clipsText(chosen.size, "clip")}",
+            chosen.map { it.footage }.distinctBy { it.id }.filter { it.id in whole },
+            chosen.filter { it.footage.id !in whole }
+        )
+    }
+
+    /**
      * (3.2-B) Tags the chosen clips ([chosen]: only clips that still have a cut). Like the scramble switch: a video whose clips are all
      * ticked takes the tag as a video setting, so its clips follow it again and are not marked `edited` (only those that had their
      * own tag are rewritten). A video only partly ticked is tagged clip by clip, and those clips are `edited`, so a re-scan keeps them.
@@ -1527,6 +1585,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var knownSingle by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }    // (3.2-F) a single solve picked again
     var asking by remember { mutableStateOf<ScanJob?>(null) }                   // (4.0-C) the progress panel's "Choose": which number?
     var hintsFor by remember { mutableStateOf<Long?>(null) }                    // (4.0-G) the video whose "places to check" window is open
+    var clipSettingsFor by remember { mutableStateOf<ClipSettingsAsk?>(null) }   // (4.0) the "Clip settings" window for many clips
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     /** (4.0-C) Saves the new videos [uris] and queues their scans. [skipped]: picked videos that were imported before. */
@@ -1544,7 +1603,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     try {
                         val dur = readDurationMs(context, uri)
                         if (dur <= 0) null
-                        else SessionStore.openOrCreate(context, uri, dur, NEW_VIDEO_PAD, NEW_VIDEO_PAD, DEFAULT_INCLUDE_SCRAMBLE).footage
+                        else SessionStore.openOrCreate(context, uri, dur, ui.newBefore, ui.newAfter, ui.newScramble).footage
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -1897,6 +1956,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { tagSelection = true }, enabled = batchDone < 0) { Text("Set tags\u2026") }
+                        TextButton(onClick = { clipSettingsFor = clipSettingsOfTicked(d) }, enabled = batchDone < 0) { Text("Clip settings\u2026") }
                     }
                 }
             } else if (ui.selectingVideos && d != null) {
@@ -1925,6 +1985,16 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     OutlinedButton(onClick = { tagVideos = tickedVideos; tagVideosAtImport = false }, enabled = tickedVideos.isNotEmpty()) {
                         Text("Set tags\u2026")
                     }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+                    // (4.0) the scramble and extra time of every clip of the ticked videos
+                    OutlinedButton(
+                        onClick = {
+                            val vids = tickedVideos.filter { !it.isSingle }
+                            clipSettingsFor = ClipSettingsAsk("Clip settings for ${clipsText(vids.size, "video")}", vids, emptyList())
+                        },
+                        enabled = tickedVideos.any { !it.isSingle }
+                    ) { Text("Clip settings\u2026") }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
@@ -2494,6 +2564,28 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 Text(m.label, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
+                        // (4.0) what new videos' clips start with, and the same for every video at once
+                        Spacer(Modifier.height(10.dp))
+                        Text("Clips of new videos", style = MaterialTheme.typography.labelLarge)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Include the scramble", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Switch(checked = ui.newScramble, onCheckedChange = { ui.newScramble = it; ui.save() })
+                        }
+                        var nb by remember { mutableStateOf(ui.newBefore) }
+                        var na by remember { mutableStateOf(ui.newAfter) }
+                        Text("Before the solve: ${"%.1f".format(nb)} s", style = MaterialTheme.typography.bodyMedium)
+                        Slider(value = nb, onValueChange = { nb = it }, onValueChangeFinished = { ui.newBefore = nb; ui.save() }, valueRange = 0f..8f, steps = 15)
+                        Text("After the solve: ${"%.1f".format(na)} s", style = MaterialTheme.typography.bodyMedium)
+                        Slider(value = na, onValueChange = { na = it }, onValueChangeFinished = { ui.newAfter = na; ui.save() }, valueRange = 0f..8f, steps = 15)
+                        Text("Videos you import from now on start like this.", style = MaterialTheme.typography.labelSmall)
+                        TextButton(
+                            onClick = {
+                                val vids = d?.footage?.filter { !it.isSingle } ?: emptyList()
+                                showSettings = false
+                                clipSettingsFor = ClipSettingsAsk("Clip settings for all ${clipsText(vids.size, "video")}", vids, emptyList(), allVideos = true)
+                            },
+                            enabled = d?.footage?.any { !it.isSingle } == true
+                        ) { Text("Apply to all videos\u2026") }
                         Spacer(Modifier.height(10.dp))
                         TextButton(onClick = { ui.swipeHintSeen = false; ui.save(); showSettings = false }) {
                             Text("Show the \"swipe up for more\" hint again")
@@ -2932,6 +3024,30 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }) { Text("Save") }
                 },
                 dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (4.0) the scramble and extra time of many clips at once =====
+        val settingsAsk = clipSettingsFor
+        if (settingsAsk != null && d != null) {
+            val affected = settingsAsk.clips + settingsAsk.wholeVideos.flatMap { f -> d.clipsOf(f.id).filter { it.index >= 0 } }
+            val ownN = affected.count { it.cut.beforePad != null || it.cut.afterPad != null || it.cut.includeScramble != it.footage.scrambleAll }
+            val exportedN = affected.count { it.exported != null }
+            val videos = (settingsAsk.wholeVideos + settingsAsk.clips.map { it.footage }).distinctBy { it.id }
+            ClipSettingsDialog(
+                title = settingsAsk.title,
+                scramble = if (settingsAsk.allVideos) ui.newScramble else affected.map { it.cut.includeScramble }.distinct().singleOrNull(),
+                before = if (settingsAsk.allVideos) ui.newBefore.toDouble() else videos.map { it.beforePad }.distinct().singleOrNull()?.toDouble(),
+                after = if (settingsAsk.allVideos) ui.newAfter.toDouble() else videos.map { it.afterPad }.distinct().singleOrNull()?.toDouble(),
+                effects = listOfNotNull(
+                    "${clipsText(affected.size, "clip")} in ${clipsText(videos.size, "video")} change.",
+                    if (ownN > 0) "${clipsText(ownN, "clip")} had ${if (ownN == 1) "its" else "their"} own setting: ${if (ownN == 1) "it gets" else "they get"} these too." else null,
+                    if (exportedN > 0) "${clipsText(exportedN, "clip")} ${if (exportedN == 1) "is" else "are"} exported: export ${if (exportedN == 1) "it" else "them"} again to update the ${if (exportedN == 1) "file" else "files"}." else null
+                ),
+                confirmLabel = "Apply",
+                allowKeep = !settingsAsk.allVideos,
+                onDismiss = { clipSettingsFor = null },
+                onDone = { choice -> clipSettingsFor = null; applyClipSettings(settingsAsk, choice) }
             )
         }
 

@@ -27,6 +27,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -136,6 +143,78 @@ fun PadEditor(videoBefore: Double, videoAfter: Double, before: Double?, after: D
             Text("Before counts only when the scramble is left out.", style = MaterialTheme.typography.labelSmall)
         }
     }
+}
+
+/** (4.0) What a *Clip settings* window chose. null = leave it as it is; the extra time is both values or neither. */
+class ClipSettingsChoice(val scramble: Boolean?, val before: Double?, val after: Double?)
+
+/**
+ * (4.0) The scramble and the extra time for many clips at once (owner, 2026-11-26): ticked clips, ticked sessions, or every video.
+ * [scramble] / [before] / [after] are what the clips have now (null = they differ: "Keep as it is" is chosen). [effects] are the
+ * warning's lines (how many clips, how many had their own setting, how many are exported). [allowKeep] false (the Settings defaults'
+ * "Apply to all videos"): both parts start chosen, with the values given.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ClipSettingsDialog(
+    title: String,
+    scramble: Boolean?,
+    before: Double?,
+    after: Double?,
+    effects: List<String>,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onDone: (ClipSettingsChoice) -> Unit,
+    allowKeep: Boolean = true
+) {
+    var pickScramble by remember { mutableStateOf(if (allowKeep) null else scramble ?: true) }   // null = keep as it is
+    var setPads by remember { mutableStateOf(!allowKeep) }
+    var b by remember { mutableStateOf((before ?: 2.5).toFloat()) }
+    var a by remember { mutableStateOf((after ?: 2.5).toFloat()) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                androidx.compose.ui.Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("Scramble", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (allowKeep) ChoiceChip(if (scramble == null) "Keep as it is (mixed)" else "Keep as it is", pickScramble == null) { pickScramble = null }
+                    ChoiceChip("With scramble", pickScramble == true) { pickScramble = true }
+                    ChoiceChip("Solve only", pickScramble == false) { pickScramble = false }
+                }
+                Text("Extra time", style = MaterialTheme.typography.labelLarge)
+                if (allowKeep) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ChoiceChip(if (before == null) "Keep as it is (mixed)" else "Keep as it is", !setPads) { setPads = false }
+                        ChoiceChip("Set it", setPads) { setPads = true }
+                    }
+                }
+                if (setPads) {
+                    Text("Before the solve: ${"%.1f".format(b)} s", style = MaterialTheme.typography.bodyMedium)
+                    Slider(value = b, onValueChange = { b = it }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
+                    Text("After the solve: ${"%.1f".format(a)} s", style = MaterialTheme.typography.bodyMedium)
+                    Slider(value = a, onValueChange = { a = it }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
+                    Text("Before counts only when the scramble is left out.", style = MaterialTheme.typography.labelSmall)
+                }
+                if (effects.isNotEmpty()) {
+                    Spacer(androidx.compose.ui.Modifier.height(6.dp))
+                    BulletLines(effects, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onDone(ClipSettingsChoice(pickScramble, if (setPads) b.toDouble() else null, if (setPads) a.toDouble() else null))
+                },
+                enabled = pickScramble != null || setPads
+            ) { Text(confirmLabel) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 /** One rename waiting to happen: the exported file, its new name, and who to tell the name Android gave it. */

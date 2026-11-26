@@ -136,8 +136,17 @@ The hints came in 3.3: they are found without the editor and saved with the vide
 - The editor stays for clipping by hand. It is reached from Sessions ⋮ *Open in editor* and from a *Timer not found* card (4.0-C).
 - **Built 2026-11-26**; phone test in 4.0-T. The editor shows *Couldn't find the timer* at once for a video whose background scan found none (also after a restart), with the way to add solves by hand. The card's *Timer not found* goes once solves were added.
 
+### 4.0-I Clip settings for many clips at once 🔶
+The owner's addition of 2026-11-26, before testing: the scramble and the extra time were per clip (viewer) or per video (editor).
+- **Settings → Clips of new videos** (owner: both places; new imports start with it): scramble and extra time, used by every import from then on. **Apply to all videos…** sets them on every video, after a warning.
+- **Ticked clips or ticked sessions → Clip settings…**: the same for just those; "Keep as it is" leaves a part unchanged.
+- **Clips with their own setting are overwritten** (owner): whole videos take it as their video setting, so every clip follows it again (no `edited`); clips of a partly ticked video are changed one by one (`edited`).
+- **Exported files don't change** (owner: point it out): the window says how many are exported and that exporting again updates them.
+- Old single solves are left out (their clip is their trim).
+- **Built 2026-11-26**; phone test steps 39 to 44.
+
 ### 4.0-T Phone test and test rounds ⬜
-- First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:\CubeCutRef\v4.0-phone-test.md` (38 steps).
+- First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:\CubeCutRef\v4.0-phone-test.md` (44 steps).
 - Then the owner imports batches of videos and puts the ones that didn't work in `D:\CubeCutRef`. Claude finds out why (answer first), and the fixes follow as separate commits. Each round starts a new thread: `Test round: <files and what happened>`.
 - The scan, the reader and `computeClips` change only in these rounds, and are checked against the known-good footage ([algorithms §8](algorithms.md#8-reference-measurements)).
 - The first thing to measure is whether the finder trusts a timer it sees for only one solve.

@@ -997,6 +997,36 @@ object SessionStore {
         }
     }
 
+    /**
+     * (4.0) Sets a whole video's clip settings at once (the Gallery's *Clip settings…*, owner 2026-11-26): the scramble of every clip
+     * ([scramble]) and the extra time of the video ([before] / [after], both or neither). Every clip then follows the video again: its
+     * own scramble and own extra time are overwritten (the owner chose that "all at once" means all). A video setting, like the
+     * editor's sliders and its all-clips switch, so no clip is marked `edited` and a re-scan may still update them. Null = unchanged.
+     */
+    fun applyVideoClipSettings(context: Context, footageId: Long, scramble: Boolean?, before: Double?, after: Double?) {
+        val d = db(context)
+        d.beginTransaction()
+        try {
+            val f = ContentValues()
+            val c = ContentValues()
+            if (scramble != null) {
+                f.put("scramble_all", if (scramble) 1 else 0)
+                c.put("include_scramble", if (scramble) 1 else 0)
+            }
+            if (before != null && after != null) {
+                f.put("before_pad", before)
+                f.put("after_pad", after)
+                c.putNull("before_pad")
+                c.putNull("after_pad")
+            }
+            if (f.size() > 0) d.update("footage", f, "id = ?", arrayOf(footageId.toString()))
+            if (c.size() > 0) d.update("cuts", c, "footage_id = ?", arrayOf(footageId.toString()))
+            d.setTransactionSuccessful()
+        } finally {
+            d.endTransaction()
+        }
+    }
+
     // ---------------------------------------------------------------- the phone's trash
 
     /**
