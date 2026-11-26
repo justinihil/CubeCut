@@ -31,7 +31,7 @@ Entry point: `SolveAnalyzer.analyze`, which calls `scan`. The scan only needs a 
 
 Cancellation: `isCancelled` is polled before each coarse read and each vote read, and throws `ScanCancelled`. The first-frame search of the current solve finishes first. `ScanResult.readableFraction` below 25 % triggers the amber "timer hard to read" note.
 
-**Known weakness:** a held time read without its last digit (`1151` while `11517` is held) can become a separate solve. With a quarter of the held frames short, the simulator splits the hold in 132 of 200 runs. In 1 of them the short read also won the vote (a tie goes to the read that triggered the stop), so the real time was never reported. The too-fast check (see [§ Checks](#checks-after-a-scan)) flags it afterwards but doesn't prevent it. The ignored test `heldTimeMissingLastDigit_isTheSameHold` reproduces it. Not fixed: this scan is only the backup since 3.3-C and goes in 4.0-0 ([3.3-B, dropped](roadmap.md)).
+**Known weakness:** a held time read without its last digit (`1151` while `11517` is held) can become a separate solve. With a quarter of the held frames short, the simulator splits the hold in 132 of 200 runs. In 1 of them the short read also won the vote (a tie goes to the read that triggered the stop), so the real time was never reported. The too-fast check (see [§ Checks](#checks-after-a-scan)) flags it afterwards but doesn't prevent it. The ignored test `heldTimeMissingLastDigit_isTheSameHold` reproduces it. Not fixed: this scan is only the backup since 3.3-C and goes in 4.0-0 (3.3-B, which would have fixed it, was dropped).
 
 ### Checks after a scan
 
