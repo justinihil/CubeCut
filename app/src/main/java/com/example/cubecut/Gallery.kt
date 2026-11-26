@@ -99,6 +99,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
@@ -1106,15 +1107,17 @@ private fun FootageRow(
  * it is grey but still answers a tap, so [onClick] can say why, like the viewer's *Delete file*.
  */
 @Composable
-private fun DeleteOutlinedButton(label: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun DeleteOutlinedButton(label: String, active: Boolean, modifier: Modifier = Modifier, bin: Boolean = true, onClick: () -> Unit) {
     val color = if (active) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     OutlinedButton(
         onClick = onClick, modifier = modifier,
         border = androidx.compose.foundation.BorderStroke(1.dp, color),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = color)
     ) {
-        TrashIcon(color, 18.dp)
-        Spacer(Modifier.width(6.dp))
+        if (bin) {
+            TrashIcon(color, 18.dp)
+            Spacer(Modifier.width(6.dp))
+        }
         Text(label, maxLines = 1)
     }
 }
@@ -1139,10 +1142,10 @@ private fun MoreButton(size: Dp, modifier: Modifier = Modifier, onClick: () -> U
 
 /** A button that opens a menu of sort choices (used for the Footage tab). */
 @Composable
-private fun <T> SortMenu(current: String, options: List<Pair<T, String>>, onPick: (T) -> Unit) {
+private fun <T> SortMenu(current: String, options: List<Pair<T, String>>, padding: PaddingValues = ButtonDefaults.ContentPadding, onPick: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        OutlinedButton(onClick = { open = true }) { Text("Sort  \u25BE") }
+        OutlinedButton(onClick = { open = true }, contentPadding = padding) { Text("Sort  \u25BE") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             for ((value, label) in options) {
                 DropdownMenuItem(text = { Text(if (label == current) "\u2713 $label" else label) }, onClick = { open = false; onPick(value) })
@@ -2025,12 +2028,13 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             modifier = Modifier.weight(1f)
                         )
                     }
-                    // (4.0) the settings as buttons, side by side, as on the Sessions tab
+                    // (4.0) the settings as buttons, side by side, as on the Sessions tab. Light blue (tonal): they change things,
+                    // the filled main action does the work, red outlines remove (owner, 2026-11-27)
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { tagSelection = true }, enabled = batchDone < 0, modifier = Modifier.weight(1f)) {
+                        FilledTonalButton(onClick = { tagSelection = true }, enabled = batchDone < 0, modifier = Modifier.weight(1f)) {
                             Text("Set tags\u2026", maxLines = 1)
                         }
-                        OutlinedButton(onClick = { clipSettingsFor = clipSettingsOfTicked(d) }, enabled = batchDone < 0, modifier = Modifier.weight(1f)) {
+                        FilledTonalButton(onClick = { clipSettingsFor = clipSettingsOfTicked(d) }, enabled = batchDone < 0, modifier = Modifier.weight(1f)) {
                             Text("Clip settings\u2026", maxLines = 1)
                         }
                     }
@@ -2043,9 +2047,9 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     else "Not exported yet, so there's no file to delete.\nWrong solve? Open it and tap Editor to fix or delete it."
                 }
             } else if (ui.selectingVideos && d != null) {
-                // (4.0-E) ticking videos (owner, 2026-11-26). Row 1: close, how many, All / None, the main action (Find solves, filled).
-                // Row 2: Set tags and Clip settings, outlined, side by side. Row 3, apart at the right: what removes things, the red bin
-                // (Delete videos) and Forget (solid red). Each of those two warns first.
+                // (4.0-E) ticking videos (owner, 2026-11-26/27). Row 1: close, how many, All / None, the main action (Find solves, filled).
+                // Row 2: Set tags and Clip settings, light blue (tonal), side by side. Row 3, apart: what removes things, both in red
+                // outline (Delete videos with the bin, Forget). Each of those two warns first, with a solid red button.
                 val tickedVideos = d.footage.filter { it.id in ui.selectedVideos }
                 val pickable = shownVideos.filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
                 val allOn = pickable.isNotEmpty() && ui.selectedVideos.containsAll(pickable)
@@ -2074,12 +2078,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     ) { Text("Find solves") }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = { tagVideos = tickedVideos; tagVideosAtImport = false },
                         enabled = tickedVideos.isNotEmpty(), modifier = Modifier.weight(1f)
                     ) { Text("Set tags…", maxLines = 1) }
                     // (4.0) the scramble and extra time of every clip of the ticked videos
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = {
                             val vids = tickedVideos.filter { !it.isSingle }
                             clipSettingsFor = ClipSettingsAsk("Clip settings for ${clipsText(vids.size, "video")}", vids, emptyList())
@@ -2094,10 +2098,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         else message = if (batchDone >= 0) "Wait for the export to finish."
                         else "These videos are already deleted or missing, so there's nothing to move to the trash."
                     }
-                    Button(
-                        onClick = { forgettingMany = tickedVideos }, enabled = canForget, modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.danger, contentColor = Color.White)
-                    ) { Text("Forget") }
+                    DeleteOutlinedButton("Forget", canForget, Modifier.weight(1f), bin = false) {
+                        if (canForget) forgettingMany = tickedVideos
+                        else message = "Wait for the export to finish."
+                    }
                 }
             } else Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(
@@ -2155,26 +2159,39 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 Tab(selected = ui.tab == 1, onClick = { if (!ui.selecting) ui.tab = 1 }, text = { Text("Sessions") })
             }
 
-            // ===== view switch, sort and filter; (4.0) Clip settings, always there (owner, 2026-11-26) =====
-            FlowRow(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val grid = if (ui.tab == 0) ui.clipsGrid else ui.footageGrid
-                OutlinedButton(onClick = {
-                    if (ui.tab == 0) ui.clipsGrid = !ui.clipsGrid else ui.footageGrid = !ui.footageGrid
-                    ui.save()
-                }) { Text(if (grid) "List view" else "Grid view") }
-                if (ui.tab == 0) {
-                    OutlinedButton(onClick = { showSort = true }) { Text("Sort") }
-                    OutlinedButton(onClick = { showFilter = true }) { Text(if (ui.filterActive) "Filter \u2022" else "Filter") }
-                } else {
-                    SortMenu(ui.footageSort.label, FootageSort.entries.map { it to it.label }) { ui.footageSort = it; ui.save() }
-                    OutlinedButton(onClick = { showScanFilter = true }) { Text(if (ui.scanFilter != ScanFilter.ANY) "Filter \u2022" else "Filter") }
+            // ===== view switch, sort and filter; (4.0) Clip settings at the right, light blue with a gear (owner, 2026-11-26/27).
+            // While ticking it hides: the selection bar has its own Clip settings for the ticked items, and two buttons with one name
+            // that do different things confuse. Sort and Filter stay (filter, then All, then Find solves) =====
+            // narrower padding than a standard button, so the four fit on one line on a usual phone
+            val compact = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(
+                    Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val grid = if (ui.tab == 0) ui.clipsGrid else ui.footageGrid
+                    OutlinedButton(contentPadding = compact, onClick = {
+                        if (ui.tab == 0) ui.clipsGrid = !ui.clipsGrid else ui.footageGrid = !ui.footageGrid
+                        ui.save()
+                    }) { Text(if (grid) "List view" else "Grid view") }
+                    if (ui.tab == 0) {
+                        OutlinedButton(onClick = { showSort = true }, contentPadding = compact) { Text("Sort") }
+                        OutlinedButton(onClick = { showFilter = true }, contentPadding = compact) { Text(if (ui.filterActive) "Filter \u2022" else "Filter") }
+                    } else {
+                        SortMenu(ui.footageSort.label, FootageSort.entries.map { it to it.label }, compact) { ui.footageSort = it; ui.save() }
+                        OutlinedButton(onClick = { showScanFilter = true }, contentPadding = compact) { Text(if (ui.scanFilter != ScanFilter.ANY) "Filter \u2022" else "Filter") }
+                    }
                 }
-                OutlinedButton(onClick = { showClipDefaults = true }) { Text("Clip settings") }
+                if (!ui.selecting && !ui.selectingVideos) {
+                    FilledTonalButton(
+                        onClick = { showClipDefaults = true },
+                        contentPadding = PaddingValues(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
+                    ) {
+                        GearIcon(MaterialTheme.colorScheme.onSecondaryContainer, 18.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Clip settings", maxLines = 1)
+                    }
+                }
             }
             if (ui.tab == 1) {
                 // (4.0-C) sessions and single solves in one list, or one of them
@@ -3646,6 +3663,22 @@ fun TrashIcon(color: Color, size: Dp) {
         drawPath(body, color, style = Stroke(width = sw, cap = StrokeCap.Round, join = StrokeJoin.Round))
         drawLine(color, Offset(w * 0.42f, h * 0.48f), Offset(w * 0.44f, h * 0.76f), strokeWidth = sw * 0.8f, cap = StrokeCap.Round)
         drawLine(color, Offset(w * 0.58f, h * 0.48f), Offset(w * 0.56f, h * 0.76f), strokeWidth = sw * 0.8f, cap = StrokeCap.Round)
+    }
+}
+
+/** (4.0) A gear for the *Clip settings* button, drawn like [TrashIcon] (no icon library): a ring with eight teeth. */
+@Composable
+private fun GearIcon(color: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val c = Offset(w / 2f, this.size.height / 2f)
+        drawCircle(color, radius = w * 0.25f, center = c, style = Stroke(width = w * 0.12f))
+        for (i in 0 until 8) {
+            val a = i * Math.PI / 4.0
+            val dx = kotlin.math.cos(a).toFloat()
+            val dy = kotlin.math.sin(a).toFloat()
+            drawLine(color, Offset(c.x + dx * w * 0.29f, c.y + dy * w * 0.29f), Offset(c.x + dx * w * 0.45f, c.y + dy * w * 0.45f), strokeWidth = w * 0.13f)
+        }
     }
 }
 
