@@ -71,7 +71,8 @@ fun loadDigitFonts(context: Context): DigitShapes = DigitShapes.from(context.ass
 fun frameTimeOf(source: GraySource, t: Double): Double = source.lastFrameSec().takeIf { abs(it - t) < 0.05 } ?: t
 
 /**
- * Finds the timer and then the solves. Solid digits first (csTimer); a seven-segment timer (QiYi) only when none of those was seen running.
+ * Finds the timer and then the solves. Solid digits first (csTimer); a seven-segment timer (QiYi) only when none of those was seen running;
+ * a seven-segment one by its final times only when nothing else was found.
  * [near]: the number the user chose, or null. [onProgress] gets (finding the timer?, percent).
  * Blocking; run it on Dispatchers.Default. [isCancelled] is polled; true stops it with [ScanCancelled].
  */
@@ -88,8 +89,11 @@ fun analyzeByItself(
             if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
         }
         var segments: FoundSegments? = null
+        var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
         val otherKind = {
-            segments = findSegments(pic, durationSec, { onProgress(true, 5 + it / 20) }, isCancelled).found
+            val r = findSegments(pic, durationSec, { onProgress(true, 5 + it / 20) }, isCancelled)
+            segments = r.found
+            segmentTimes = r.held
             segments != null
         }
         // (a number the user chose is a solid one)
@@ -100,6 +104,14 @@ fun analyzeByItself(
                 timer, durationSec, frameSec, { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 20 + 80 * done / total) }, isCancelled
             )
             return AutoScanResult(scan, timer.numbers(), emptyList())
+        }
+        // last: a seven-segment timer that shows only its final times (csTimer's "digital" fonts with "solve"), from what the search above read
+        if (found.timer == null && found.choices.isEmpty()) findHeldSegments(segmentTimes, pic)?.let { grid ->
+            val scan = scanHeldTimer(
+                { t -> pic.at(t)?.let { HeldShown(heldSegmentRow(grid, it)?.first?.text, null) } }, durationSec, frameSec,
+                { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
+            )
+            return AutoScanResult(scan, grid.box(grid.decimals + 2), emptyList())
         }
         val timer = found.timer ?: return AutoScanResult(null, null, found.choices)
         val scan = if (timer.held) scanHeldTimer(

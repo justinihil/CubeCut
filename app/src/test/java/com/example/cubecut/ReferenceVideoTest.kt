@@ -36,8 +36,11 @@ class ReferenceVideoTest {
 
     private val dir = File(System.getenv("CUBECUT_REF") ?: "D:/CubeCutRef")
 
-    /** Shown by the timer, but left out of the keys: a test tap (csTimer 03) and a solve deleted on the screen (other timer 01). */
-    private val LEFT_OUT = setOf("0.34", "7.480")
+    /**
+     * Shown by the timer, but left out of the keys: a test tap (csTimer 03), a solve deleted on the screen (other timer 01), and a time from
+     * before the video that the camera only sees after 4 s (csTimer "digital 4"; it is flagged).
+     */
+    private val LEFT_OUT = setOf("0.34", "7.480", "13.262")
 
     /** The fonts, without the ones that look like csTimer's, or like flowtimer's (the other timer). */
     private fun fonts(video: File): DigitShapes =
@@ -158,6 +161,45 @@ class ReferenceVideoTest {
                             "flagged ${scan.solves.filter { it.note.isNotEmpty() }.map { it.timeText + " " + it.note }}; hints ${hintsOf(scan).map { videoPlace(it.fromSec) + " " + it.text }}"
                 )
                 if (c.matches.size < c.expectedCount || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty()) problems.add(v.name)
+            }
+            video.close()
+        }
+        assertTrue("$problems", problems.isEmpty())
+    }
+
+    /**
+     * Seven-segment timers that show only their final times (csTimer's "digital 4" with "solve" while it runs), found as the app does when
+     * nothing else was, and scanned against the keys. The other videos must give none; csTimer's "digital 1" may (the solid reader takes it first).
+     * The small real QiYi on the desk of the 4x4 and old csTimer videos (digits under 30 px) may be found too: it shows the same solves, and in
+     * the app csTimer's running time is seen first, so this is never asked there.
+     */
+    @Test
+    fun findsSevenSegmentTimersByTheirFinalTimes() {
+        val problems = ArrayList<String>()
+        for (v in videos()) {
+            val video = FfmpegVideo(v)
+            val r = findSegments({ video.at(it) }, video.duration)
+            val notes = ArrayList<String>()
+            val grid = if (r.found == null) findHeldSegments(r.held, { video.at(it) }, notes) else null
+            println(
+                "SEGHELD ${v.name}: ${if (r.found != null) "RUNNING found" else if (grid == null) "none" else "FOUND, digits ${grid.height.toInt()} px, ${grid.decimals} decimals, ${grid.box(grid.decimals + 2)}"}; " +
+                        "${r.held.size} final times read on the way; $notes; ${"%.1f".format(r.rowsSec)} s rows, ${"%.1f".format(r.checkSec)} s checks"
+            )
+            val wanted = "digital4" in v.name
+            val deskQiYi = ("4x4" in v.name || "cstimer_old" in v.name) && ((r.found?.grid ?: grid)?.height ?: 99.0) < 30
+            if ((grid != null || r.found != null) != wanted && "digital1" !in v.name && !deskQiYi) problems.add("${v.name}: ${if (wanted) "not found" else "found"}")
+            if (grid != null && !deskQiYi) {
+                val scan = scanHeldTimer({ t -> video.at(t)?.let { HeldShown(heldSegmentRow(grid, it)?.first?.text, null) } }, video.duration, video.frameSec, { t -> video.frameTime(t) })
+                writeTrace(v, scan)
+                val key = places(v).readLines().filter { !it.startsWith("#") && it.isNotBlank() }.map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
+                val c = compareScan(key, scan.solves.filter { it.include && it.timeText !in LEFT_OUT })
+                println(
+                    "SEGHELD SCAN ${v.name}: expected ${c.expectedCount}, found ${c.matches.size}, false ${c.falseSolves.map { videoPlace(it.stopSec) + " " + it.timeText }}, " +
+                            "wrong time ${c.wrongTime.map { "${it.expected.time} as ${it.found.timeText}" }}; missed ${c.missed.map { it.time }}; ${c.onFrame} on the frame, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
+                            "flagged ${scan.solves.filter { it.note.isNotEmpty() }.map { it.timeText + " " + it.note }}; left out ${scan.solves.filter { !it.include }.map { it.timeText }}"
+                )
+                for (m in c.matches.filter { abs(it.offsetSec) > CUT_FRAME_SEC }) println("   cut off: ${m.expected.time} by ${"%+.3f".format(m.offsetSec)} s")
+                if (c.matches.size < c.expectedCount || c.falseSolves.isNotEmpty() || c.wrongTime.isNotEmpty() || c.close < c.matches.size) problems.add(v.name)
             }
             video.close()
         }

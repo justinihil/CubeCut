@@ -262,6 +262,7 @@ private fun byItselfReport(
         val segments = ArrayList<String>()
         var segmentSec = 0.0
         var segmentTimer: FoundSegments? = null
+        var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
         val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled) {
             val before = pictures
             val beforeNanos = inPictures
@@ -272,6 +273,7 @@ private fun byItselfReport(
             pictures = before
             inPictures = beforeNanos
             segmentTimer = s.found
+            segmentTimes = s.held
             s.found != null
         }
         val finding = (System.nanoTime() - start) / 1e9 - segmentSec
@@ -285,6 +287,9 @@ private fun byItselfReport(
         )
         how.addAll(segments)
         segmentTimer?.let { return segmentReport(context, uri, durationSec, it, source, truth, videoName, app, how, onProgress, isCancelled) }
+        if (r.timer == null && r.choices.isEmpty()) findHeldSegments(segmentTimes, pic, how)?.let {
+            return heldSegmentReport(context, uri, durationSec, it, source, truth, videoName, app, how, onProgress, isCancelled)
+        }
         val timer = r.timer ?: return noTimerText(truth, videoName, if (r.choices.isEmpty()) "CubeCut didn't find one by itself." else "Two numbers run at the same time, CubeCut would ask which one.", app) + how.joinToString("\n", "\n")
         val a = timer.area
         val found = "Found by itself at x ${a.left}-${a.right}, y ${a.top}-${a.bottom}, digits ${timer.digitHeight.toInt()} px, ${if (timer.dark) "dark" else "light"}, " +
@@ -399,6 +404,54 @@ private fun segmentReport(
         timesReportText(truth, videoName, true, where, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
     } else {
         val reading = gradeReading(truth.solves, timer.decimals, durationSec) { t -> timer.shown(t).text?.filter { it.isDigit() } }
+        scanReportText(truth, videoName, true, where, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
+    }
+    return text + how.joinToString("\n", "\n")
+}
+
+/** A seven-segment timer found by its final times, scanned and graded like the others. */
+private fun heldSegmentReport(
+    context: Context, uri: Uri, durationSec: Double, grid: SegmentGrid, source: GraySource, truth: GroundTruth, videoName: String, app: String,
+    how: MutableList<String>, onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
+): String {
+    var pictures = 0
+    var inPictures = 0L
+    val pic = PicAt { t ->
+        val start = System.nanoTime()
+        val gray = source.gray(t)
+        val p = if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
+        pictures++
+        inPictures += System.nanoTime() - start
+        p
+    }
+    fun read(t: Double): String? = pic.at(t)?.let { heldSegmentRow(grid, it)?.first?.text }
+    val scanStart = System.nanoTime()
+    val scan = scanHeldTimer(
+        { t -> pic.at(t)?.let { HeldShown(heldSegmentRow(grid, it)?.first?.text, null) } }, durationSec, videoFrameSec(context, uri),
+        { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
+    )
+    val seconds = (System.nanoTime() - scanStart) / 1e9
+    how.add(
+        "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, the rest reading " +
+                "(${"%.1f".format((seconds * 1e3 - inPictures / 1e6) / maxOf(1, pictures))} ms each)"
+    )
+    val flagged = scan.solves.filter { it.note.isNotEmpty() }
+    if (flagged.isNotEmpty()) how.add("Flagged for checking:")
+    for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
+    val hints = hintsOf(scan)
+    if (hints.isNotEmpty()) how.add("Maybe missed:")
+    for (h in hints) how.add("${videoPlace(h.fromSec)} - ${videoPlace(h.toSec)}: ${h.text}")
+
+    val b = grid.box(grid.decimals + 2)
+    val where = "Found by itself: seven-segment, by its final times, x ${b.left}-${b.right}, y ${b.top}-${b.bottom}, digits ${grid.height.toInt()} px, " +
+            "${if (grid.dark) "dark" else "light"}, ${grid.decimals} decimals."
+    val text = if (truth.timesOnly.isNotEmpty()) {
+        timesReportText(truth, videoName, true, where, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
+    } else {
+        val reading = gradeReading(truth.solves, grid.decimals, durationSec) { t ->
+            if (isCancelled()) throw ScanCancelled()
+            read(t)?.filter { it.isDigit() }
+        }
         scanReportText(truth, videoName, true, where, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
     }
     return text + how.joinToString("\n", "\n")

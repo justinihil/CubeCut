@@ -238,6 +238,33 @@ class SegmentFinderTest {
         }
     }
 
+    /** A display that shows only its final times (csTimer's "digital" fonts with "solve"): blank while it runs, then the time for 15 s. */
+    private val finals = listOf(10.0 to "13.153", 40.0 to "12.756", 75.0 to "15.688", 105.0 to "11.209")
+
+    private fun heldAt(t: Double, look: Look = Look()): GrayPic {
+        val text = finals.lastOrNull { (from, _) -> t >= from && t < from + 15 }?.second ?: ""
+        return pictures.getOrPut("held $text $look") { draw(text, look) }
+    }
+
+    @Test
+    fun aTimerThatShowsOnlyItsFinalTimes_isFoundByThemAndScanned() {
+        val r = findSegments({ heldAt(it) }, 130.0)
+        assertNull("nothing runs", r.found)
+        val notes = ArrayList<String>()
+        val grid = findHeldSegments(r.held, { heldAt(it) }, notes)
+        assertNotNull("not found: $notes, ${r.held.size} final times read: ${r.held.groupBy { it.first.row.text }.mapValues { (_, v) -> "${v.size} at ${v.map { it.first.t }.distinct().take(4)} h${v[0].first.row.height.toInt()} x${v[0].first.row.left}" }}", grid)
+        assertEquals(3, grid!!.decimals)
+        val scan = scanHeldTimer({ t -> heldAt(t).let { HeldShown(heldSegmentRow(grid, it)?.first?.text, null) } }, 130.0, 1 / 30.0)
+        assertEquals(finals.map { it.second }, scan.solves.map { it.timeText })
+        for ((s, f) in scan.solves.zip(finals)) assertEquals(f.first, s.stopSec, 1 / 30.0)
+    }
+
+    @Test
+    fun aNumberThatNeverChanges_isNoTimer() {
+        val r = findSegments({ draw("13.153", Look()) }, 130.0)
+        assertNull(findHeldSegments(r.held, { draw("13.153", Look()) }))
+    }
+
     /** The solid search asks for the other kind early, when no number was seen running, and stops when there is one. */
     @Test
     fun theSolidSearchAsksForTheOtherKind() {

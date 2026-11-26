@@ -46,8 +46,48 @@ private const val FITS = 0.55f
 /** A seven-segment timer: its grid as it was at second [t], what it showed there, and how well its digits fit (1 = perfectly). */
 class FoundSegments(val grid: SegmentGrid, val t: Double, val shown: List<Double>, val fit: Double)
 
-/** [found] null = there is none. The rest is for the debug report: places looked at, rows checked, and seconds spent on rows and on checking. */
-class SegmentResult(val found: FoundSegments?, val places: Int, val checked: Int, val rowsSec: Double, val checkSec: Double, val fitSec: Double)
+/**
+ * [found] null = there is none. [held]: the final times read on the way, with their grid, for [findHeldSegments]. The rest is for the debug
+ * report: places looked at, rows checked, and seconds spent on rows and on checking.
+ */
+class SegmentResult(
+    val found: FoundSegments?, val places: Int, val checked: Int, val rowsSec: Double, val checkSec: Double, val fitSec: Double,
+    val held: List<Pair<Sighting, SegmentGrid>> = emptyList()
+)
+
+/** A final time stands still: this long before or after it was seen, it reads the same (as in HeldFinder.kt). */
+private const val HELD_STILL_SEC = 0.15
+
+/** A final time has at least this many digits, all of them sure. */
+private const val HELD_SEGMENT_DIGITS = 3
+
+/**
+ * The time [grid] shows in [g] if every digit of it is sure, as a number seen there, with the grid where it was read; else null. For a
+ * seven-segment timer that shows only its final times (csTimer's "digital" fonts with "solve" while it runs).
+ */
+fun heldSegmentRow(grid: SegmentGrid, g: GrayPic): Pair<TimeRow, SegmentGrid>? {
+    val (here, fit) = grid.located(g, 3)
+    if (fit < FITS) return null
+    val places = here.read(g)
+    val text = segmentText(places, here.decimals)
+    val digits = text.count { it.isDigit() }
+    if ('?' in text || digits < HELD_SEGMENT_DIGITS) return null
+    val box = here.box(digits)
+    return Pair(TimeRow(text, places.take(digits).minOf { it.likeness }, here.height, box.left, box.top, box.right, box.bottom, here.dark, 0, emptyList()), here)
+}
+
+/**
+ * A seven-segment timer that shows no running time, found by its final times among those [findSegments] read on its way ([held]), as
+ * [findHeldTimer] does for solid digits: its grid, or null. [pic] is asked for a few pictures more. [notes] gets a line for the report.
+ */
+fun findHeldSegments(held: List<Pair<Sighting, SegmentGrid>>, pic: PicAt, notes: MutableList<String> = ArrayList()): SegmentGrid? {
+    val gridOf = java.util.IdentityHashMap<TimeRow, SegmentGrid>()
+    for ((s, g) in held) gridOf[s.row] = g
+    val (_, still) = heldPlace(held.map { it.first }, { s ->
+        listOf(-HELD_STILL_SEC, HELD_STILL_SEC).any { d -> pic.at(s.t + d)?.let { heldSegmentRow(gridOf.getValue(s.row), it) }?.first?.text == s.row.text }
+    }, notes) ?: return null
+    return gridOf.getValue(still[0].row)
+}
 
 /** Seconds spread over the video, halving the gaps. */
 private fun spreadPlaces(duration: Double, most: Int): List<Double> {
@@ -85,6 +125,7 @@ fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}
         return Pair(listOf(first) + (1 until SEGMENT_PICTURES).map { kept.getValue(it) }, shown)
     }
 
+    val held = ArrayList<Pair<Sighting, SegmentGrid>>()
     val sharp = spreadPlaces(durationSec, SEGMENT_PLACES)
     val all = sharp.map { Pair(it, false) } + sharp.take(SEGMENT_PLACES_SOFT).map { Pair(it, true) }
     for ((t, soft) in all) {
@@ -100,9 +141,10 @@ fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}
         var tried = 0
         for (row in rows) {
             if (tried >= ROWS_CHECKED) break
-            val grid = SegmentGrid.through(row) ?: continue
+            val grid = SegmentGrid.through(row)?.widenedIn(first) ?: continue
             tried++
             checked++
+            heldSegmentRow(grid, first)?.let { (row, here) -> held.add(Pair(Sighting(t, row), here)) }
             val (pics, shown) = rising(grid, t, first, kept) ?: continue
             val fitStart = System.nanoTime()
             checkNanos += fitStart - checkStart
@@ -111,7 +153,7 @@ fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}
         }
         checkNanos += System.nanoTime() - checkStart
     }
-    return SegmentResult(null, places, checked, rowsNanos / 1e9, checkNanos / 1e9, 0.0)
+    return SegmentResult(null, places, checked, rowsNanos / 1e9, checkNanos / 1e9, 0.0, held)
 }
 
 private fun softPic(p: GrayPic): GrayPic {

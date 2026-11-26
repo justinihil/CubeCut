@@ -35,8 +35,12 @@ import kotlin.math.sqrt
 /** Sizes of "around it", in pixels, for small to big digits. */
 private val BLOCKS = intArrayOf(9, 15, 31, 61)
 
-/** The gaps between strokes are closed with a circle of this share of the block: small ones first, so that digits don't join each other. */
-private val CLOSINGS = doubleArrayOf(0.2, 0.33, 0.47)
+/**
+ * The gaps between strokes are closed with a circle of this share of the block: small ones first, so that digits don't join each other.
+ * The smallest is for screen fonts with thick strokes close together (csTimer's "digital 4"): with 0.2, its digits already join each
+ * other or the text beside them at the block that suits their size. It costs a third more time for rows.
+ */
+private val CLOSINGS = doubleArrayOf(0.1, 0.2, 0.33, 0.47)
 
 /** Digits smaller or bigger than this, in pixels, are not looked for. */
 private const val MIN_DIGIT = 14
@@ -44,6 +48,21 @@ private const val MAX_DIGIT = 220
 
 /** A row steeper than this (height per width), after turning the picture, is not a row of digits. */
 private const val MAX_ROW_SLOPE = 0.8
+
+/**
+ * A digit in two blobs above each other (see `stacked`): each is this share of their height together, at most this far apart. Tried
+ * alongside the blobs themselves; without it a 1 whose two strokes don't touch is left out of a row, and with it the grid.
+ */
+private const val PART_MIN = 0.25
+private const val PART_MAX = 0.7
+private const val PART_GAP = 0.25
+
+/**
+ * ...and the two are bars (no wider than this share of their height: a 1) or halves of the same width right above each other (an 8),
+ * each filling at least this share of its box. Pairing any two blobs made seven times as many rows to read, nearly all of them noise.
+ */
+private const val PART_WIDE = 0.7
+private const val PART_FULL = 0.35
 
 /** A first row needs this many digits, and at most this many blobs next to each other are looked at. */
 private const val ROW_DIGITS = 3
@@ -328,12 +347,13 @@ private val ROUGH_SHAPES: List<FloatArray> by lazy { ROW_SHAPES.map { s -> halve
 // rows
 // ---------------------------------------------------------------------------------------
 
-/** A digit-sized blob, with its box in the turned picture. */
-private class Piece(val blob: Blob, val x0: Double, val y0: Double, val x1: Double, val y1: Double) {
+/** A digit-sized blob, or two above each other ([parts]), with its box in the turned picture. */
+private class Piece(val parts: List<Blob>, val x0: Double, val y0: Double, val x1: Double, val y1: Double) {
     val w = x1 - x0
     val h = y1 - y0
     val cx = (x0 + x1) / 2
     val cy = (y0 + y1) / 2
+    val area = parts.sumOf { it.area }
 }
 
 /** The seven-segment rows of [pic], best first. The work is shared between the processor's cores. */
@@ -357,26 +377,76 @@ fun segmentRows(pic: GrayPic): List<SegmentRow> {
 private fun rowsOf(blobs: Blobs, block: Int, dark: Boolean): List<SegmentRow> {
     val least = max(MIN_DIGIT.toDouble(), block * 1.1)
     val most = min(MAX_DIGIT.toDouble(), block * 5.5)
-    // (in the turned picture a blob is at most this much bigger or smaller)
-    val near = blobs.list.filter { b -> max(b.w, b.h) * 1.42 >= least && max(b.w, b.h) <= 1.42 * 1.6 * most }
+    // (in the turned picture a blob is at most this much bigger or smaller; a part of a digit is smaller)
+    val whole = blobs.list.filter { b -> max(b.w, b.h) * 1.42 >= least && max(b.w, b.h) <= 1.42 * 1.6 * most }
+    val near = whole + partnered(blobs.list, least, most)
     val out = ArrayList<SegmentRow>()
     for (degrees in ROW_TURNS) {
         val turn = Flat.turn(degrees)
+        val boxes = near.map { b -> if (degrees == 0.0) Piece(listOf(b), b.x0.toDouble(), b.y0.toDouble(), b.x1 + 1.0, b.y1 + 1.0) else turned(blobs, listOf(b), turn) }
         val pieces = ArrayList<Piece>()
-        for (b in near) {
-            val p = if (degrees == 0.0) Piece(b, b.x0.toDouble(), b.y0.toDouble(), b.x1 + 1.0, b.y1 + 1.0) else turned(blobs, b, turn)
-            if (p.h >= least && p.h <= most && p.w <= 1.6 * p.h && p.w >= 0.07 * p.h && b.area >= 0.06 * p.w * p.h) pieces.add(p)
+        for (p in boxes + stacked(boxes, least, most)) {
+            if (p.h >= least && p.h <= most && p.w <= 1.6 * p.h && p.w >= 0.07 * p.h && p.area >= 0.06 * p.w * p.h) pieces.add(p)
         }
         if (pieces.size >= ROW_DIGITS) chain(blobs, pieces.sortedBy { it.cx }, turn, dark, out)
     }
     return out
 }
 
-private fun turned(blobs: Blobs, b: Blob, m: Flat): Piece {
-    val box = DoubleArray(4)
-    boxIn(blobs.runsOf(b), m, box)
-    return Piece(b, box[0], box[1], box[2], box[3])
+/**
+ * The blobs too small to be a digit that have a blob close enough to be the rest of one (see [stacked]), judged by their boxes before
+ * turning. Turning every small blob would cost most of the time for rows, and nearly all of them are alone.
+ */
+private fun partnered(list: List<Blob>, least: Double, most: Double): List<Blob> {
+    val parts = list.filter { b -> max(b.w, b.h) * 1.42 >= PART_MIN * least && max(b.w, b.h) <= 1.42 * PART_MAX * most }.sortedBy { it.x0 }
+    val small = HashSet<Blob>()
+    for ((i, a) in parts.withIndex()) for (j in i + 1 until parts.size) {
+        val b = parts[j]
+        val span = max(max(a.x1, b.x1) - min(a.x0, b.x0), max(a.y1, b.y1) - min(a.y0, b.y0)) + 1
+        if (b.x0 - a.x1 > PART_GAP * 1.42 * span) { if (b.x0 - a.x1 > PART_GAP * 1.42 * 1.42 * most) break else continue }
+        if (span * 1.42 < least || span > 1.42 * most) continue
+        if (max(b.y0 - a.y1, a.y0 - b.y1) > PART_GAP * 1.42 * span) continue
+        if (max(a.w, a.h) * 1.42 < least) small.add(a)
+        if (max(b.w, b.h) * 1.42 < least) small.add(b)
+    }
+    return small.toList()
 }
+
+/**
+ * Two blobs above each other that together are a digit: a 1 whose two strokes don't touch (csTimer's "digital" fonts, a drawn
+ * display), or a digit such as an 8 in two halves of the same width. Each is [PART_MIN] to [PART_MAX] of their height together, and they overlap across. The blobs stay
+ * pieces on their own too.
+ */
+private fun stacked(boxes: List<Piece>, least: Double, most: Double): List<Piece> {
+    val out = ArrayList<Piece>()
+    val byX = boxes.filter { it.h >= PART_MIN * least && it.h <= PART_MAX * most && it.area >= PART_FULL * it.w * it.h }.sortedBy { it.x0 }
+    for ((i, a) in byX.withIndex()) for (j in i + 1 until byX.size) {
+        val b = byX[j]
+        if (b.x0 > a.x1) break
+        val overlap = min(a.x1, b.x1) - max(a.x0, b.x0)
+        if (overlap < 0.5 * min(a.w, b.w)) continue
+        val bars = a.w <= PART_WIDE * a.h && b.w <= PART_WIDE * b.h
+        val halves = overlap >= 0.8 * max(a.w, b.w) && min(a.w, b.w) >= 0.75 * max(a.w, b.w)
+        if (!bars && !halves) continue
+        val (upper, lower) = if (a.cy < b.cy) Pair(a, b) else Pair(b, a)
+        val y0 = upper.y0
+        val y1 = lower.y1
+        val h = y1 - y0
+        if (h < least || h > most || lower.y0 - upper.y1 > PART_GAP * h || lower.y0 < upper.y1 - 0.1 * h) continue
+        if (upper.h < PART_MIN * h || upper.h > PART_MAX * h || lower.h < PART_MIN * h || lower.h > PART_MAX * h) continue
+        out.add(Piece(upper.parts + lower.parts, min(a.x0, b.x0), y0, max(a.x1, b.x1), y1))
+    }
+    return out
+}
+
+private fun turned(blobs: Blobs, parts: List<Blob>, m: Flat): Piece {
+    val box = DoubleArray(4)
+    boxIn(runsOf(blobs, parts), m, box)
+    return Piece(parts, box[0], box[1], box[2], box[3])
+}
+
+private fun runsOf(blobs: Blobs, parts: List<Blob>): IntArray =
+    if (parts.size == 1) blobs.runsOf(parts[0]) else parts.map { blobs.runsOf(it) }.reduce { x, y -> x + y }
 
 /** The box (left, top, right, bottom) around [runs] (start, end, y...) after the mapping [m]. */
 private fun boxIn(runs: IntArray, m: Flat, into: DoubleArray) {
@@ -435,15 +505,17 @@ private fun chain(blobs: Blobs, pieces: List<Piece>, turn: Flat, dark: Boolean, 
     }
 }
 
-/** One blob of a row, cut out. */
-private class Cut(blobs: Blobs, private val blob: Blob) {
-    private val w = blob.w
-    private val h = blob.h
+/** One piece of a row (one blob, or two above each other), cut out. */
+private class Cut(blobs: Blobs, parts: List<Blob>) {
+    private val bx0 = parts.minOf { it.x0 }
+    private val by0 = parts.minOf { it.y0 }
+    private val w = parts.maxOf { it.x1 } - bx0 + 1
+    private val h = parts.maxOf { it.y1 } - by0 + 1
     private val on = BooleanArray(w * h)
-    val runs: IntArray = blobs.runsOf(blob)
+    val runs: IntArray = runsOf(blobs, parts)
 
     init {
-        for (i in runs.indices step 3) for (x in runs[i]..runs[i + 1]) on[(runs[i + 2] - blob.y0) * w + x - blob.x0] = true
+        for (i in runs.indices step 3) for (x in runs[i]..runs[i + 1]) on[(runs[i + 2] - by0) * w + x - bx0] = true
     }
 
     private fun on(x: Int, y: Int): Float = if (x >= 0 && y >= 0 && x < w && y < h && on[y * w + x]) 1f else 0f
@@ -457,8 +529,8 @@ private class Cut(blobs: Blobs, private val blob: Blob) {
             val ly = top + (cy + 0.5) * (bottom - top) / ch - 0.5
             for (cx in 0 until cw) {
                 val lx = left + (cx + 0.5) * (right - left) / cw - 0.5
-                val fx = back.x(lx, ly) - blob.x0
-                val fy = back.y(lx, ly) - blob.y0
+                val fx = back.x(lx, ly) - bx0
+                val fy = back.y(lx, ly) - by0
                 if (fx <= -1 || fy <= -1 || fx >= w || fy >= h) continue
                 val ix = Math.floor(fx).toInt()
                 val iy = Math.floor(fy).toInt()
@@ -483,7 +555,7 @@ private fun readSegmentRow(blobs: Blobs, row: List<Piece>, turn: Flat, dark: Boo
     val across = row.sumOf { (it.cx - mx) * (it.cx - mx) }
     val slope = if (across > 0) row.sumOf { (it.cx - mx) * (it.cy - my) } / across else 0.0
     if (abs(slope) > MAX_ROW_SLOPE) return null
-    val cuts = row.map { Cut(blobs, it.blob) }
+    val cuts = row.map { Cut(blobs, it.parts) }
     val boxes = Array(n) { DoubleArray(4) }
     val digits = IntArray(n)
     val likes = FloatArray(n)
@@ -522,10 +594,15 @@ private fun readSegmentRow(blobs: Blobs, row: List<Piece>, turn: Flat, dark: Boo
     val best = close.maxByOrNull { it.score }!!
     if (best.score < ROW_MEAN) return null
     at(best.lean, false)                                // (fills the boxes, digits and likenesses again)
-    val text = String(CharArray(n) { if (digits[it] >= 0 && likes[it] >= ROW_DIGIT) '0' + digits[it] else '?' })
+    val all = String(CharArray(n) { if (digits[it] >= 0 && likes[it] >= ROW_DIGIT) '0' + digits[it] else '?' })
+    // (a blob at either end that is no digit, such as the last digit grown into the text beside it, would put the grid out)
+    val first = all.indexOfFirst { it != '?' }
+    val last = all.indexOfLast { it != '?' }
+    if (first < 0) return null
+    val text = all.substring(first, last + 1)
     if (text.count { it != '?' } < ROW_DIGITS) return null
     return SegmentRow(
         text, best.score, turn, slope, best.lean, best.height, best.digitWidth, best.top, best.bottom,
-        boxes.map { it[2] }.sorted().toDoubleArray(), dark
+        (first..last).map { boxes[it][2] }.sorted().toDoubleArray(), dark
     )
 }

@@ -48,6 +48,9 @@ private const val MOST_DIGITS = 6
 /** Right edges of a first row may be off a grid by at most this, in digit heights. */
 private const val OFF_GRID = 0.09
 
+/** A place right of a grid is taken in when its digit is sure and has this share of the others' contrast (see [SegmentGrid.widenedIn]). */
+private const val WIDER = 0.6f
+
 /** Looking for the best place, far ones count a little less: per squared pixel of the level picture. Less so when it was pushed away. */
 private const val FAR = 0.0006f
 private const val FAR_PUSHED = 0.00002f
@@ -112,6 +115,23 @@ data class SegmentGrid(
 
     /** Are the last digits cut off by the edge of a [w] x [h] picture? */
     fun isCutOff(w: Int, h: Int): Boolean = box(decimals + 1).let { it.left < 0 || it.top < 0 || it.right > w || it.bottom > h }
+
+    /**
+     * The grid with the places right of it that hold a digit too (at most 3 decimals). A first row misses its last digit when that digit
+     * grows into what stands beside it (csTimer's "(-0.109)"); the grid reads the picture, not blobs, so it sees that digit.
+     */
+    fun widenedIn(g: GrayPic): SegmentGrid {
+        val here = located(g, 3).first
+        var more = 0
+        while (decimals + more < 3) {
+            val t = here.copy(right = here.right + (more + 1) * pitch, decimals = decimals + more + 1)
+            val r = t.read(g, t.decimals + 1)
+            val others = r.drop(1).map { it.contrast }.sorted()
+            if (r[0].likeness < SURE || r[0].contrast < WIDER * others[others.size / 2]) break
+            more++
+        }
+        return if (more == 0) this else copy(right = right + more * pitch, decimals = decimals + more)
+    }
 
     /** The same grid ([dx], [dy]) further in the frame. */
     fun moved(dx: Double, dy: Double): SegmentGrid {

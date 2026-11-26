@@ -84,19 +84,28 @@ private class HeldPlace(first: Sighting) {
  * times stand still. The tallest number that behaves like a timer is it. [notes] gets a line for the report.
  */
 fun findHeldTimer(seen: List<Sighting>, pic: PicAt, fonts: DigitShapes, notes: MutableList<String> = ArrayList()): FoundTimer? {
+    val (shown, still) = heldPlace(seen, { standsStill(it, pic, fonts) }, notes) ?: return null
+    val rows = shown.map { it.row }
+    val frame = pic.at(still[0].t) ?: return null
+    val height = rows.map { it.height }.sorted()[rows.size / 2]
+    val numbers = Area(rows.minOf { it.left }, rows.minOf { it.top }, rows.maxOf { it.right }, rows.maxOf { it.bottom })
+    return FoundTimer(roomAround(rows, height, frame.w, frame.h), numbers, height, rows[0].dark, 0, rows[0].decimals, fonts, held = true)
+}
+
+/**
+ * The place among the numbers [seen] whose numbers behave like a timer's final times, the tallest first, with at least [VALUES_WANTED] that
+ * [standsStill]: one reading per picture there, and the ones that stand still. Null if there is none. Shared by both kinds of digits.
+ */
+fun heldPlace(seen: List<Sighting>, standsStill: (Sighting) -> Boolean, notes: MutableList<String>): Pair<List<Sighting>, List<Sighting>>? {
     val places = ArrayList<HeldPlace>()
     for (s in seen) {
         val p = places.firstOrNull { it.has(s.row) }
         if (p != null) p.seen.add(s) else places.add(HeldPlace(s))
     }
     for (p in places.filter { it.values.size >= VALUES_WANTED && it.behavesLikeATimer() }.sortedByDescending { it.height }) {
-        val still = p.values.map { v -> p.shown.first { it.row.text == v } }.take(2 * VALUES_WANTED).filter { standsStill(it, pic, fonts) }
+        val still = p.values.map { v -> p.shown.first { it.row.text == v } }.take(2 * VALUES_WANTED).filter(standsStill)
         notes.add("Final times at one place (${p.height.toInt()} px): ${p.values.take(8)}, ${still.size} stand still")
-        if (still.size < VALUES_WANTED) continue
-        val rows = p.shown.map { it.row }
-        val frame = pic.at(still[0].t) ?: continue
-        val numbers = Area(rows.minOf { it.left }, rows.minOf { it.top }, rows.maxOf { it.right }, rows.maxOf { it.bottom })
-        return FoundTimer(roomAround(rows, p.height, frame.w, frame.h), numbers, p.height, rows[0].dark, 0, rows[0].decimals, fonts, held = true)
+        if (still.size >= VALUES_WANTED) return Pair(p.shown, still)
     }
     return null
 }
