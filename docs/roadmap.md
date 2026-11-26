@@ -229,7 +229,7 @@ The scripts are in `D:\CubeCutRef\prototype\qiyi` (`frozen_q1` before 02, `froze
 **csTimer's digit fonts** (owner's videos, 2026-11-26: "digital 1" on the light theme, "digital 4" on the dark one). None of csTimer's five fonts may ship, so they are drawn on the PC only ([numbers](algorithms.md#3-reading-the-timer)).
 - ✅ **"Digital 1"**: Digital Numbers (OFL) added to the bundled fonts (owner's go). Its video: 5 of 5, every cut on the frame. Tested by the owner on the phone (2026-11-26): the light video works, the dark one says *Couldn't find the timer*, as expected.
 - ✅ **A digit in pieces makes a row unreadable**, so "digital 4" gives *Couldn't find the timer* instead of five wrong times.
-- ✅ **"Digital 4" and "digital 5"** (owner's choice B): read with the seven-segment reader, which now also finds a timer by its final times, last, when nothing else was found. The "digital 4" video: 4 of 4, 3 on the frame, and the time already on screen at the start flagged ([numbers](algorithms.md#3-reading-the-timer)). Not yet tested on the phone.
+- ✅ **"Digital 4" and "digital 5"** (owner's choice B): read with the seven-segment reader, which now also finds a timer by its final times, last, when nothing else was found. The "digital 4" video: 4 of 4, 3 on the frame, and the time already on screen at the start flagged ([numbers](algorithms.md#3-reading-the-timer)). Tested by the owner on the phone (2026-11-26): the "digital 4" video works.
 - ⬜ **"Digital 2" and "digital 3"** stay weak (drawn: 4 and 2 of 18): their digits break into many pieces. Only with a video of them.
 
 - The per-video timer columns stay for the backup.
