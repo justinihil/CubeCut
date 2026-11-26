@@ -102,6 +102,14 @@ object Backup {
         0L, 0L, o.getDouble("stop_sec"), o.optString("time_text"), "", o.getString("file_name"), o.optDouble("offset_sec", 0.0), o.optLong("exported_ms")
     )
 
+    private fun hintJson(h: MissedHint) = JSONObject()
+        .put("from_sec", h.fromSec).put("to_sec", h.toSec).put("seek_sec", h.seekSec).put("reason", h.reason.key).put("dismissed", h.dismissed)
+
+    /** (3.3-C) Null for a reason this version doesn't know. Backups before 3.3 have no hints. */
+    private fun hintOf(o: JSONObject): MissedHint? = HintReason.entries.firstOrNull { it.key == o.optString("reason") }?.let {
+        MissedHint(o.getDouble("from_sec"), o.getDouble("to_sec"), o.getDouble("seek_sec"), it, o.optBoolean("dismissed"))
+    }
+
     /** Writes the backup of everything saved into [out]. Returns (videos, solves) written. Run it on Dispatchers.IO. */
     fun write(context: Context, out: Uri): Pair<Int, Int> {
         val videos = JSONArray()
@@ -120,6 +128,7 @@ object Backup {
                     .put("trim_start_sec", f.trimStartSec.orNull()).put("trim_end_sec", f.trimEndSec.orNull())
                     .put("cuts", JSONArray().apply { cuts.forEach { put(cutJson(it)) } })
                     .put("exports", JSONArray().apply { exports.forEach { put(exportJson(it)) } })
+                    .put("hints", JSONArray().apply { SessionStore.loadHints(context, f.id).forEach { put(hintJson(it)) } })
             )
         }
         val root = JSONObject()
@@ -165,7 +174,9 @@ object Backup {
                 val cuts = (0 until cutsJson.length()).map { cutOf(cutsJson.getJSONObject(it)) }
                 val exportsJson = o.optJSONArray("exports") ?: JSONArray()
                 val exports = (0 until exportsJson.length()).map { exportOf(exportsJson.getJSONObject(it)) }
-                if (SessionStore.restoreVideo(context, f, cuts, exports)) {
+                val hintsJson = o.optJSONArray("hints") ?: JSONArray()
+                val hints = (0 until hintsJson.length()).mapNotNull { hintOf(hintsJson.getJSONObject(it)) }
+                if (SessionStore.restoreVideo(context, f, cuts, exports, hints)) {
                     added++
                     solves += cuts.size
                 } else {

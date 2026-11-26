@@ -49,6 +49,9 @@ import kotlin.math.min
 /** Hands out the whole upright picture at a given time as a gray Mat (the caller releases it), or null if there is none. */
 interface GraySource {
     fun gray(t: Double): Mat?
+
+    /** The real time of the picture [gray] gave last, or NaN if this source doesn't know it. */
+    fun lastFrameSec(): Double = Double.NaN
     fun close()
 }
 
@@ -144,6 +147,8 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         raw.release()
         return upright
     }
+
+    override fun lastFrameSec(): Double = if (lastPts >= 0) lastPts / 1_000_000.0 else Double.NaN
 
     /** The picture at second [t] exactly as the decoder makes it (not turned). */
     fun rawGray(t: Double): Mat? {
@@ -427,6 +432,8 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
         }
         return slow.gray(t)
     }
+
+    override fun lastFrameSec(): Double = fast?.lastFrameSec() ?: Double.NaN
 
     override fun close() {
         try {

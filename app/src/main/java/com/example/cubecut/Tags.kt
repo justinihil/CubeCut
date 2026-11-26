@@ -85,6 +85,17 @@ fun tagMatches(value: String, filter: String?): Boolean = filter == null || valu
 fun applyTagChoice(own: String, choice: String?): String = choice ?: own
 
 /**
+ * A clip's own tag as stored: one that comes out the same as its video's tag ([video]) is stored as "" (follows the video), so a 3x3
+ * clip in a 3x3 video is never told apart from the video's other clips, and follows the video if the video's tag changes later.
+ * Also turns NO_TAG into "" in a video that isn't tagged.
+ */
+fun normalizeClipTag(own: String, video: String): String = if (resolveTag(own, video) == video) "" else own
+
+/** True if a clip with own tags ([ownPuzzle], [ownCategory]) shows the same as its video's tags. */
+fun followsVideoTags(ownPuzzle: String, ownCategory: String, videoPuzzle: String, videoCategory: String): Boolean =
+    normalizeClipTag(ownPuzzle, videoPuzzle) == "" && normalizeClipTag(ownCategory, videoCategory) == ""
+
+/**
  * The video's tag when a tag window's choice covers all of its clips: "" (follow) and null keep [video] as it is, NO_TAG makes it
  * not tagged, a name becomes the video's tag. Its clips then follow it (see resetOwnTag).
  */

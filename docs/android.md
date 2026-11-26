@@ -9,11 +9,13 @@ The **sources of truth** are [app/build.gradle.kts](../app/build.gradle.kts), [g
 | `namespace` / `applicationId` | `com.example.cubecut` | Fine for sideloading. Google Play would refuse `com.example.*`, and changing it later installs as a separate app. TODO(owner): decide on a final id before any store release |
 | `minSdk` | 30 (Android 11) | MediaStore trash and scoped export need 11+. Android 7–10 code was removed ([ADR-0012](adr/0012-min-sdk-30-arm64-only.md)) |
 | `targetSdk` / `compileSdk` | 37 | Current platform |
-| Release `ndk.abiFilters` | `arm64-v8a` only | OpenCV's native libraries make up most of the APK size, so other ABIs are dropped |
+| `ndk.abiFilters` (debug and release) | `arm64-v8a` only | OpenCV's native libraries make up most of the APK size, so other ABIs are dropped. Debug too since 3.3 (66 MB instead of 190), so a debug APK can be sent to the phone. x86 emulators can't run it |
 | Release `optimization.enable` | `false` (R8 off) | OpenCV (JNI) and Media3 can break under shrinking. `app/src/main/keepRules/rules.keep` is the unchanged template and has no effect while R8 is off |
 | Java target | 11 | Android Studio template default |
 | Gradle / AGP / Kotlin | Gradle 9.6.0 wrapper, AGP 9.4.1, Kotlin 2.2.10, JVM toolchain 25 (`gradle/gradle-daemon-jvm.properties`) | — |
 | Build types | `debug`, `release` (no flavors) | — |
+| `buildFeatures.buildConfig` | `true` (3.3-A) | `BuildConfig.DEBUG` shows the debug-only *Scan report* in the editor; release builds hide it |
+| Test-only dependency | `org.json:json` | Unit tests need a real `org.json` (`android.jar` has only stubs). Not in the APK |
 | Signing | **No `signingConfigs` in Gradle.** Release APKs are signed by hand with the Android Studio wizard | Keeps the keystore out of the repo (`.gitignore` excludes `*.jks`, `*.keystore`, `keystore.properties`) |
 
 The 16 KB page-size alignment of the `arm64-v8a` libraries was checked with Analyze APK for 3.0.0.
@@ -54,7 +56,7 @@ What git history and the old guide show. TODO(owner): confirm or correct.
 4. Build the signed APK: **Build → Generate Signed App Bundle or APK → APK**, choose the keystore, then the `release` build type. The output goes to `app/release/` (git-ignored).
    - **The keystore and its passwords must be backed up outside the repo.** Updates signed with a different key force users to uninstall first.
    - TODO(owner): where the keystore is kept and how it is backed up.
-5. Test the release APK on the phone before sharing. R8 is off, but release differs from debug in ABI filtering.
+5. Test the release APK on the phone before sharing. R8 is off and both build types are arm64 only, but release isn't debuggable and hides the *Scan report*.
 6. Tag the merge commit on `main` as `vX.Y.Z` and push the tag. Existing tags are lightweight. TODO(owner): confirm lightweight tags are intended.
 7. Create a GitHub Release from the tag and attach the APK. APKs are never committed.
 
