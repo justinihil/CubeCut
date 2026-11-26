@@ -1,6 +1,6 @@
 # ADR-0012: Android 11+ only, arm64-only, R8 off
 
-- **Status:** Accepted (documented retroactively)
+- **Status:** Accepted (documented retroactively). Since 4.0-0 there is no OpenCV, so its two OpenCV reasons are gone; the settings stay until the owner decides otherwise
 - **Date:** arm64-only in 2.0.2; `minSdk 30` and R8 off in the 3.0.0 review fixes
 
 ## Context

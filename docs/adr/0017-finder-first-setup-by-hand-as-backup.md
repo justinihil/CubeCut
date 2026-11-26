@@ -1,6 +1,6 @@
 # ADR-0017: The finder comes first; the setup by hand is a backup and goes in 4.0
 
-- **Status:** Accepted
+- **Status:** Accepted; done in 4.0-0 (2026-11-26): the setup by hand, its scan and OpenCV are removed
 - **Date:** 2026-11-25 (3.3-C)
 
 ## Context

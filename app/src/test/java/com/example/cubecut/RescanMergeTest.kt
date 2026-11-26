@@ -101,7 +101,7 @@ class RescanMergeTest {
 
     @Test
     fun notFoundAgain_leftoverOrAlreadyNoted_keepsItsNote() {
-        val leftoverNote = SolveAnalyzer.LEFTOVER_NOTE_START + " when the video began"
+        val leftoverNote = LEFTOVER_NOTE_START + " when the video began"
         val r = mergeRescan(listOf(cut(1.0, "8.000", note = leftoverNote, included = false), cut(30.0, "10.000", note = NOT_FOUND_AGAIN_NOTE)), emptyList(), emptyList())
         assertEquals(leftoverNote, r.cuts[0].note)
         assertEquals(NOT_FOUND_AGAIN_NOTE, r.cuts[1].note)
@@ -194,7 +194,7 @@ class RescanMergeTest {
 
     @Test
     fun leftover_isIgnored() {
-        val leftover = cut(1.0, "8.000", note = SolveAnalyzer.LEFTOVER_NOTE_START + " when the video began", included = false)
+        val leftover = cut(1.0, "8.000", note = LEFTOVER_NOTE_START + " when the video began", included = false)
         val c = check(listOf(leftover, cut(4.0, "2.000")))
         assertTrue(c.warnings.isEmpty())
         assertTrue(c.noClip.isEmpty())

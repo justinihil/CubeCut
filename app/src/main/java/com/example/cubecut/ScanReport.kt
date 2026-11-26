@@ -65,8 +65,7 @@ class ScanReportResult(val text: String)
 
 /**
  * Everything the scan report needs from the editor. [listSolves] are the expected solves from the editor's list right now.
- * [loadAttempt] gives the video's timer setup as last tried, also one that was refused (null = never tried).
- * [canRun] is false while a scan, an import or a timer setup is running. A timer that can't be found does NOT stop the report: that
+ * [canRun] is false while a scan or an import is running. A timer that can't be found does NOT stop the report: that
  * is the result then. [onRun] starts it (the editor owns the `analyzing` guard); the editor then sets [result].
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -77,7 +76,6 @@ fun ScanReportHost(
     videoUri: Uri?,
     durationSec: Double,
     listSolves: () -> List<ExpectedSolve>,
-    loadAttempt: suspend () -> SetupAttempt?,
     canRun: Boolean,
     result: ScanReportResult?,
     onResultClose: () -> Unit,
@@ -89,7 +87,7 @@ fun ScanReportHost(
     var timerKind by remember { mutableStateOf(TIMER_KINDS[0]) }
     val videoName = remember(videoUri) { videoUri?.let { displayNameOf(context, it) } ?: "" }
 
-    suspend fun listTruth() = GroundTruth(videoName, timerKind, durationSec, listSolves(), setup = loadAttempt())
+    fun listTruth() = GroundTruth(videoName, timerKind, durationSec, listSolves())
 
     // (launchers live here, outside the dialogs, so a result still arrives after the dialog closed for the file picker)
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -101,7 +99,7 @@ fun ScanReportHost(
                     val out = context.contentResolver.openOutputStream(uri, "wt") ?: throw java.io.IOException("couldn't open the file")
                     out.use { it.write(groundTruthToJson(truth).toByteArray(Charsets.UTF_8)) }
                 }
-                "Saved ${truth.solves.size} solves" + (if (truth.setup != null) " and the timer setup." else ". No timer setup was tried yet.")
+                "Saved ${truth.solves.size} solves."
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -122,8 +120,7 @@ fun ScanReportHost(
                 }
                 if (canRun) {
                     onClose()
-                    // an answer key without a setup (none was tried when it was saved) uses this video's own
-                    onRun(if (truth.setup != null) truth else truth.copy(setup = loadAttempt()), videoName)
+                    onRun(truth, videoName)
                 } else {
                     message = "Can't run now: wait for Find solves or the export to finish."
                 }
@@ -145,7 +142,6 @@ fun ScanReportHost(
                     BulletLines(
                         listOf(
                             "Finds the timer, reads it and finds solves. Your list doesn't change.",
-                            "CubeCut looks for the timer by itself. A setup by hand is graded too.",
                             "A file can be a reference file or csTimer's CSV export."
                         )
                     )
@@ -160,7 +156,7 @@ fun ScanReportHost(
                         enabled = canRun,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Compare with a file...") }
-                    if (!canRun) Text("Wait for the import, the scan or the timer setup to finish.", style = MaterialTheme.typography.labelSmall)
+                    if (!canRun) Text("Wait for the import or the scan to finish.", style = MaterialTheme.typography.labelSmall)
 
                     HorizontalDivider(Modifier.padding(vertical = 10.dp))
                     Text("Save the list as a reference file", style = MaterialTheme.typography.titleSmall)
@@ -201,37 +197,15 @@ fun ScanReportHost(
     }
 }
 
-// ---- a refused timer setup is remembered per video (debug builds only, outside the database), so the report and the answer key know
-// where the display was and what it showed. A setup that worked is in the database (SessionStore.saveTimerSetup) and wins. ----
-private const val ATTEMPT_PREFS = "scan_report_setups"
-
-/** Remembers a setup that was refused on this video ([attempt] null = forget it, a setup worked). */
-fun rememberRefusedSetup(context: Context, footageId: Long, attempt: SetupAttempt?) {
-    val e = context.getSharedPreferences(ATTEMPT_PREFS, Context.MODE_PRIVATE).edit()
-    if (attempt == null) e.remove(footageId.toString()) else e.putString(footageId.toString(), setupAttemptToJson(attempt))
-    e.apply()
-}
-
-/** The video's timer setup as last tried: the one that worked, else the refused one, else null. Reads storage: call it on IO. */
-fun lastSetupAttempt(context: Context, footageId: Long): SetupAttempt? {
-    val f = SessionStore.getFootage(context, footageId)
-    val corners = f?.let { SessionStore.timerCornersOf(it) }
-    if (f != null && corners != null) return SetupAttempt(f.timerFrameMs, corners.toList(), f.timerTyped)
-    return context.getSharedPreferences(ATTEMPT_PREFS, Context.MODE_PRIVATE).getString(footageId.toString(), null)?.let { parseSetupAttempt(it) }
-}
-
 /**
- * Runs the report and returns its text. CubeCut always tries by itself (3.3-C): finds the timer, reads the held times, scans. A timer
- * that was also set up by hand is graded first, the old way, from scratch as [truth] says: that is the result the other must not fall below.
+ * Runs the report and returns its text: CubeCut finds the timer, reads the held times and scans, as Find solves does (3.3-C).
  * Blocking; run it on Dispatchers.Default. Everything it opens is freed here.
  */
 fun runScanReportStages(
     context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, videoName: String, app: String,
     onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
 ): String {
-    val byHand = if (truth.setup != null) byHandReport(context, uri, durationMs, truth, truth.setup, videoName, app, onProgress, isCancelled) else ""
-    val byItself = byItselfReport(context, uri, durationMs, truth, videoName, app, onProgress, isCancelled)
-    return if (byHand.isEmpty()) byItself else "SET UP BY HAND\n$byHand\n\nBY ITSELF\n$byItself"
+    return byItselfReport(context, uri, durationMs, truth, videoName, app, onProgress, isCancelled)
 }
 
 private fun noTimerText(truth: GroundTruth, videoName: String, why: String, app: String) =
@@ -251,8 +225,7 @@ private fun byItselfReport(
         var inPictures = 0L
         val pic = PicAt { t ->
             val start = System.nanoTime()
-            val gray = source.gray(t)
-            val p = if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
+            val p = source.gray(t)
             pictures++
             inPictures += System.nanoTime() - start
             p
@@ -367,8 +340,7 @@ private fun segmentReport(
     var inPictures = 0L
     val pic = PicAt { t ->
         val start = System.nanoTime()
-        val gray = source.gray(t)
-        val p = if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
+        val p = source.gray(t)
         pictures++
         inPictures += System.nanoTime() - start
         p
@@ -418,8 +390,7 @@ private fun heldSegmentReport(
     var inPictures = 0L
     val pic = PicAt { t ->
         val start = System.nanoTime()
-        val gray = source.gray(t)
-        val p = if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
+        val p = source.gray(t)
         pictures++
         inPictures += System.nanoTime() - start
         p
@@ -455,41 +426,6 @@ private fun heldSegmentReport(
         scanReportText(truth, videoName, true, where, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
     }
     return text + how.joinToString("\n", "\n")
-}
-
-private fun byHandReport(
-    context: Context, uri: Uri, durationMs: Long, truth: GroundTruth, attempt: SetupAttempt, videoName: String, app: String,
-    onProgress: (Int, Int) -> Unit, isCancelled: () -> Boolean
-): String {
-    val frame = grabFrame(context, uri, attempt.frameMs) ?: return noTimerText(truth, videoName, "No picture at ${videoPlace(attempt.frameMs / 1000.0)}.", app)
-    val res = TimerVision.createSetup(frame, attempt.corners.toDoubleArray(), attempt.typed)
-    val setup = res.setup
-    val ref = res.reference
-    if (setup == null || ref == null) return noTimerText(truth, videoName, "The setup by hand was refused: " + res.message, app)
-    val engine = TimerEngine(setup, ref)
-    try {
-        val started = System.currentTimeMillis()
-        val scan = SolveAnalyzer.analyze(context, uri, durationMs, engine, onProgress, isCancelled)
-        val seconds = (System.currentTimeMillis() - started) / 1000.0
-        val found = "Set up by hand. " + res.message
-        if (truth.timesOnly.isNotEmpty()) {
-            return timesReportText(truth, videoName, true, found, compareTimes(truth.timesOnly, scan.solves), seconds, scan.readableFraction, app)
-        }
-        engine.forgetPosition()
-        val source = openFrameSource(context, uri, durationMs)
-        val reading = try {
-            gradeReading(truth.solves, engine.decimals, durationMs / 1000.0) { t ->
-                if (isCancelled()) throw ScanCancelled()
-                val gray = source.gray(t)
-                if (gray == null) null else try { engine.readDigitsGray(gray) } finally { gray.release() }
-            }
-        } finally {
-            source.close()
-        }
-        return scanReportText(truth, videoName, true, found, reading, compareScan(truth.solves, scan.solves), seconds, scan.readableFraction, app)
-    } finally {
-        engine.release()
-    }
 }
 
 private fun copyText(context: Context, text: String) {

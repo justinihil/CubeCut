@@ -118,7 +118,7 @@ fun computeClips(items: List<CutItem>, beforePad: Double, afterPad: Double, dura
     var number = 0
     for (i in order) {
         val item = items[i]
-        if (!item.included && item.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START)) continue   // same as deleted
+        if (!item.included && item.note.startsWith(LEFTOVER_NOTE_START)) continue   // same as deleted
         val before = item.beforePad ?: beforePad
         val after = item.afterPad ?: afterPad
         val end = if (durationSec > 0) min(item.stopSec + after, durationSec) else item.stopSec + after

@@ -6,7 +6,7 @@ Contents:
 1. Finding solves
 2. Where frames come from
 3. Reading the timer
-4. Learning a timer (setup)
+4. Learning a timer (setup by hand, removed in 4.0)
 5. Clips
 6. Viewer still-to-video handover
 7. Tuning map
@@ -16,22 +16,19 @@ Contents:
 
 ## 1. Finding solves
 
-Entry point: `SolveAnalyzer.analyze`, which calls `scan`. The scan only needs a function `read(t)` that returns the digits shown at second `t` (for example `"12412"`), an all-zero string for 0.000, or `null` when unreadable. In the app, `read` is `memoReader` (memoised per millisecond) over a `GraySource` plus `TimerEngine.readDigitsGray`. That separation keeps the decision logic testable without a phone: `SolveAnalyzerScanTest` runs it on a simulated display (`FakeDisplay`, see [§ 8](#8-reference-measurements)).
+Entry point: *Find solves* calls `analyzeByItself` (`AutoScan.kt`). It finds the timer ([§ 3](#3-reading-the-timer)), then scans it. A scan only needs "the time shown at second t" (or nothing when unreadable), so its decision logic is tested without a phone. There are three scans, for the three kinds of timer:
+- **a timer that shows its running time** (solid digits): `scanFoundTimer` (`FinderScan.kt`);
+- **a seven-segment timer**: the same scan, through `SegmentTracker.scanSegments`;
+- **a timer found by its final times** (running time hidden or in whole seconds): `scanHeldTimer` (`HeldScan.kt`).
 
+All three share the idea and the steps at the top of `FinderScan.kt`. Until 4.0-0 they also had a fourth scan, for a timer set up by hand (`SolveAnalyzer`), from which these steps come:
 1. **Coarse scan.** Read every `SCAN_STEP` (0.5 s). The step widens to `ZERO_STEP` (2 s) while the display shows zero, and to `HOLD_STEP` (2 s) while it still shows an already-found time. An unreadable frame keeps the 0.5 s step.
-2. **Stopped timer.** The same non-zero time on at least `MIN_AGREE` (2) of the last `RECENT_N` (6) readable reads, within `AGREE_WINDOW_SEC` (6 s), with **no clearly different reading in between**. A running timer never agrees with itself. *Look-alikes* (same length, one digit differs by 1↔4 or 1↔7, `confusable`) do not break a run. These are the reader's two known errors.
-3. **Vote.** Read `LOCK_SEC` (3 s) more at 0.5 s steps and count. `pickWinner` / `beats` count a version containing 4 or 7 **double** against its "1" look-alike, because the reader turns 4/7 into 1 but never the reverse. Under 60 % agreement (inline in `scan`) adds the note "time not steady … check it".
-4. **First frame** (`firstAppearance`). From the earliest read of the winner, walk back in `COARSE_BACK_STEP` (0.5 s) steps to the nearest frame showing something else. Then `bisect` down to one frame (`FINE_STEP` = 1/60 s), which takes about 5 reads.
-   - If a middle frame is unreadable, it falls back to `walkBack` at `BACK_STEP` (0.1 s), then frame by frame within `FINE_WINDOW`.
-   - Two readable contradicting frames in a row end a walk; a single odd reading is forgiven.
-   - It never goes back more than `BACK_MAX_SEC` (4 s).
-   - The result is `stopSec`: **the cut**.
-5. **Move on.** Look-alikes of the found time count as the same hold for up to `HOLD_MERGE_SEC` (12 s), so a misread of one hold never becomes a second solve. A zero or a clearly different time ends the hold.
-6. **Left-over.** A time already on the display when the video starts (no earlier frame differs, within the first second) is switched off with a note starting `LEFTOVER_NOTE_START`. `isLeftover()` identifies it. It counts as deleted in the clip maths while it stays off.
+2. **Stopped timer.** The same time on at least `MIN_AGREE` (2) of the last `RECENT_N` (6) readable reads, within `AGREE_WINDOW_SEC` (6 s). A running timer never agrees with itself.
+3. **Vote.** Read `LOCK_SEC` (3 s) more at 0.5 s steps. The time read most often wins; the running time before it can overrule that (start to now must fit). Under 60 % agreement adds the note "time not steady … check it".
+4. **First frame.** Walk back in `COARSE_BACK_STEP` (0.5 s) steps to the nearest picture that shows something else, never more than `BACK_MAX_SEC` (4 s); then every frame of that gap ([§ 3](#3-reading-the-timer), *Scanning a found timer*). The result is `stopSec`: **the cut**.
+5. **Left-over.** A time already on the display when the video starts (no earlier frame differs, within the first second) is switched off with a note starting `LEFTOVER_NOTE_START`. `isLeftover()` identifies it. It counts as deleted in the clip maths while it stays off.
 
-Cancellation: `isCancelled` is polled before each coarse read and each vote read, and throws `ScanCancelled`. The first-frame search of the current solve finishes first. `ScanResult.readableFraction` below 25 % triggers the amber "timer hard to read" note.
-
-**Known weakness:** a held time read without its last digit (`1151` while `11517` is held) can become a separate solve. With a quarter of the held frames short, the simulator splits the hold in 132 of 200 runs. In 1 of them the short read also won the vote (a tie goes to the read that triggered the stop), so the real time was never reported. The too-fast check (see [§ Checks](#checks-after-a-scan)) flags it afterwards but doesn't prevent it. The ignored test `heldTimeMissingLastDigit_isTheSameHold` reproduces it. Not fixed: this scan is only the backup since 3.3-C and goes in 4.0-0 (3.3-B, which would have fixed it, was dropped).
+Cancellation: `isCancelled` is polled before every read and throws `ScanCancelled`. `ScanResult.readableFraction` below 25 % triggers the amber "timer hard to read" note.
 
 ### Checks after a scan
 
@@ -59,7 +56,7 @@ Deleted cuts leave no trace, so a re-scan can bring one back. That was a deliber
 
 ## 2. Where frames come from
 
-`GraySource.gray(t)` returns the whole upright grey picture as an OpenCV `Mat`. **The caller releases it.** `openFrameSource` returns an `AutoSource`:
+`GraySource.gray(t)` returns the whole upright grey picture as a `GrayPic` (plain bytes). Since 4.0-0 the app has no OpenCV; the grey values are worked out as OpenCV did (the same brightness weights, the same rounding, the same 16–235 stretch), so the readers see the same pictures as before. `openFrameSource` returns an `AutoSource`:
 
 - **`CodecSource`**: one `MediaCodec` decoder that keeps running, with no surface. It reads the Y plane via `getOutputImage`, honouring the crop and stride, with no Bitmap.
   - It only jumps when the target is behind the decoder or more than `SEEK_PAYS_OFF_US` (0.3 s) ahead. A second extractor (`probe`) finds the keyframe.
@@ -67,34 +64,18 @@ Deleted cuts leave no trace, so a re-scan can bring one back. That was a deliber
   - The rotation tag is not applied by the decoder, so the picture is rotated here.
 - **`RetrieverSource`**: `MediaMetadataRetriever.getFrameAtTime(OPTION_CLOSEST)`. It works everywhere but takes about 250 ms per read. It is the fallback and is also used by `calibrate`.
 - **`calibrate`**: at 50 %, then 30 %, then 70 % of the video, it takes the first frame with detail (std-dev ≥ 10) and compares the two sources.
-  - Both frames are resized to 96×96 and compared by normalised correlation, at each of the 4 rotations.
-  - It needs a match of at least 0.85, which also settles the rotation.
+  - Both frames are shrunk to 96×96 by averaging (`CHECK_SIZE`) and compared by normalised correlation, at each of the 4 rotations.
+  - It needs a match of at least 0.85 (`CHECK_MATCH`), which also settles the rotation.
   - If the check fails, the decoder throws, or it stalls for about 4 s, the scan switches to `RetrieverSource` for good.
   - Logcat tag `CubeCut`, lines starting `Frame source:`, say which source is used and why.
 
-`TimerEngine.readDigitsGray` first tries the display's previous position (`lastQuad`). It re-runs the shape finder every `REFIND_EVERY` (20) quick reads, or whenever a quick read fails. This is not used in fixed-camera mode. `forgetPosition()` is called at the start of each scan.
-
-**Tried and removed:** scanning in 2–3 parallel pieces gave no gain (105 s vs 107 s), because the hardware decoder is the bottleneck. **Declined by the owner:** a cropped ORB search near the last position.
+**Tried and removed:** scanning in 2–3 parallel pieces gave no gain (105 s vs 107 s), because the hardware decoder is the bottleneck.
 
 ## 3. Reading the timer
 
-For each frame:
-1. **Find the display.**
-   - **Shape tracking** (`ShapeFinder`): ORB features plus a RANSAC homography against a reference picture of the timer body, with the display masked out. It needs at least 14 matches and a reference with at least 30 features. Tested to cope with roughly 0.8×–1.4× zoom and mild side angles.
-   - **Fixed-camera mode** (`fixedPosition`): used when the reference has under 30 features, as with a plain PC or phone screen. The saved corners are used as-is, so the camera and the window must not move.
-2. **Straighten** the four corners into a canvas 380 px wide (`CANVAS_W`), 80–260 px tall. `readCorners` (a snug box) is read; `corners` (the box the user marked) is tracked.
-3. **Prep** (`TimerVision.prep`): contrast stretch (1st–99th percentile), optional invert, shear to undo italic, blur, then an adaptive threshold.
-4. **Digit columns** (`groups`):
-   - A column counts if it is at least 11.5 % lit and its lit height is at least 35 % of the tallest column. This drops icons, text, the decimal point and colons.
-   - Neighbouring columns (gap ≤ 2 px) are grouped, and groups under 8 px are dropped.
-   - `refineBand` trims the row band to the rows the digits cover.
-5. **Cells.** The offsets learned at setup, measured from the rightmost digit, are stretched to `MAX_SLOTS` (8) using the median pitch. So one setup reads `9.87`, `12.34` and `1:02.34`. At least `max(3, decimals + 1)` digits are required.
-6. **Classify.** Seven-segment fill fractions decide the digit. Narrow cells are 1, 7 (thin top bar) or a 4 with faded left strokes. A missing inner digit gets one more, more sensitive look.
-7. If any digit is unclear, the whole frame returns `null`.
+Until 4.0-0 a timer could also be **set up by hand**: four dots around the display and its time typed in, then an ORB shape finder followed the display and a seven-segment reader read its cells (`TimerReader.kt`, `DisplayReaders.kt`). That way was the backup from 3.3-C ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)) and is gone; what CubeCut can't read is added by hand in the editor. Its measurements stay in [§ 8](#8-reference-measurements).
 
-The reader-specific part (steps 4–6) sits behind `DisplayReader` ([ADR-0014](adr/0014-display-reader-seam.md)). `SegmentReader` (id `"segment"`) is the only reader behind it.
-
-**Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A separate reader that needs no display position. *Find solves* uses it first on every video (`analyzeByItself` in `AutoScan.kt`).
+**Solid digits** (csTimer, phone apps; `SolidDigits.kt`, 3.3-C). A reader that needs no display position. *Find solves* uses it first on every video (`analyzeByItself` in `AutoScan.kt`).
 1. Black-and-white by comparing each pixel with the average around it (`SEARCH_BLOCKS`, three sizes), for light and dark digits.
 2. Joined blobs of digit size are chained into rows: neighbours at most 0.75 digit heights apart, or 1.2 when a point or colon stands between them (fixed-width fonts); a row needs exactly one decimal point, and may have one colon before it (`1:04.42`).
    A **colon** is two dots of about the same size above each other, between 0.25 and 0.8 digit heights apart (`markBetween`). It may stand on the line or halfway up. Minutes have one or two digits, seconds after a colon two, below 60. A time with a colon but no decimals (a clock) isn't read. Hours aren't read.
@@ -197,27 +178,9 @@ On the owner's phone (2026-11-24, debug build 3ffa64e), video 01: found by itsel
 
 **Two clocks.** Samsung videos start with an edit list: their first frame is shown at 0.05 to 0.07 s of the file's own time. Android (and so CubeCut's cuts and exports) uses that time; `ffmpeg` and `ffprobe` start the same frame at 0. A place measured with ffmpeg needs that offset (the first frame's composition offset minus the edit list's `media_time`) before it goes into a reference file. The `.places.txt` files in `D:\CubeCutRef` are in ffmpeg's time, because `ReferenceVideoTest` uses ffmpeg; the `.groundtruth.json` files are in Android's.
 
-**Debugging tip:** before blaming a font, look at the straightened black-and-white picture that *Read timer here* shows. An earlier "italic touching font" theory turned out wrong when that picture was measured.
+## 4. Learning a timer (setup by hand, removed in 4.0)
 
-## 4. Learning a timer (setup)
-
-`TimerVision.createSetup(frame, corners, typed)`:
-1. Cuts a reference picture around the display (about 5.2 × 2.6 display widths) and builds a `ShapeFinder`. If the reference has under 30 features, it uses fixed-camera mode.
-2. Tries each available reader in `DisplayReaders.all`. The first strict `learn()` that **reproduces the typed number exactly** wins. For segments, it tries:
-   - light and dark;
-   - the two sharpest shear values in `SHEARS`;
-   - every split of the stroke groups into the typed digit count.
-
-   It keeps only layouts that look like a real timer (`plausibleLayout`): even spacing within 22 %, decimal gap 0.95–1.9× pitch, colon gap 0.95–2.4×, digit width ≤ 16 % of the canvas, digits inside 10.5–91.8 % of it.
-3. If nothing reproduces the number, `learnUnverified` saves the closest layout **with a warning**. Setup fails outright only when no digit-like shapes fit at all.
-4. `tightenQuad` (verified layouts only) builds a snug box: digits take 78 % of the width, with 12 % / 10 % side margins and an 18 % vertical margin. The snug box is kept only if the typed number is still reproduced.
-5. A test read of the setup frame is shown in the message.
-
-Typing convention: the number box has no colon, so `102.34` means 1:02.34 **in the setup screen only**. Elsewhere `parseTimeSeconds` reads `102.34` as 102.34 s (see [known-issues](known-issues.md)).
-
-**Rule for users:** set up on a frame that shows a **real final time**, not 0.000. Zeros give the learner nothing to tell digits apart, and an all-zero typed number adds a warning to the message.
-
-**Persistence:** since 3.0.0 only the frame time, the corners and the typed number are saved per video (`SessionStore.saveTimerSetup`). Opening the video grabs that frame again and re-runs `createSetup`. The learned `DigitLayout` itself is never stored.
+Removed in 4.0-0, with the setup by hand (§ 3). The finder learns a timer by itself, from the video, every time it scans ([§ 3](#3-reading-the-timer)): nothing it learns is stored.
 
 ## 5. Clips
 
@@ -251,15 +214,13 @@ This is the black-flash bug that took five rounds to fix. In `ClipViewer`:
 
 | Area | Where |
 |---|---|
-| Scan speed vs. catching short holds | Top of `SolveAnalyzer.kt` (`SCAN_STEP`, `ZERO_STEP`, `HOLD_STEP`, `MIN_AGREE`, `RECENT_N`, `AGREE_WINDOW_SEC`, `LOCK_SEC`, `HOLD_MERGE_SEC`, first-frame steps); "not steady" 60 % inline in `scan` |
-| Vote bias, look-alikes | `beats` / `pickWinner` / `confusable` in `SolveAnalyzer.kt` |
-| Frame source | `SEEK_PAYS_OFF_US`, the 0.85 threshold in `calibrate` (`FrameSource.kt`); `REFIND_EVERY` in `TimerEngine` |
-| Digit thresholds | Inline numbers in `TimerVision` (`TimerReader.kt`); `SHEARS`, `plausibleLayout` |
-| Shape finder | `ShapeFinder`: `minMatches` 14, ORB 2500 features, scale 0.5 |
+| Scan speed vs. catching short holds | Top of `FinderScan.kt` (`SCAN_STEP`, `ZERO_STEP`, `HOLD_STEP`, `MIN_AGREE`, `RECENT_N`, `AGREE_WINDOW_SEC`, `LOCK_SEC`, first-frame steps, clock checks); "not steady" 60 % inline in `found` |
+| Frame source | `SEEK_PAYS_OFF_US`, `CHECK_SIZE`, `CHECK_MATCH`, `CHECK_DETAIL` (`FrameSource.kt`) |
+| Finding and reading the timer | The tops of `TimerFinder.kt`, `SolidDigits.kt`, `HeldFinder.kt`, `HeldScan.kt`, `SegmentRows.kt`, `SegmentGrid.kt`, `SegmentFinder.kt`, `SegmentTracker.kt`; hints in `MissedSolves.kt` |
 | Checks and merge | `SLACK_SEC`, `SLACK_UNKNOWN_SEC`, `MIN_SOLVE_CYCLE_SEC` (`RescanMerge.kt`); `SAME_SOLVE_SEC` (`ClipExporter.kt`) |
 | Clip maths and export | `computeClips`; `START_BUFFER` / `MAX_BUFFER` / `AUDIO_SLACK_US` (`ClipExporter`) |
 | Defaults | `DEFAULT_INCLUDE_SCRAMBLE` (`MainActivity.kt`); buffer defaults 2.5 s in the schema and editor state |
-| Find-solves estimate | `estMin` = 0.3 × video length (`MainActivity.kt`); overestimates since the speed-up |
+| Find-solves estimate | `estMin` = 0.15 × video length (`MainActivity.kt`); measured 0.09 to 0.11 |
 | Editor layout | Video height `0.27f` (`MainActivity.kt`); timeline `64.dp` / film strip `38.dp`, `CROWDED_DP` / `ROOMY_DP` (`Timeline.kt`) |
 | Viewer taps | `DOUBLE_TAP_MS`, `SKIP_STREAK_MS`, `SKIP_HINT_MS` (top of `Gallery.kt`) |
 | Gallery and thumbnails | `VIEWER_PICTURE_HEIGHT`, `MIN_COLUMNS` / `MAX_COLUMNS` (`Gallery.kt`); `TARGET_HEIGHT`, `DISK_LIMIT` / `DISK_TRIM_TO` / `TRIM_EVERY`, the `Semaphore(2)` (`Thumbnails.kt`) |
@@ -276,21 +237,21 @@ These were measured on the owner's Galaxy S25 Ultra with a 1080×1920, 60 fps HE
 | `MediaCodec` (current) | 26.8 s | 15.0 s (358 reads) | 10.2 s | 1.3 s |
 
 **Known-good clips** (regression references; the videos are not in the repo):
-- `My_movie_7.mp4` (212 s, dim, hands often cover the display; set up at about 0:35 showing 12.412) should give exactly six solves: `12.412`, `11.435`, `11.263`, `12.151`, `20.343`, `19.316`. The 12.412 solve sometimes reads `12.112`, and the 4-bias vote should settle it.
+- `My_movie_7.mp4` (212 s, dim, hands often cover the display) should give exactly six solves: `12.412`, `11.435`, `11.263`, `12.151`, `20.343`, `19.316`. With the setup by hand (before 4.0) the 12.412 solve sometimes read `12.112`.
 - `20261005_131422_1.mp4` (69 s) should give `11.108` and `14.338`.
 - TODO(owner): record the expected first-frame times and the `Done in …s` line for these, as the guide asked.
 
 ### Ground-truth harness (3.3-A)
 
-Every scan change is measured twice: on a simulated display in the unit tests, and on the owner's reference videos with the debug scan report.
+Every scan change is measured on drawn and simulated pictures in the unit tests (`FinderScanTest`, `HeldTimerTest`, `SegmentFinderTest`, `MissedSolvesTest`), on the reference videos on the PC (`ReferenceVideoTest`), and on the phone with the debug scan report.
 
-**Simulated baseline** (`SolveAnalyzerScanTest.noisySessions_baseline`; `FakeDisplay` in `src/test`). The setup is 40 sessions × 22 solves, 60 fps, 12 % unreadable frames, and 20 % of frames with one 4/7 read as 1. These are the old Python prototype's settings; the prototype isn't in the repo and claimed 876/880 found, 0 false, every cut within 0.25 s.
+**Simulated baseline of the scan by hand** (history: `SolveAnalyzerScanTest.noisySessions_baseline` went with that scan in 4.0-0; `FakeDisplay` stays in `src/test`). The setup is 40 sessions × 22 solves, 60 fps, 12 % unreadable frames, and 20 % of frames with one 4/7 read as 1. These are the old Python prototype's settings; the prototype isn't in the repo and claimed 876/880 found, 0 false, every cut within 0.25 s.
 
 | Measured | Found | False | Wrong time | Cut on the frame (≤ 0.02 s) | Within 0.1 s | Worst cut |
 |---|---|---|---|---|---|---|
 | 3.3-A (2026-11-23) | 880 / 880 | 0 | 2 | 809 | 871 | 0.183 s |
 
-The test fails if a change lowers *found*, *on the frame* or *within 0.1 s*, or raises *false* or *wrong time*; update its floors and this table when a change improves them. The off-frame cuts by cause (same 880 solves, measured 2026-11-24):
+The off-frame cuts by cause (same 880 solves, measured 2026-11-24):
 
 | Noise | On the frame | Early | Late | Worst early / late |
 |---|---|---|---|---|
@@ -334,7 +295,7 @@ What the QiYi rows show (checked against the keys, 2026-11-25):
 Phone runs: csTimer 01 25 / 25 (2026-11-24); QiYi 01 and 02 55 / 55 and 30 / 30 (2026-11-25, before close calls); owner's checks of csTimer "solve", "digital 1", "digital 4" and a new flowtimer video (2026-11-26). Most of these videos were used to develop the readers, so these numbers are better than on footage never seen.
 
 **How it works.** An answer key says what a video should give, and the debug *Scan report* (under *Find solves* in the editor) grades the app against it **without changing the list**. Each stage depends on the one before, so the report shows where a video fails:
-1. **Timer:** was it found? CubeCut looks by itself (3.3-C), with no setup and nothing from the answer key. If the video also has a setup by hand, that is tried from scratch and graded first, the old way. *NOT FOUND* is a result, and the report still runs.
+1. **Timer:** was it found? CubeCut looks by itself (3.3-C), with nothing from the answer key. *NOT FOUND* is a result, and the report still runs.
 2. **Reading:** the display is read 6 times in the 1.1 s after every expected stop (`gradeReading`): right, wrong or unreadable. Reset displays are left out.
 3. **Scan:** Find solves from scratch: found, missed, false, wrong times, off-frame cuts (`compareScan`).
 
@@ -345,7 +306,7 @@ Phone runs: csTimer 01 25 / 25 (2026-11-24); QiYi 01 and 02 55 / 55 and 30 / 30 
 | Comes from | csTimer's CSV export, or a text file with one time per line | The editor's list, every solve checked by hand |
 | Work for you | None | Minutes to an hour |
 | Grades | Found, missed, false, wrong time | The same, plus reading and the exact cut frame |
-| Use it for | Timers that can't be set up (csTimer) | Timers that can (QiYi, Stackmat); csTimer after 3.3-C |
+| Use it for | Timers with a list of their times (csTimer) | Any timer, when the cut frames matter |
 
 A list of times has no places, so it is lined up in order. A missed solve right next to a false one counts as one wrong time. Nothing CubeCut found goes into it, so it also catches solves the scan always misses.
 
@@ -361,17 +322,17 @@ A list of times has no places, so it is lined up in order. A missed solve right 
 | Set | Videos | For |
 |---|---|---|
 | **1 (first)** | csTimer as you use it: **easy** (good light, straight on) and **hard** (dim, steep angle, hands over some stops) | 3.3-C |
-| **2** | QiYi as you use it: easy and hard, with the manual setup | The result 3.3-C must not fall below; seven-segment digits |
+| **2** | QiYi as you use it: easy and hard | Seven-segment digits |
 | 3 | A phone timer app (note its name), Stackmat, GAN; one video with the camera moved mid-session | 3.3-C |
 | 4 | **Edge cases** on any timer: a time already showing at the start, holds over 10 s, many 4s and 7s, a quick reset; glare; moiré / flicker | 3.3-B (dropped) |
 | 5 | The display in different places and sizes in the frame; +2 / DNF marks on the display; a solve over a minute; a mixed-puzzle session | 3.3-C, 3.3-E (dropped) |
 
-**Timer that can't be set up by hand (csTimer):** nothing to do in the app.
+**A list of times (csTimer):** nothing to do in the app.
 1. Export the list: csTimer's session manager → `...` on the session → *Export CSV*. The whole session is exported.
-2. Copy the video and the CSV to `D:\CubeCutRef`, with the same name. Its "before" row is *not found*, 0 found.
+2. Copy the video and the CSV to `D:\CubeCutRef`, with the same name.
 
-**Timer that can be set up by hand (QiYi, Stackmat):** debug build (run from Android Studio, or `./gradlew installDebug`).
-1. Import the video as *A session*, set up the timer with the four dots as usual, and run *Find solves*.
+**A reference file (any timer):** debug build (run from Android Studio, or `./gradlew installDebug`).
+1. Import the video and run *Find solves*. If the timer isn't found, add the solves by hand.
 2. Make the list exactly right. Check **every** solve, not only the flagged ones, and the gaps between them:
    - delete false solves; add missed ones (*Add a missed solve* at the first frame of the final time);
    - correct times in *Edit*;
@@ -381,15 +342,14 @@ A list of times has no places, so it is lined up in order. A missed solve right 
 
 The report ends with *How it was found*: what the finder did and learned, how long each part took on this phone, and which solves were flagged. A list of times can't grade the cuts; for csTimer videos with known places, a reference file (JSON, in `D:\CubeCutRef`) can.
 
-The answer key stays valid however the timer is found. The dots become a fallback after 3.3-C, and show whether the app found the right place by itself.
+The answer key stays valid however the timer is found.
 
 **After every scan or reader change:** install the new debug build, open each reference video, run *Scan report (debug)* → *Compare with the list* (or *Compare with a file…* for a list of times, after a reinstall, or on another phone) → *Copy*. A change ships only if no video gets worse. 3.3-Z writes the before and after numbers here.
 
 **File format** (`GroundTruth.kt`; `format` 1). `stopSec` is the cut to the millisecond and `time` is what the timer showed (`""` = not checked). Left-overs are never listed.
 ```json
 { "format": 1, "video": "My_movie_7.mp4", "timer": "csTimer (PC)", "durationSec": 212.3, "note": "",
-  "solves": [ { "stopSec": 41.233, "time": "12.412" } ],
-  "setup": { "frameMs": 35000, "typed": "12.412", "corners": [ 25.0, 444.0, 810.0, 388.0, 796.0, 600.0, 70.0, 704.0 ] } }
+  "solves": [ { "stopSec": 41.233, "time": "12.412" } ] }
 ```
-`setup` is the timer setup as it was tried, also when it was refused (left out if none was): the picture's time, the typed number, and the corners in frame pixels (top-left, top-right, bottom-right, bottom-left). A refused one is kept per video in the debug build's `scan_report_setups` preferences, not in the database.
+Files made before 4.0 may also hold a `setup` (the timer set up by hand); it is ignored.
 `timer` is one of `TIMER_KINDS`. A found solve within 2 s of an expected one is matched to it (closest pairs first, each used once): further than that, it's a miss plus a false solve. The report lists every miss, false solve, wrong time and cut more than one frame off, with its place in the video.

@@ -18,19 +18,17 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Shared on** | The platforms a clip was posted to, separate from the note. Set with the viewer's chips; *Filter* → *Shared on: X* / *Not shared yet* | `CutItem.sharedOn`, `GalleryClip.sharedList`, `cuts.shared_on`, `encodeSharedOn` / `decodeSharedOn`, `toggleShared`, `sharedMatches`, `updateCutSharedOn`, `GalleryUiState.sharedFilter`, `SocialChip` |
 | **Session / single solve (*One solve*)** | A video of many solves (found with Find solves), or a clip of one solve imported as it is (3.2-F): its time is typed, it may be trimmed, it stops where its clip ends | `Footage.kind`: `KIND_SESSION` / `KIND_SINGLE`, `Footage.isSingle` / `isTrimmed`; trim in `Footage.trimStartSec` / `trimEndSec`; `singleRange`, `clipsFor`; `SessionStore.createSingle` / `updateSingle`; `ImportKindDialog`, `SingleSolveDialog`, `KnownSingleDialog` (`SingleSolve.kt`); `GalleryClip.placeText` ("One solve") |
 | **Boundary (previous cut)** | Where a with-scramble clip starts: the end of the previous cut's clip, whether or not that cut is exported | Inside `computeClips` |
-| **Left over** | A time already on the display when the video began, from an earlier solve. Switched off and ignored like a deleted cut | `isLeftover()`, `SolveAnalyzer.LEFTOVER_NOTE_START`, `included = false` |
+| **Left over** | A time already on the display when the video began, from an earlier solve. Switched off and ignored like a deleted cut | `isLeftover()`, `LEFTOVER_NOTE_START` (`FinderScan.kt`), `included = false` |
 | **Check / needs a check** | A solve flagged for the user to look at: a scan note or a timing warning | `CutItem.noteNeedsCheck()`, `checkCuts` / `CutChecks.warnings`, `GalleryClip.needsCheck`, `AppColors.check` (amber) |
 | **Too close / overlap / too fast** | The three timing checks | `checkCuts`, `MIN_SOLVE_CYCLE_SEC`, `SLACK_SEC` |
 | **It's fine / Mark all as checked** | Clears a check | `CutItem.reviewed`, `cuts.reviewed`, `markCutReviewed` |
 | **Edited** | The user changed this cut, so a re-scan must leave it alone | `CutItem.edited`, `cuts.user_edited` |
 | **Added by you** | A solve added with *Add a missed solve at the playhead* | `ADDED_BY_YOU_NOTE`, `startManualCut` |
 | **Not found again** | An untouched cut that the latest Find solves didn't see | `NOT_FOUND_AGAIN_NOTE` (`mergeRescan`) |
-| **Find solves / scan** | Reading the timer along the whole video to find the cuts | `runFindSolves`, `SolveAnalyzer.analyze` / `scan`, `analyzing` flag |
+| **Find solves / scan** | Reading the timer along the whole video to find the cuts | `runFindSolves`, `analyzeByItself`, `scanFoundTimer` / `scanHeldTimer` / `scanSegments`, `analyzing` flag |
 | **Re-scan** | Find solves on a video that already has cuts. The results are merged | `mergeRescan`, `RescanResult` |
 | **Ground truth / reference video** | (3.3-A) A video whose correct solves are known: a JSON file fixed by hand, or only the times in order (csTimer's export) | `GroundTruth`, `ExpectedSolve`, `parseTimesList`, `src/test/resources/groundtruth/` |
 | **Scan report** | (3.3-A, debug builds) Grades finding the timer, reading and Find solves against the ground truth without changing the list. Runs even when there is no timer | `ScanReportHost`, `runScanReport`, `runScanReportStages`, `gradeReading`, `compareScan`, `compareTimes`, `scanReportText`, `timesReportText` |
-| **Set up timer / timer setup** | Marking the display's corners and typing the number shown, so the reader can learn the layout | `TimerSetupScreen`, `TimerVision.createSetup`, `TimerSetup`, `saveTimerSetup` |
-| **Read timer here** | A one-off read at the playhead, with the debug picture | `engine.readFrame` in `EditorScreen` |
 | **Exported** | A file exists in `Movies/CubeCut`, is not trashed, and opens | Table `exports`, `ExportedClip`, `recordExports` |
 | **Export only** | A clip whose raw video is gone, shown from its exported file | `GalleryClip.exportOnly` |
 | **Solve deleted** | An exported file whose cut was deleted in the editor | `GalleryClip.solveDeleted`, `index = -1` |
@@ -55,15 +53,12 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Finder** | Finds the timer by itself: a number that rises with the clock, then freezes. `TimerFinder.kt` |
 | **Grid** | Where the digits of a seven-segment number stand: slope, lean, distances. `SegmentGrid` |
 | **Hint** | A stretch of the video where a solve may be missing, and why. Never a clip. `MissedHint` |
-| **Set up by hand** | The backup: a timer marked with four dots and a typed number, used only when the finder finds none (until 4.0). `TimerReader.kt` |
+| **Set up by hand** | Until 4.0: a timer marked with four dots and a typed number, the backup when the finder found none. Removed in 4.0-0; what CubeCut can't read is added by hand in the editor | (gone: `TimerReader.kt`, `TimerSetupScreen.kt`, `SolveAnalyzer.kt`) |
 | **Confirmed by the clock** | Start to stop, from the running readings, equals the time on the display. `FinderScan.checkClock`, `CLOCK_NOTE` |
-| **Verified / unverified setup** | Verified means the learned layout reproduces the typed number exactly. Unverified means the closest layout was saved with a warning |
-| **Fixed-camera mode** | Setup for plain screens: the saved corners are used without shape tracking (`TimerSetup.fixedPosition`) |
 | **Quick read** | Reading at the display's previous position without running the shape finder (`lastQuad`) |
 | **Frame source** | Where the scan gets frames: `GraySource`; `CodecSource` (fast) with the `RetrieverSource` fallback, both behind `AutoSource` |
 | **Y plane** | The brightness part of a decoded frame, which is all the reader needs |
 | **ORB / RANSAC / homography** | Feature points, robust fitting and perspective transform. Together they locate the timer (`ShapeFinder`) |
 | **Keyframe** | A frame that decodes on its own. Lossless clips must start on one |
-| **`release()`** | Frees OpenCV native memory, which the garbage collector can't see |
 | **MediaStore** | Android's media database. Exports are inserted there; trash requests go through it |
 | **Foreground service** | A service with a visible notification that keeps the app alive (`AnalysisService`) |

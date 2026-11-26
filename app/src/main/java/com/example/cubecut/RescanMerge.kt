@@ -120,7 +120,7 @@ fun mergeRescan(saved: List<CutItem>, found: List<CutItem>, exportedStops: List<
         }
         // untouched and not found again: keep it (it may still be a real solve), but say so
         val note = when {
-            old.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START) || old.note.contains(NOT_FOUND_AGAIN_NOTE) -> old.note
+            old.note.startsWith(LEFTOVER_NOTE_START) || old.note.contains(NOT_FOUND_AGAIN_NOTE) -> old.note
             old.note.isEmpty() -> NOT_FOUND_AGAIN_NOTE
             else -> "${old.note}; $NOT_FOUND_AGAIN_NOTE"
         }
@@ -136,7 +136,7 @@ fun mergeRescan(saved: List<CutItem>, found: List<CutItem>, exportedStops: List<
 // ---------------------------------------------------------------------------------------
 
 /** A cut the scan switched off because its time was already on the timer when the video began (computeClips treats it as deleted). */
-fun isLeftover(c: CutItem): Boolean = !c.included && c.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START)
+fun isLeftover(c: CutItem): Boolean = !c.included && c.note.startsWith(LEFTOVER_NOTE_START)
 
 /**
  * Every cut is a solve that can be exported; the only cuts that stay switched off are the leftovers above. Cuts switched off by hand in an

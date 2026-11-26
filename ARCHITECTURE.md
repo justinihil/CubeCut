@@ -17,21 +17,18 @@ flowchart TB
   subgraph UI["UI (Compose)"]
     MA["MainActivity.kt<br/>AppRoot · EditorScreen"]
     GA["Gallery.kt<br/>GalleryScreen · ClipViewer · GalleryUiState"]
-    TS["TimerSetupScreen.kt"]
     TL["Timeline.kt"]
     NT["Notes.kt · Theme.kt"]
   end
   subgraph Domain["Pure logic (no Android UI)"]
-    SA["SolveAnalyzer.kt<br/>scan · vote · first frame"]
-    TF["SolidDigits.kt · TimerFinder.kt · FinderScan.kt · HeldFinder.kt · HeldScan.kt<br/>find, learn, scan without a setup"]
+    TF["SolidDigits.kt · TimerFinder.kt · FinderScan.kt · HeldFinder.kt · HeldScan.kt<br/>find, learn, scan"]
     SF["SegmentRows.kt · SegmentGrid.kt · SegmentFinder.kt · SegmentTracker.kt<br/>seven-segment timers"]
     MS["MissedSolves.kt<br/>where a solve may be missing"]
     RM["RescanMerge.kt<br/>merge · checks"]
     CE1["ClipExporter.kt<br/>CutItem · computeClips"]
   end
-  subgraph Vision["Image processing (OpenCV)"]
-    TR["TimerReader.kt<br/>TimerVision · ShapeFinder · TimerEngine"]
-    DR["DisplayReaders.kt<br/>DisplayReader seam"]
+  subgraph Vision["Frames"]
+    AU["AutoScan.kt<br/>analyzeByItself: video to the pure parts"]
     FS["FrameSource.kt<br/>CodecSource · RetrieverSource · AutoSource"]
   end
   subgraph Platform["Storage & platform"]
@@ -40,10 +37,9 @@ flowchart TB
     TH["Thumbnails.kt · MediaTools.kt"]
     AS["AnalysisService.kt<br/>foreground notification"]
   end
-  MA --> SA & RM & CE1 & SS & TR & TL & TS & AS & TH
+  MA --> AU & RM & CE1 & SS & TL & AS & TH
   GA --> SS & CE1 & CE2 & RM & TH
-  SA --> FS & TR
-  TR --> DR
+  AU --> FS & TF & SF & MS
   CE2 --> CE1
 ```
 
@@ -51,7 +47,6 @@ flowchart TB
 flowchart LR
   app[":app"] --> compose["Compose BOM + Material3<br/>(gradle/libs.versions.toml)"]
   app --> media3["androidx.media3 exoplayer + ui 1.10.1"]
-  app --> opencv["org.opencv:opencv 4.13.0"]
   app --> androidx["core-ktx · lifecycle-runtime · activity-compose"]
 ```
 The versions are defined in [app/build.gradle.kts](app/build.gradle.kts) and [gradle/libs.versions.toml](gradle/libs.versions.toml).
@@ -77,38 +72,33 @@ stateDiagram-v2
   ClipsTab --> Editor: Import video (OpenDocument)
   Editor --> FootageTab: Gallery button / Back (flashFootage)
   Editor --> ClipViewer: View on a card (ui.openClip)
-  Editor --> TimerSetup: Set up by hand (setupFrame != null)
-  TimerSetup --> Editor: Save / Cancel
 ```
 The Gallery and Editor both open `AboutDialog` from the credit line. The Gallery's ⋮ menu opens Settings, Sort, Filter and Recently deleted. Each dialog is a boolean or nullable "target" flag in the screen that owns it.
 
 ## Data flow
 
 ### Find solves
-`runFindSolves` first calls `analyzeByItself` (`AutoScan.kt`): `findTimer` → `scanFoundTimer`, or for a seven-segment timer `findSegments` → `SegmentTracker.follow` → `scanSegments`, on one frame source, no engine. Only when that finds no timer, or two numbers run, is a setup **by hand** used, the way drawn below ([ADR-0017](docs/adr/0017-finder-first-setup-by-hand-as-backup.md)). Without one it can end with a question (`TimerQuestionDialog`) or *Couldn't find the timer* (`NeedsUser`). From `mergeRescan` on both ways are the same.
+`runFindSolves` calls `analyzeByItself` (`AutoScan.kt`) on one frame source: `findTimer` → `scanFoundTimer`, or for a seven-segment timer `findSegments` → `SegmentTracker.follow` → `scanSegments`, or for a timer found by its final times `scanHeldTimer`. It can end with a question (`TimerQuestionDialog`) or *Couldn't find the timer* (`NeedsUser`); the solves are then added by hand. (Until 4.0-0 a timer set up by hand was the backup: [ADR-0017](docs/adr/0017-finder-first-setup-by-hand-as-backup.md).)
 ```mermaid
 sequenceDiagram
   participant E as EditorScreen.runFindSolves
-  participant S as SolveAnalyzer.analyze/scan
+  participant A as analyzeByItself (AutoScan)
   participant F as AutoSource (FrameSource)
-  participant T as TimerEngine.readDigitsGray
-  participant R as DisplayReader
+  participant P as finders and scans (pure)
   participant M as mergeRescan / checkCuts
   participant DB as SessionStore
-  E->>E: analyzing = true, startUsing(engine), AnalysisService.start
-  E->>S: Dispatchers.Default, isCancelled = cancelScan || !isActive
-  loop each read (memoised per ms)
-    S->>F: gray(t)
-    F-->>S: Mat (Y plane) or fallback retriever frame
-    S->>T: readDigitsGray(mat)
-    T->>R: read(binarised display, layout)
-    R-->>S: "12412" or null
+  E->>E: analyzing = true, AnalysisService.start
+  E->>A: Dispatchers.Default, isCancelled = cancelScan || !isActive
+  loop each picture asked for
+    P->>F: gray(t)
+    F-->>P: GrayPic (Y plane) or fallback retriever frame
   end
-  S-->>E: ScanResult(FoundSolve list, readableFraction)
-  E->>DB: loadExports (exported stops)
+  P-->>A: ScanResult(FoundSolve list, readableFraction, trace)
+  A-->>E: AutoScanResult (scan, timer place, or the choices to ask)
+  E->>DB: saveFoundTimer, loadExports (exported stops)
   E->>M: mergeRescan(saved, found, exportedStops)
-  E->>DB: markScanned, then the 400 ms debounced saveSession
-  E->>E: stopUsing(engine), AnalysisService.stop/notifyDone, analyzing = false
+  E->>DB: markScanned, saveHints, then the 400 ms debounced saveSession
+  E->>E: AnalysisService.stop/notifyDone, analyzing = false
 ```
 
 ### Export (Gallery only)
@@ -124,8 +114,8 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 
 ## Invariants (break these and something breaks)
 
-1. **Nothing touches the video, the timer engine or `cuts` while `analyzing` is true.** OpenCV objects, `TimerEngine`, `CodecSource` and `memoReader` are not thread-safe. Any new editor action must be disabled while `analyzing`. In the Gallery the equivalent guard is a running batch export (`batchDone >= 0`).
-2. **`TimerEngine` native memory is released by hand.** Every job wraps engine use in `startUsing(engine)` / `stopUsing(engine)`. A replaced engine goes through `retireEngine`. These are plain collections on the main thread, on purpose.
+1. **Nothing touches the video or `cuts` while `analyzing` is true.** `CodecSource` and the scans' memos are not thread-safe. Any new editor action must be disabled while `analyzing`. In the Gallery the equivalent guard is a running batch export (`batchDone >= 0`).
+2. *(Gone in 4.0-0: the timer engine and its native memory went with the setup by hand. The number is kept so the others don't move.)*
 3. **`footageId` is set to null first and set last when the editor switches videos.** This stops the debounced autosave from writing one video's cuts into another video's record.
 4. **Any user change to a cut sets `edited = true`** (or `user_edited` in SQL). Otherwise a re-scan overwrites it. The all-clips scramble switch is a video setting, so it does **not** count. See [ADR-0013](docs/adr/0013-rescan-merge-keeps-user-edits.md).
 5. **Re-scan matching uses the solve span only, never the scramble.** See `sameSolve` in `RescanMerge.kt`.
@@ -144,19 +134,18 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 
 | I want to change… | Look at |
 |---|---|
-| How solves are detected, voting, first-frame search | `SolveAnalyzer.scan` / `pickWinner` / `firstAppearance`; constants at the top of `SolveAnalyzer.kt`. Background in [algorithms](docs/algorithms.md#1-finding-solves) |
-| How digits are read; supported fonts | Found timers: `SolidDigits.kt`, `SegmentGrid.kt`. Set up by hand (backup): `TimerVision` in `TimerReader.kt`, `DisplayReaders.kt` |
+| How solves are detected, voting, first-frame search | `scanFoundTimer` (`FinderScan.kt`, steps at its top), `scanHeldTimer` (`HeldScan.kt`), `SegmentTracker.scanSegments`. Background in [algorithms](docs/algorithms.md#1-finding-solves) |
+| How digits are read; supported fonts | `SolidDigits.kt` (fonts in `assets/digit_shapes.bin`), `SegmentGrid.kt` |
 | Hints where a solve may be missing | `MissedSolves.kt` (pure), `MissedHintCard.kt` (the card); `SessionStore.saveHints` / `setHintDismissed`; `hints` / `hintCard` in `EditorScreen` |
 | Finding, following and scanning a seven-segment timer | `SegmentFinder.kt`, `SegmentTracker.kt`, `SegmentGrid.kt`, `SegmentRows.kt`; the scan itself is `FinderScan.kt` |
 | A timer that hides its running time or shows whole seconds | `HeldFinder.kt`, `HeldScan.kt`; `FoundTimer.readHeld` |
-| Finding the timer without a setup; the question which one | `TimerFinder.kt`, `FinderScan.kt`; `AutoScan.kt` (glue and dialog); `SessionStore.saveFoundTimer` / `timerPlaceOf` |
-| Timer setup screen and learning | `TimerSetupScreen.kt` (UI); `TimerVision.createSetup` (learning); `SessionStore.saveTimerSetup` / `timerCornersOf` (persistence) |
+| Finding the timer; the question which one | `TimerFinder.kt`, `FinderScan.kt`; `AutoScan.kt` (glue and dialog); `SessionStore.saveFoundTimer` / `timerPlaceOf` |
 | Where frames come from, decoder speed | `FrameSource.kt` (`openFrameSource`, `calibrate`) |
 | Clip start/end, scramble, buffers | `computeClips` and `parseTimeSeconds` in `ClipExporter.kt`; one clip's own buffers: `PadEditor` (`ClipSettings.kt`) in the Edit window and the viewer sheet (`ClipViewer.setPads`, then *Re-export now?* and the old file's trash warning) |
 | Export file names and where files are written | `ClipExporter.fileName` / `safeTitle` / `openOutput`; the tag comes from `tagOf` in `exportFromSession` and `ClipViewer.doExport`; the penalty part from `fileTimePart` (`Penalty.kt`) |
 | Penalty (+2 / DNF), renaming an exported file | `Penalty.kt`; `PenaltyPicker` / `rememberExportRenamer` (`ClipSettings.kt`); the Edit window (`renameExportOf` in `EditorScreen`) and the viewer sheet (`ClipViewer.setPenalty`) |
 | Re-scan merge, timing checks ("too close", "overlap", "too fast") | `mergeRescan`, `checkCuts` in `RescanMerge.kt` |
-| Measuring a scan change (simulated and real footage) | `SolveAnalyzerScanTest` / `FakeDisplay` (`src/test`); ground-truth files in `src/test/resources/groundtruth/`; `GroundTruth.kt`; the debug *Scan report* (`ScanReport.kt`, `EditorScreen.runScanReport`). See [algorithms § 8](docs/algorithms.md#ground-truth-harness-33-a) |
+| Measuring a scan change (simulated and real footage) | `FinderScanTest`, `HeldTimerTest`, `SegmentFinderTest`, `MissedSolvesTest`, `ReferenceVideoTest` (`src/test`); ground-truth files in `src/test/resources/groundtruth/`; `GroundTruth.kt`; the debug *Scan report* (`ScanReport.kt`, `EditorScreen.runScanReport`). See [algorithms § 8](docs/algorithms.md#ground-truth-harness-33-a) |
 | Adding a missed solve | `startManualCut` (`MainActivity.kt`); `solveAtPlayhead` / `solveOverlappedBy` (`RescanMerge.kt`) |
 | Importing a video, re-import of a known video | An `OpenDocument` launcher (`picker` in `GalleryScreen`, which also handles relink, or in `EditorScreen`) → `keepAccess` → `findImportedBefore` (`Reimport.kt`; a known video shows `ReimportDialog` first) → the editor's "when a video is chosen" effect on `videoUri` → `SessionStore.openOrCreate` (returns `isNew`). (3.2-F) The Gallery asks `ImportKindDialog` first for a new video; a known single solve shows `KnownSingleDialog`; the editor's picker refuses a single solve |
 | Single solves | `SingleSolve.kt`; `clipsFor` / `singleRange` (`ClipExporter.kt`); `createSingle` / `updateSingle`, the missing-single case in `loadGallery`; in `Gallery.kt`: `exportable` (untrimmed = no export), the Footage tab and Filter list leave them out, the viewer's time bar (`ClipViewer.setTime`) and *Edit* (`singleEdit`), *Delete video* / *Forget this solve* |
@@ -183,10 +172,10 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 ## Recipes
 
 ### New full-screen view or screen
-There is no router. Pick the composable that owns the context, either `GalleryScreen` or `EditorScreen`, and add a nullable state (`var x by remember { mutableStateOf<T?>(null) }`). Draw the view as an `if (x != null)` overlay at the end of the screen's root `Box`, and give it a `BackHandler` that clears the state. Copy `ClipViewer` (`ui.detail`) or `TimerSetupScreen` (`setupFrame`).
+There is no router. Pick the composable that owns the context, either `GalleryScreen` or `EditorScreen`, and add a nullable state (`var x by remember { mutableStateOf<T?>(null) }`). Draw the view as an `if (x != null)` overlay at the end of the screen's root `Box`, and give it a `BackHandler` that clears the state. Copy `ClipViewer` (`ui.detail`).
 - A view that must survive leaving the Gallery belongs in `GalleryUiState`, not `remember`.
-- Without its own `BackHandler`, Back falls through to the screen underneath. `TimerSetupScreen` has one.
-- If the view starts work on the video or engine, gate it on `analyzing` (invariant 1).
+- Without its own `BackHandler`, Back falls through to the screen underneath. `ClipViewer` has one.
+- If the view starts work on the video, gate it on `analyzing` (invariant 1).
 
 ### New dialog
 Use a boolean or a nullable "target" (`var confirmX by remember { mutableStateOf<Item?>(null) }`) and a Material3 `AlertDialog`. Write the text with `InfoNote`, `BulletLines` and `LeadAndBullets` (`Notes.kt`).

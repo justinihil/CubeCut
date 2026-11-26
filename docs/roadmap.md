@@ -66,11 +66,12 @@ What changes for the user: **importing no longer opens the editor and no longer 
 
 **Built to change easily** (owner): the tag kinds are one list, giving each kind's choices, whether a clip may differ and whether import asks for it. Every limit is a `private const val` at the top of its file.
 
-### 4.0-0 Remove the setup by hand ⬜
+### 4.0-0 Remove the setup by hand 🔶
 Owner, 2026-11-25 ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). It comes first in 4.0, so 4.0-B has no engine to move. Go given on 2026-11-26 (E2): timers the finder doesn't read yet (Stackmat, GAN, phone timer apps) are added by hand in the editor.
 - Goes: `TimerSetupScreen`, `TimerReader`, `DisplayReaders`, the scan in `SolveAnalyzer` (its constants move to `FinderScan`), *Read timer here*, the *Backup* part of the Setup box, and the "by hand" half of the scan report.
 - Stays: the solves found with it, and the timer columns, which hold the place of a found timer.
-- Check whether OpenCV can go too. It is probably most of the app's size, the new readers don't use it, and `FrameSource` hands out its pictures.
+- OpenCV goes too: `FrameSource` hands out `GrayPic`s with the same grey values (OpenCV's formula and rounding), so the readers see the same pictures. Debug APK 66 → 40 MB.
+- **Built 2026-11-26**; phone test in 4.0-T. The *Which one is your timer?* question offers *Neither of them* instead of the setup by hand: the solves are then added by hand. A found timer now replaces the place of an old setup by hand.
 
 ### 4.0-A Rename "Footage" to "Sessions" ⬜
 Owner (C1, C2). Done early, so all new 4.0 text uses the new word.
@@ -145,6 +146,5 @@ The hints came in 3.3: they are found without the editor and saved with the vide
 - Large-gallery speed: `canOpen` runs on every resume, and the editor list isn't lazy.
 - Splitting `Gallery.kt` and `EditorScreen`.
 - TalkBack labels and 48 dp touch targets.
-- Remove `TimerStore.clear`.
 - An exact (re-encoding) export option.
 - A cropped ORB search near the last position (declined).

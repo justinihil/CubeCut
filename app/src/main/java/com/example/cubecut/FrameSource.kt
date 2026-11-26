@@ -17,20 +17,17 @@
 package com.example.cubecut
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
-import org.opencv.core.Core
-import org.opencv.core.CvType
-import org.opencv.core.Mat
-import org.opencv.core.MatOfDouble
-import org.opencv.core.Size
-import org.opencv.imgproc.Imgproc
 import java.io.IOException
 import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 // ---------------------------------------------------------------------------------------
 // Where the pictures for Find solves come from.
@@ -44,11 +41,29 @@ import kotlin.math.min
 //
 // Safety net: openFrameSource() first checks that the fast path gives the same picture as the old one (and works out the
 // rotation); if anything is off, or the decoder fails at any time during the scan, it quietly goes back to RetrieverSource.
+//
+// (4.0-0) The pictures are plain GrayPic (SolidDigits.kt) instead of OpenCV Mats, so the app needs no OpenCV. The grey values are the
+// same as OpenCV gave: the same brightness formula and the same 16..235 stretch.
 // ---------------------------------------------------------------------------------------
 
-/** Hands out the whole upright picture at a given time as a gray Mat (the caller releases it), or null if there is none. */
+/** The brightness weights of OpenCV's RGB to grey, in 1/16384 (Y = 0.299 R + 0.587 G + 0.114 B), so the pictures are the same as before. */
+private const val GRAY_R = 4899
+private const val GRAY_G = 9617
+private const val GRAY_B = 1868
+private const val GRAY_SHIFT = 14
+
+/** Pictures are compared at this size when the fast source is checked: small enough to be quick, big enough to tell turns apart. */
+private const val CHECK_SIZE = 96
+
+/** The fast source is used when its picture matches the slow one at least this well (1.0 = the same). */
+private const val CHECK_MATCH = 0.85
+
+/** A picture flatter than this (standard deviation of its grey values) can't tell the rotations apart. */
+private const val CHECK_DETAIL = 10.0
+
+/** Hands out the whole upright picture at a given time as grey, or null if there is none. */
 interface GraySource {
-    fun gray(t: Double): Mat?
+    fun gray(t: Double): GrayPic?
 
     /** The real time of the picture [gray] gave last, or NaN if this source doesn't know it. */
     fun lastFrameSec(): Double = Double.NaN
@@ -68,11 +83,11 @@ class RetrieverSource(context: Context, uri: Uri, private val durationMs: Long) 
         }
     }
 
-    override fun gray(t: Double): Mat? {
+    override fun gray(t: Double): GrayPic? {
         if (t < 0.0 || t * 1000.0 > durationMs) return null
         val frame = retriever.getFrameAtTime((t * 1_000_000.0).toLong(), MediaMetadataRetriever.OPTION_CLOSEST) ?: return null
         return try {
-            TimerVision.bitmapToGray(frame)
+            bitmapToGray(frame)
         } finally {
             frame.recycle()
         }
@@ -83,17 +98,52 @@ class RetrieverSource(context: Context, uri: Uri, private val durationMs: Long) 
     }
 }
 
-/** Always a new Mat: [src] turned clockwise by [deg] (0, 90, 180 or 270). */
-private fun rotatedCopy(src: Mat, deg: Int): Mat {
-    if (deg == 0) return src.clone()
-    val out = Mat()
-    val code = when (deg) {
-        90 -> Core.ROTATE_90_CLOCKWISE
-        180 -> Core.ROTATE_180
-        else -> Core.ROTATE_90_COUNTERCLOCKWISE
+/** [bmp] in grey, with OpenCV's formula (rounded the same way), so a picture reads the same as before 4.0. */
+private fun bitmapToGray(bmp: Bitmap): GrayPic {
+    val copy = if (bmp.config == Bitmap.Config.ARGB_8888) null else bmp.copy(Bitmap.Config.ARGB_8888, false)
+    val src = copy ?: bmp
+    try {
+        val w = src.width
+        val h = src.height
+        val out = ByteArray(w * h)
+        val row = IntArray(w)                       // one row at a time: a whole 1080p picture as ints would be 8 MB
+        for (y in 0 until h) {
+            src.getPixels(row, 0, w, 0, y, w, 1)
+            for (x in 0 until w) {
+                val c = row[x]
+                val r = (c shr 16) and 0xFF
+                val g = (c shr 8) and 0xFF
+                val b = c and 0xFF
+                out[y * w + x] = ((r * GRAY_R + g * GRAY_G + b * GRAY_B + (1 shl (GRAY_SHIFT - 1))) shr GRAY_SHIFT).toByte()
+            }
+        }
+        return GrayPic(w, h, out)
+    } finally {
+        copy?.recycle()
     }
-    Core.rotate(src, out, code)
-    return out
+}
+
+/** [src] turned clockwise by [deg] (0, 90, 180 or 270). 0 gives [src] itself (a GrayPic is never changed in place). */
+private fun rotated(src: GrayPic, deg: Int): GrayPic {
+    if (deg == 0) return src
+    val w = src.w
+    val h = src.h
+    val d = src.d
+    val turned = deg == 90 || deg == 270
+    val ow = if (turned) h else w
+    val oh = if (turned) w else h
+    val out = ByteArray(w * h)
+    for (y in 0 until h) {
+        for (x in 0 until w) {
+            val (nx, ny) = when (deg) {
+                90 -> Pair(h - 1 - y, x)
+                180 -> Pair(w - 1 - x, h - 1 - y)
+                else -> Pair(y, w - 1 - x)
+            }
+            out[ny * ow + nx] = d[y * w + x]
+        }
+    }
+    return GrayPic(ow, oh, out)
 }
 
 /** One running decoder that is moved along the video as little as possible. */
@@ -109,7 +159,6 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
     private var frameDurUs = 33_333L              // length of one frame; shrinks to the real value as frames come out
     private var fullRange = false                 // true if the brightness already uses 0..255 (otherwise 16..235 is stretched)
     private var scratch = ByteArray(0)
-    private var stage: Mat? = null
 
     /** Degrees clockwise that turn the decoded picture upright. Worked out by [openFrameSource]. */
     var rotation = 0
@@ -140,18 +189,15 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         }
     }
 
-    override fun gray(t: Double): Mat? {
+    override fun gray(t: Double): GrayPic? {
         val raw = rawGray(t) ?: return null
-        if (rotation == 0) return raw
-        val upright = rotatedCopy(raw, rotation)
-        raw.release()
-        return upright
+        return rotated(raw, rotation)
     }
 
     override fun lastFrameSec(): Double = if (lastPts >= 0) lastPts / 1_000_000.0 else Double.NaN
 
     /** The picture at second [t] exactly as the decoder makes it (not turned). */
-    fun rawGray(t: Double): Mat? {
+    fun rawGray(t: Double): GrayPic? {
         if (t < 0.0) return null
         val targetUs = (t * 1_000_000.0).toLong()
         moveTo(targetUs)
@@ -182,7 +228,7 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
     private fun max0(x: Long): Long = if (x < 0) 0L else x
 
     /** Decodes until the first frame at (or just before) [targetUs] comes out, and returns it as gray. Null at the end of the video. */
-    private fun decodeTo(targetUs: Long): Mat? {
+    private fun decodeTo(targetUs: Long): GrayPic? {
         val c = codec ?: throw IllegalStateException("closed")
         var idle = 0
         while (true) {
@@ -242,8 +288,8 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         }
     }
 
-    /** The brightness (Y) plane of output buffer [index] as a gray Mat, stretched to 0..255 if the video uses 16..235. */
-    private fun toGray(c: MediaCodec, index: Int): Mat {
+    /** The brightness (Y) plane of output buffer [index] in grey, stretched to 0..255 if the video uses 16..235. */
+    private fun toGray(c: MediaCodec, index: Int): GrayPic {
         val image = c.getOutputImage(index) ?: throw IOException("the decoder gives no readable picture")
         try {
             val plane = image.planes[0]
@@ -266,22 +312,18 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
             buf.rewind()
             buf.get(scratch, 0, min(buf.remaining(), need))
 
-            var m = stage
-            if (m == null || m.rows() != bottom || m.cols() != stride) {
-                m?.release()
-                m = Mat(bottom, stride, CvType.CV_8UC1)
-                stage = m
+            val w = right - left
+            val h = bottom - top
+            val out = ByteArray(w * h)
+            for (y in 0 until h) {
+                val from = (top + y) * stride + left
+                if (fullRange) {
+                    System.arraycopy(scratch, from, out, y * w, w)
+                } else {
+                    for (x in 0 until w) out[y * w + x] = STRETCH[scratch[from + x].toInt() and 0xFF]
+                }
             }
-            m.put(0, 0, scratch, 0, need)
-            val sub = m.submat(top, bottom, left, right)
-            val out = Mat()
-            try {
-                if (fullRange) sub.copyTo(out)
-                else sub.convertTo(out, CvType.CV_8U, 255.0 / 219.0, -16.0 * 255.0 / 219.0)
-            } finally {
-                sub.release()
-            }
-            return out
+            return GrayPic(w, h, out)
         } finally {
             image.close()
         }
@@ -297,8 +339,6 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         } catch (e: Exception) {
         }
         codec = null
-        stage?.release()
-        stage = null
         try {
             extractor.release()
         } catch (e: Exception) {
@@ -311,6 +351,12 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
 
     private companion object {
         const val SEEK_PAYS_OFF_US = 300_000L    // a keyframe more than this far ahead of the decoder: jump instead of decoding through
+
+        /**
+         * 16..235 stretched to 0..255, rounded to the nearest, as OpenCV's convertTo did ((y - 16) * 255 / 219 never lands on a half,
+         * so the rounding rule doesn't matter).
+         */
+        val STRETCH = ByteArray(256) { y -> ((y - 16) * 255.0 / 219.0).roundToInt().coerceIn(0, 255).toByte() }
     }
 }
 
@@ -318,34 +364,74 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
 // Choosing the source
 // ---------------------------------------------------------------------------------------
 
-private fun stdDev(a: Mat): Double {
-    val mean = MatOfDouble()
-    val sd = MatOfDouble()
-    try {
-        Core.meanStdDev(a, mean, sd)
-        return sd.get(0, 0)?.getOrNull(0) ?: 0.0
-    } finally {
-        mean.release()
-        sd.release()
+/** How much the grey values of [a] spread (their standard deviation). */
+private fun stdDev(a: GrayPic): Double {
+    var sum = 0.0
+    var sq = 0.0
+    for (b in a.d) {
+        val v = (b.toInt() and 0xFF).toDouble()
+        sum += v
+        sq += v * v
+    }
+    val n = a.d.size.toDouble()
+    if (n == 0.0) return 0.0
+    val mean = sum / n
+    return sqrt(maxOf(0.0, sq / n - mean * mean))
+}
+
+/** For each of [to] parts of a line of [from] pixels: the pixels it covers and how much of each (an average by area). */
+private fun areaWeights(from: Int, to: Int): List<List<Pair<Int, Double>>> {
+    val scale = from.toDouble() / to
+    return (0 until to).map { i ->
+        val a = i * scale
+        val b = (i + 1) * scale
+        val parts = ArrayList<Pair<Int, Double>>()
+        var p = a.toInt()
+        while (p < b && p < from) {
+            val cover = minOf(b, p + 1.0) - maxOf(a, p.toDouble())
+            if (cover > 1e-9) parts.add(Pair(p, cover / scale))
+            p++
+        }
+        parts
     }
 }
 
-/** How alike two same-sized gray pictures are (1.0 = identical shape, ignoring brightness/contrast). */
-private fun similarity(a: Mat, b: Mat): Double {
-    val sa = Mat()
-    val sb = Mat()
-    val r = Mat()
-    try {
-        Imgproc.resize(a, sa, Size(96.0, 96.0), 0.0, 0.0, Imgproc.INTER_AREA)
-        Imgproc.resize(b, sb, Size(96.0, 96.0), 0.0, 0.0, Imgproc.INTER_AREA)
-        Imgproc.matchTemplate(sa, sb, r, Imgproc.TM_CCOEFF_NORMED)
-        val v = r.get(0, 0)?.getOrNull(0) ?: return -1.0
-        return if (v.isNaN()) -1.0 else v
-    } finally {
-        sa.release()
-        sb.release()
-        r.release()
+/** [a] made [CHECK_SIZE] x [CHECK_SIZE] by averaging the pixels each new pixel covers. */
+private fun shrunkForCheck(a: GrayPic): DoubleArray {
+    val xs = areaWeights(a.w, CHECK_SIZE)
+    val ys = areaWeights(a.h, CHECK_SIZE)
+    val out = DoubleArray(CHECK_SIZE * CHECK_SIZE)
+    for (oy in 0 until CHECK_SIZE) {
+        for (ox in 0 until CHECK_SIZE) {
+            var v = 0.0
+            for ((y, wy) in ys[oy]) {
+                val row = y * a.w
+                for ((x, wx) in xs[ox]) v += wy * wx * (a.d[row + x].toInt() and 0xFF)
+            }
+            out[oy * CHECK_SIZE + ox] = v
+        }
     }
+    return out
+}
+
+/** How alike two same-sized gray pictures are (1.0 = identical shape, ignoring brightness/contrast), or -1 if one of them is flat. */
+private fun similarity(a: GrayPic, b: GrayPic): Double {
+    val sa = shrunkForCheck(a)
+    val sb = shrunkForCheck(b)
+    val ma = sa.average()
+    val mb = sb.average()
+    var num = 0.0
+    var da = 0.0
+    var db = 0.0
+    for (i in sa.indices) {
+        val x = sa[i] - ma
+        val y = sb[i] - mb
+        num += x * y
+        da += x * x
+        db += y * y
+    }
+    val den = sqrt(da * db)
+    return if (den <= 0.0) -1.0 else num / den
 }
 
 /**
@@ -357,34 +443,25 @@ private fun calibrate(fast: CodecSource, slow: RetrieverSource, durationSec: Dou
         val t = durationSec * frac
         val ref = slow.gray(t) ?: continue
         val raw = fast.rawGray(t)
-        try {
-            if (raw == null) return false
-            if (stdDev(ref) < 10.0) continue          // an almost flat picture can't tell the rotations apart
-            var best = -1.0
-            var bestDeg = 0
-            for (deg in intArrayOf(0, 90, 180, 270)) {
-                val cand = rotatedCopy(raw, deg)
-                try {
-                    if (cand.cols() != ref.cols() || cand.rows() != ref.rows()) continue
-                    val s = similarity(ref, cand)
-                    if (s > best) {
-                        best = s
-                        bestDeg = deg
-                    }
-                } finally {
-                    cand.release()
-                }
+        if (raw == null) return false
+        if (stdDev(ref) < CHECK_DETAIL) continue          // an almost flat picture can't tell the rotations apart
+        var best = -1.0
+        var bestDeg = 0
+        for (deg in intArrayOf(0, 90, 180, 270)) {
+            val cand = rotated(raw, deg)
+            if (cand.w != ref.w || cand.h != ref.h) continue
+            val s = similarity(ref, cand)
+            if (s > best) {
+                best = s
+                bestDeg = deg
             }
-            Log.d("CubeCut", "Fast frame source check: best match $best at rotation $bestDeg")
-            if (best >= 0.85) {
-                fast.rotation = bestDeg
-                return true
-            }
-            return false
-        } finally {
-            ref.release()
-            raw?.release()
         }
+        Log.d("CubeCut", "Fast frame source check: best match $best at rotation $bestDeg")
+        if (best >= CHECK_MATCH) {
+            fast.rotation = bestDeg
+            return true
+        }
+        return false
     }
     return false
 }
@@ -415,7 +492,7 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
         }
     }
 
-    override fun gray(t: Double): Mat? {
+    override fun gray(t: Double): GrayPic? {
         if (t < 0.0 || t * 1000.0 > durationMs) return null
         val f = fast
         if (f != null) {

@@ -20,14 +20,65 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-// (3.3-C) Finds the solves of a timer the finder found (TimerFinder.kt). The same idea as SolveAnalyzer.scan, with its constants: a time
+/** One solve found by a scan. */
+class FoundSolve(
+    val stopSec: Double,        // the FIRST frame on which the final time is showing = the moment the timer stopped
+    val timeText: String,       // the same, written nicely, e.g. "12.412"
+    val note: String,           // "" = looks fine, otherwise why it needs a look
+    val include: Boolean        // false = listed but switched off (needs a look first)
+)
+
+/** Everything a scan learned. */
+class ScanResult(
+    val solves: List<FoundSolve>,
+    val readableFraction: Double,           // 0..1: how many of the sampled frames had a readable timer
+    val trace: ScanTrace = ScanTrace()      // (3.3-C) what was seen along the way, to tell where a solve may be missing
+)
+
+/** Thrown inside a scan when the user pressed Cancel. */
+class ScanCancelled : Exception("cancelled")
+
+/** Start of the note on a cut whose time was already showing when the video began. Such a cut is switched off and ignored like a deleted one. */
+const val LEFTOVER_NOTE_START = "this time was already on the timer"
+
+// (4.0-0) The scan's steps. They come from the scan of a timer set up by hand (SolveAnalyzer, removed in 4.0-0), which this scan was
+// built on. Shorter steps find a stop sooner but read more pictures.
+/** Seconds between reads while looking for a stop. */
+private const val SCAN_STEP = 0.5
+/** A wider step while the display shows 0.000: a stop is at least ~3 s away, and a running time is seen on the next read. */
+private const val ZERO_STEP = 2.0
+/** A wider step while the display still shows a time already found. */
+private const val HOLD_STEP = 2.0
+/** The same time on this many reads is a stopped timer... */
+private const val MIN_AGREE = 2
+/** ...looking at the last this many readable reads... */
+private const val RECENT_N = 6
+/** ...which must lie within this many seconds of each other. */
+private const val AGREE_WINDOW_SEC = 6.0
+/** After a stop is spotted, keep reading this long to vote on the exact digits. */
+private const val LOCK_SEC = 3.0
+/** The first step back when looking for the first frame. */
+private const val COARSE_BACK_STEP = 0.5
+/** Look back at most this far for the first frame. */
+private const val BACK_MAX_SEC = 4.0
+
+/** Digits as the display shows them, written as a time: "12412" with 3 decimals is "12.412", "102345" is "1:02.345". */
+fun formatDigits(digits: String, decimals: Int): String {
+    if (decimals <= 0 || digits.length <= decimals) return digits
+    val frac = digits.takeLast(decimals)
+    val rest = digits.dropLast(decimals)
+    val sec = rest.takeLast(2)
+    val mins = rest.dropLast(2)
+    return if (mins.isNotEmpty()) "$mins:${sec.padStart(2, '0')}.$frac" else "${sec.toInt()}.$frac"
+}
+
+// (3.3-C) Finds the solves of a timer the finder found (TimerFinder.kt). The same idea as the old scan of a timer set up by hand: a time
 // that stays is a finished solve, and the first frame that shows it is the cut. What is different, because this timer is read with its
 // decimal point and while it runs:
 //  - a text with fewer decimals than a stopped time is a RUNNING time, and is kept: it gives the moment the timer started;
 //  - START TO STOP must be the time on the display, which catches misreads and tells where the stop was when it was hidden;
 //  - the cut is searched frame by frame: phones blend two numbers into one picture, which misleads a search that halves the gap;
 //  - a time that shows again without having run in between is the same hold (the timer was covered for a while).
-// SolveAnalyzer.scan is left alone: timers set up by hand are scanned exactly as before.
 
 /** A time is confirmed by the clock when start to stop differs from it by no more than this... */
 private const val CLOCK_SLACK = 0.2
@@ -139,7 +190,7 @@ private class FinderScan(
     private fun found(s: Stop): FoundSolve {
         val leftover = !s.certain && s.sec < 1.0
         val note = when {
-            leftover -> "${SolveAnalyzer.LEFTOVER_NOTE_START} when the video began - probably left over from an earlier solve"
+            leftover -> "${LEFTOVER_NOTE_START} when the video began - probably left over from an earlier solve"
             s.workedOut -> HIDDEN_STOP_NOTE
             s.confirmed != true -> CLOCK_NOTE
             s.votes < s.reads * 0.6 -> "time not steady (read on ${s.votes} of ${s.reads} frames) - check it"
@@ -163,39 +214,39 @@ private class FinderScan(
                     running.add(TimeAt(t, "", it))
                     seen[seen.size - 1] = SeenAt(t, null, true)
                 }
-                t += SolveAnalyzer.SCAN_STEP
+                t += SCAN_STEP
                 continue
             }
-            if (isZero(v)) { confirmed = null; recent.clear(); t += SolveAnalyzer.ZERO_STEP; continue }
+            if (isZero(v)) { confirmed = null; recent.clear(); t += ZERO_STEP; continue }
             if (stoppedDecimals != runningDecimals && !isStopped(v)) {
                 running.add(TimeAt(t, v))
                 confirmed = null
                 recent.clear()
-                t += SolveAnalyzer.SCAN_STEP
+                t += SCAN_STEP
                 continue
             }
-            if (v == confirmed) { t += SolveAnalyzer.HOLD_STEP; continue }
+            if (v == confirmed) { t += HOLD_STEP; continue }
             confirmed = null
             recent.add(TimeAt(t, v))
-            if (recent.size > SolveAnalyzer.RECENT_N) recent.removeAt(0)
-            val held = recent.takeLastWhile { it.text == v && it.t >= t - SolveAnalyzer.AGREE_WINDOW_SEC }
-            if (held.size < SolveAnalyzer.MIN_AGREE) {
+            if (recent.size > RECENT_N) recent.removeAt(0)
+            val held = recent.takeLastWhile { it.text == v && it.t >= t - AGREE_WINDOW_SEC }
+            if (held.size < MIN_AGREE) {
                 if (stoppedDecimals == runningDecimals) running.add(TimeAt(t, v, tenths?.invoke(t) ?: shownSeconds(v)))
-                t += SolveAnalyzer.SCAN_STEP
+                t += SCAN_STEP
                 continue
             }
             // ---- a stopped timer: read on and vote on the exact digits ----
             val votes = ArrayList(held)
-            var lt = t + SolveAnalyzer.SCAN_STEP
-            while (lt <= min(duration, t + SolveAnalyzer.LOCK_SEC) + 1e-9) {
+            var lt = t + SCAN_STEP
+            while (lt <= min(duration, t + LOCK_SEC) + 1e-9) {
                 val lv = counted(lt)
                 if (lv != null && !isZero(lv) && isStopped(lv)) votes.add(TimeAt(lt, lv))
-                lt += SolveAnalyzer.SCAN_STEP
+                lt += SCAN_STEP
             }
             if (stoppedDecimals == runningDecimals && goesOnRising(held, votes)) {
                 running.addAll(votes.filter { it.text != v })
                 recent.clear()
-                t += SolveAnalyzer.SCAN_STEP
+                t += SCAN_STEP
                 continue
             }
             val counts = votes.groupingBy { it.text }.eachCount()
@@ -208,11 +259,11 @@ private class FinderScan(
                 if (fits.isNotEmpty() && time !in fits) time = fits.maxByOrNull { counts[it]!! }!!
             }
             val first = votes.first { it.text == time }.t
-            val (sec, certain) = firstFrame(time, first, max(0.0, first - SolveAnalyzer.BACK_MAX_SEC))
+            val (sec, certain) = firstFrame(time, first, max(0.0, first - BACK_MAX_SEC))
             stops.add(Stop(time, sec, counts[time]!!, votes.size, certain))
             confirmed = time
             recent = ArrayList()
-            t += SolveAnalyzer.LOCK_SEC + SolveAnalyzer.SCAN_STEP
+            t += LOCK_SEC + SCAN_STEP
         }
     }
 
@@ -232,7 +283,7 @@ private class FinderScan(
         var earliest = from
         var other = Double.NaN                  // the nearest earlier picture that shows something else
         var others = 0
-        var t = from - SolveAnalyzer.COARSE_BACK_STEP
+        var t = from - COARSE_BACK_STEP
         while (t > lowest - 1e-6 + 1e-9) {
             val v = read(t)
             if (v == time) { earliest = t; others = 0; other = Double.NaN }
@@ -241,7 +292,7 @@ private class FinderScan(
                 if (others == 1) other = t
                 if (others >= 2) break
             }
-            t -= SolveAnalyzer.COARSE_BACK_STEP
+            t -= COARSE_BACK_STEP
         }
         val gapFrom = if (!other.isNaN()) other else max(lowest, earliest - 0.6)
         val frames = ArrayList<TimeAt>()

@@ -1,6 +1,6 @@
 # ADR-0001: Offline, classic computer vision, no ML, no INTERNET permission
 
-- **Status:** Accepted (documented retroactively)
+- **Status:** Accepted (documented retroactively). The detection below was the setup by hand, removed in 4.0-0; since 3.3 the timer is found by classic methods written in Kotlin, without OpenCV ([ADR-0016](0016-find-the-timer-without-ml.md))
 - **Date:** from the start of the project (1.0.0)
 
 ## Context

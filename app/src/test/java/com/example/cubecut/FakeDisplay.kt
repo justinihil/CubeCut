@@ -20,7 +20,8 @@ import java.util.Random
 import kotlin.math.ceil
 
 /**
- * (3.3-A) A simulated timer display for [SolveAnalyzer.scan]: what the digit reader would return at second t.
+ * (3.3-A) A simulated timer display: what a digit reader would return at second t. (4.0-0) The scan it was made for (of a timer
+ * set up by hand) is gone; the ground-truth tests still use it.
  *
  * The video is [fps] frames a second and a read gives the frame nearest t, as the real frame source does. Between solves the display
  * shows 0.000; during a solve it counts up; at the stop it holds the final time for [holdSec] (or until the next solve starts), then
@@ -47,7 +48,7 @@ class FakeDisplay(
     val expectedStops: List<Double> get() = solves.map { (start, len) -> frameTime(firstFrameAtOrAfter(start + len)) }
 
     /** The final times as the scan writes them ("12.412"). */
-    val expectedTimes: List<String> get() = solves.map { (_, len) -> TimerVision.formatDigits(digitsOf(len), decimals) }
+    val expectedTimes: List<String> get() = solves.map { (_, len) -> formatDigits(digitsOf(len), decimals) }
 
     val expected: List<ExpectedSolve> get() = expectedStops.zip(expectedTimes).map { (s, t) -> ExpectedSolve(s, t) }
 
@@ -84,7 +85,7 @@ class FakeDisplay(
         return Pair(zero, false)
     }
 
-    /** The read function to hand to [SolveAnalyzer.scan]. */
+    /** What the display reads at second [t]. */
     fun read(t: Double): String? {
         val frame = Math.round(t * fps)
         // mixed first: java.util.Random gives nearly the same first number for neighbouring seeds, which made long unreadable streaks
@@ -102,9 +103,6 @@ class FakeDisplay(
         }
         return out
     }
-
-    /** Runs the real scan over this display. */
-    fun scan(): ScanResult = SolveAnalyzer.scan(::read, durationSec, decimals, { _, _ -> }, { false })
 
     companion object {
         /** SplitMix64's finaliser: neighbouring inputs give unrelated outputs. */

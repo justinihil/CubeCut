@@ -19,6 +19,7 @@ package com.example.cubecut
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /** (3.3-A) The ground-truth file format and how a scan is compared with it. */
 class GroundTruthTest {
@@ -75,7 +76,7 @@ class GroundTruthTest {
 
     @Test
     fun compare_leftoversAreNeitherSolvesNorFalse() {
-        val left = found(0.0, "12.412", include = false, note = SolveAnalyzer.LEFTOVER_NOTE_START + " when the video began")
+        val left = found(0.0, "12.412", include = false, note = LEFTOVER_NOTE_START + " when the video began")
         val c = compareScan(emptyList(), listOf(left))
         assertEquals(0, c.falseSolves.size)
         assertEquals(1, c.leftovers.size)
@@ -85,7 +86,7 @@ class GroundTruthTest {
     fun expectedFromCuts_skipsLeftoversAndSorts() {
         val cuts = listOf(
             CutItem(50.0, "11.000", true, ""),
-            CutItem(0.5, "12.412", false, SolveAnalyzer.LEFTOVER_NOTE_START + "..."),
+            CutItem(0.5, "12.412", false, LEFTOVER_NOTE_START + "..."),
             CutItem(20.0, "9.000", true, ADDED_BY_YOU_NOTE)
         )
         assertEquals(listOf(20.0, 50.0), expectedFromCuts(cuts).map { it.stopSec })
@@ -159,7 +160,7 @@ class GroundTruthTest {
 
     @Test
     fun compareTimes_countsFalseSolvesAndLeavesOutLeftovers() {
-        val left = found(0.0, "12.41", include = false, note = SolveAnalyzer.LEFTOVER_NOTE_START + " when the video began")
+        val left = found(0.0, "12.41", include = false, note = LEFTOVER_NOTE_START + " when the video began")
         val c = compareTimes(listOf("10.00", "11.00"), listOf(left, found(10.0, "10.00"), found(20.0, "3.00"), found(50.0, "11.00")))
         assertEquals(2, c.right)
         assertEquals(listOf("3.00"), c.falseSolves.map { it.timeText })
@@ -175,7 +176,7 @@ class GroundTruthTest {
     @Test
     fun compareTimes_onACleanDisplay_isAllRight() {
         val d = FakeDisplay.session(count = 12, seed = 3)
-        val c = compareTimes(d.expected.map { it.time }, d.scan().solves)
+        val c = compareTimes(d.expected.map { it.time }, d.expected.map { found(it.stopSec, it.time) })
         assertEquals(12, c.right)
         assertEquals(0, c.falseSolves.size)
     }
@@ -194,13 +195,12 @@ class GroundTruthTest {
     }
 
     @Test
-    fun json_keepsTheSetupAttempt() {
-        val s = SetupAttempt(33400, listOf(25.0, 444.0, 810.0, 388.0, 796.0, 600.0, 70.0, 704.0), "12.25")
-        val g = GroundTruth("a.mp4", "csTimer (PC)", 100.0, listOf(ExpectedSolve(10.0, "9.00")), setup = s)
-        assertEquals(s, parseGroundTruth(groundTruthToJson(g)).setup)
-        assertEquals(s, parseSetupAttempt(setupAttemptToJson(s)))
-        assertEquals(null, parseGroundTruth(groundTruthToJson(g.copy(setup = null))).setup)
-        assertEquals(null, parseSetupAttempt("nonsense"))
+    fun json_ofAnOldFileWithASetupByHand_stillReads() {
+        // (4.0-0) files made before 4.0 may hold the setup by hand; it is ignored
+        val g = GroundTruth("a.mp4", "csTimer (PC)", 100.0, listOf(ExpectedSolve(10.0, "9.00")))
+        val old = groundTruthToJson(g).trimEnd().removeSuffix("}") + ""","setup": {"frameMs": 33400, "typed": "12.25", "corners": [1,2,3,4,5,6,7,8]}}"""
+        assertEquals(g, parseGroundTruth(old))
+        assertEquals(g, parseGroundTruth(groundTruthToJson(g)))
     }
 
     @Test
@@ -236,6 +236,22 @@ class GroundTruthTest {
         val d = FakeDisplay.session(count = 6, seed = 2)
         val grades = gradeReading(d.expected, d.decimals, d.durationSec, d::read)
         assertEquals(6 * 6, grades.sumOf { it.right })
+    }
+
+    /** Every answer key in the repo reads, names a known timer kind, and has no solve starting before the one before it ended. */
+    @Test
+    fun groundTruthFiles_areValid() {
+        val dir = File("src/test/resources/groundtruth")
+        val files = dir.listFiles { f -> f.name.endsWith(".json") }?.sortedBy { it.name } ?: emptyList()
+        for (f in files) {
+            val g = parseGroundTruth(f.readText())
+            assertTrue("${f.name}: no solves", g.solves.isNotEmpty())
+            assertTrue("${f.name}: no timer kind", g.timer in TIMER_KINDS)
+            for ((a, b) in g.solves.zipWithNext()) {
+                val len = parseTimeSeconds(b.time) ?: 0.0
+                assertTrue("${f.name}: ${b.time} at ${videoPlace(b.stopSec)} starts before ${videoPlace(a.stopSec)}", b.stopSec - len > a.stopSec)
+            }
+        }
     }
 
     @Test

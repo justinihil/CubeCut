@@ -45,7 +45,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
-import org.opencv.core.Mat
 import kotlin.math.abs
 
 // (3.3-C) Find solves without a timer setup: the glue between the real video and the pure parts (TimerFinder.kt, FinderScan.kt), and the
@@ -56,13 +55,6 @@ class AutoScanResult(val scan: ScanResult?, val numbers: Area?, val choices: Lis
 
 /** Find solves can't go on by itself: the timer wasn't found, or the user has to choose. [message] is the status line. */
 class NeedsUser(message: String) : Exception(message)
-
-/** A copy of [m] (8-bit grey) that needs no OpenCV and is freed by itself. */
-fun grayPic(m: Mat): GrayPic {
-    val d = ByteArray(m.rows() * m.cols())
-    m.get(0, 0, d)
-    return GrayPic(m.cols(), m.rows(), d)
-}
 
 /** The example digits shipped with the app. Takes a moment: keep the result while you need it. */
 fun loadDigitFonts(context: Context): DigitShapes = DigitShapes.from(context.assets.open("digit_shapes.bin").use { readDigitStyles(it) })
@@ -84,10 +76,7 @@ fun analyzeByItself(
     val frameSec = videoFrameSec(context, uri)
     val source = openFrameSource(context, uri, durationMs)
     try {
-        val pic = PicAt { t ->
-            val gray = source.gray(t)
-            if (gray == null) null else try { grayPic(gray) } finally { gray.release() }
-        }
+        val pic = PicAt { t -> source.gray(t) }
         var segments: FoundSegments? = null
         var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
         val otherKind = {
@@ -136,7 +125,7 @@ private val CHOICE_NAMES = listOf("Blue", "Orange")
 
 /** Two numbers run at the same time: which one is the timer? */
 @Composable
-fun TimerQuestionDialog(question: TimerQuestion, onChoose: (TimerChoice) -> Unit, onByHand: () -> Unit, onDismiss: () -> Unit) {
+fun TimerQuestionDialog(question: TimerQuestion, onChoose: (TimerChoice) -> Unit, onNeither: () -> Unit, onDismiss: () -> Unit) {
     val picture = question.picture
     val image = remember(picture) { picture.asImageBitmap() }
     AlertDialog(
@@ -176,7 +165,7 @@ fun TimerQuestionDialog(question: TimerQuestion, onChoose: (TimerChoice) -> Unit
                         ) { Text(CHOICE_NAMES[i % CHOICE_NAMES.size]) }
                     }
                 }
-                OutlinedButton(onClick = onByHand, modifier = Modifier.fillMaxWidth()) { Text("Neither: set up by hand") }
+                OutlinedButton(onClick = onNeither, modifier = Modifier.fillMaxWidth()) { Text("Neither of them") }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

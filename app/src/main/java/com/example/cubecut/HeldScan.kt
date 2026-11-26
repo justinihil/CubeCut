@@ -104,7 +104,7 @@ private class HeldScan(
     private fun found(s: HeldStop): FoundSolve {
         val leftover = s.sec < 1.0
         val note = when {
-            leftover -> "${SolveAnalyzer.LEFTOVER_NOTE_START} when the video began - probably left over from an earlier solve"
+            leftover -> "${LEFTOVER_NOTE_START} when the video began - probably left over from an earlier solve"
             s.wholeDisagrees -> CLOCK_NOTE
             !s.confirmed -> SOON_NOTE
             s.votes < s.reads * 0.6 -> "time not steady (read on ${s.votes} of ${s.reads} frames) - check it"

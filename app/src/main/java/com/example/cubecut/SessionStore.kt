@@ -61,9 +61,10 @@ class Footage(
     val afterPad: Float,
     val scrambleAll: Boolean,
     val cutCount: Int,            // how many cuts are saved for it
-    val timerFrameMs: Long,       // where in the video the timer was set up (-1 = never)
-    val timerCorners: String,     // the four corners marked on that picture (8 numbers, comma separated)
-    val timerTyped: String,       // the number that was typed in for it
+    // the timer's place: where CubeCut found it (timerFrameMs -1, timerTyped ""), or before 4.0 where it was set up by hand
+    val timerFrameMs: Long,       // where in the video the timer was set up by hand (-1 = never, or found)
+    val timerCorners: String,     // the box around the timer (8 numbers, comma separated), for the Edit window's zoom
+    val timerTyped: String,       // the number typed for a setup by hand (no longer read since 4.0-0)
     val trashedMs: Long,          // when CubeCut moved the video to the phone's trash (0 = it is not in the trash)
     val puzzle: String = "",      // the puzzle tag of the whole video ("" = not tagged); a clip follows it unless the clip has its own
     val category: String = "",    // the category tag of the whole video ("" = not tagged), followed the same way
@@ -918,18 +919,10 @@ object SessionStore {
     }
 
     /** Remembers where the timer was set up on this video: the picture (its time in the video), the four corners and the typed number. */
-    fun saveTimerSetup(context: Context, footageId: Long, frameMs: Long, corners: DoubleArray, typed: String) {
-        val v = ContentValues()
-        v.put("timer_frame_ms", frameMs)
-        v.put("timer_corners", corners.joinToString(","))
-        v.put("timer_typed", typed)
-        db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
-    }
-
     /**
-     * (3.3-C) Remembers where CubeCut found the timer by itself: the box around its numbers, in frame pixels. In the same columns as a
-     * setup by hand, with no typed number and no picture time, which is how the two are told apart. A setup by hand wins: it is never overwritten
-     * (it may be there without being usable right now).
+     * (3.3-C) Remembers where CubeCut found the timer by itself: the box around its numbers, in frame pixels, as 8 corner numbers. The
+     * columns once also held a timer set up by hand (with a typed number and a picture time). (4.0-0) That setup is gone, so a found
+     * timer now replaces one, and the typed number is cleared.
      */
     fun saveFoundTimer(context: Context, footageId: Long, box: Area) {
         val c = doubleArrayOf(
@@ -939,16 +932,11 @@ object SessionStore {
         val v = ContentValues()
         v.put("timer_frame_ms", -1L)
         v.put("timer_corners", c.joinToString(","))
-        db(context).update("footage", v, "id = ? AND timer_typed = ''", arrayOf(footageId.toString()))
+        v.put("timer_typed", "")
+        db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
     }
 
-    /** (3.3-C) Forgets the timer of this video, set up by hand or found. Its solves stay. */
-    fun clearTimerSetup(context: Context, footageId: Long) = saveTimerSetup(context, footageId, -1L, DoubleArray(0), "")
-
-    /** The corners of a timer set up BY HAND (8 numbers), or null if there is none. */
-    fun timerCornersOf(f: Footage): DoubleArray? = if (f.timerFrameMs < 0 || f.timerTyped.isEmpty()) null else cornersIn(f)
-
-    /** Where the timer is in this video (8 numbers), set up by hand or found, or null. For pictures only, not for reading it. */
+    /** Where the timer is in this video (8 numbers), found or (before 4.0) set up by hand, or null. For pictures only, not for reading it. */
     fun timerPlaceOf(f: Footage): DoubleArray? = cornersIn(f)
 
     private fun cornersIn(f: Footage): DoubleArray? {

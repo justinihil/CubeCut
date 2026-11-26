@@ -143,7 +143,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.opencv.android.OpenCVLoader
 
 // should a new cut include the part before the solve (the scramble)? true = clip runs from the previous clip's end
 const val DEFAULT_INCLUDE_SCRAMBLE = true
@@ -161,14 +160,10 @@ private const val ADDED_FLASH_OFF_MS = 350
 const val AUTHOR_NAME = "DadCuber"
 const val AUTHOR_FIND_ME = "Find me on TikTok, Instagram and Facebook: DadCuber"
 
-// true once the image library (OpenCV) has loaded
-var openCvReady = false
-
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        openCvReady = OpenCVLoader.initLocal()
         setContent {
             val ui = remember { GalleryUiState(getSharedPreferences("cubecut_ui", Context.MODE_PRIVATE)) }
             CubeCutTheme(ui.themeMode) {
@@ -445,7 +440,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     var cancelScan by remember { mutableStateOf(false) }         // the Cancel button of Find solves
     var scanReport by remember { mutableStateOf<ScanResult?>(null) }   // what the last scan learned (for the warnings)
     var scanned by remember { mutableStateOf(false) }            // Find solves has run on this video (now or in an earlier visit)
-    var backupOpen by remember { mutableStateOf(false) }         // the small Backup part of the Setup box
     var setupExpanded by remember { mutableStateOf(true) }       // the Setup box: open at first, closes after Find solves
     var showScanTools by remember { mutableStateOf(false) }       // (3.3-A, debug builds) the Scan report window
     var scanToolResult by remember { mutableStateOf<ScanReportResult?>(null) }   // ...and its finished report
@@ -462,51 +456,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
     SideEffect { view.keepScreenOn = analyzing }
     DisposableEffect(view) { onDispose { view.keepScreenOn = false } }
 
-    // ---- timer reading ----
-    var timerEngine by remember { mutableStateOf<TimerEngine?>(null) }
-    var timerMessage by remember {
-        mutableStateOf(if (openCvReady) "" else "The image library failed to load")
-    }
-    var timerDebug by remember { mutableStateOf<Bitmap?>(null) }
-    var setupFrame by remember { mutableStateOf<Bitmap?>(null) }
-    var setupAtMs by remember { mutableStateOf(0L) }                    // where in the video the setup picture was taken (saved with the session)
-    var setupBusy by remember { mutableStateOf(false) }
-    var setupMessage by remember { mutableStateOf("") }
-    // (3.3-C) without a setup by hand, Find solves finds the timer itself: what it has to ask, or that it found none
+    // ---- the timer (3.3-C): Find solves finds it itself. What it has to ask, or that it found none ----
     var timerQuestion by remember { mutableStateOf<TimerQuestion?>(null) }
     var timerNotFound by remember { mutableStateOf(false) }
-
-    // A timer engine holds OpenCV memory that the garbage collector can't see, so it is freed by hand: when a new setup or a new
-    // video replaces it, and when the editor closes. A background job that is still reading with it (Find solves, Read timer here)
-    // must finish first, or it would read with freed memory: each job counts itself in and out per engine, and an engine that was
-    // replaced (or the editor closed) is freed when its last job is out.
-    // (plain collections, not screen state: only the main thread touches them, and changing them must not redraw anything)
-    val engineUses = remember { HashMap<TimerEngine, Int>() }
-    val retiredEngines = remember { HashSet<TimerEngine>() }
-    val editorClosed = remember { BooleanArray(1) }
-    fun startUsing(engine: TimerEngine) {
-        engineUses[engine] = (engineUses[engine] ?: 0) + 1
-    }
-    fun stopUsing(engine: TimerEngine) {
-        val left = (engineUses[engine] ?: 1) - 1
-        if (left > 0) {
-            engineUses[engine] = left
-            return
-        }
-        engineUses.remove(engine)
-        if (editorClosed[0] || retiredEngines.remove(engine)) engine.release()
-    }
-    /** The engine is no longer the current one: free it now, or when the last job reading with it is done. */
-    fun retireEngine(engine: TimerEngine?) {
-        if (engine == null) return
-        if ((engineUses[engine] ?: 0) == 0) engine.release() else retiredEngines.add(engine)
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            editorClosed[0] = true
-            retireEngine(timerEngine)
-        }
-    }
 
     // ---- the video player ----
     val exoPlayer = remember {
@@ -563,11 +515,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         footageId = null        // first of all: stop saving into the previous video's record while the lists below are cleared
         pendingMoves.clear()
         exportedAt = emptyList()
-        // the timer setup belongs to one video: a new video needs a new setup
-        retireEngine(timerEngine)
-        timerEngine = null
-        timerDebug = null
-        timerMessage = ""
         timerQuestion = null
         timerNotFound = false
         thumbs = emptyList()
@@ -656,37 +603,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 positionMs = ms
                 scrollToSelected = true
             }
-
-            // the timer was set up on this video before: set it up again from the saved corners, so Find solves is ready
-            val savedSession = opened?.footage
-            val savedCorners = if (savedSession != null) SessionStore.timerCornersOf(savedSession) else null
-            if (savedSession != null && savedCorners != null && timerEngine == null) {
-                try {
-                    val frame = withContext(Dispatchers.IO) { grabFrame(context, uri, savedSession.timerFrameMs) }
-                    if (frame != null) {
-                        val res = withContext(Dispatchers.Default) { TimerVision.createSetup(frame, savedCorners, savedSession.timerTyped) }
-                        val restoredSetup = res.setup
-                        val restoredRef = res.reference
-                        if (restoredSetup != null && restoredRef != null) {
-                            timerEngine = withContext(Dispatchers.Default) { TimerEngine(restoredSetup, restoredRef) }
-                            timerMessage = "Saved backup setup restored. " + res.message
-                            timerDebug = null
-                            status = openedNote ?: "Ready"
-                        } else {
-                            timerMessage = "Couldn't use the saved backup setup (${res.message}). CubeCut still finds the timer by itself."
-                            status = openedNote ?: "Ready"
-                        }
-                    } else {
-                        timerMessage = "Couldn't restore the saved backup setup (no picture there). CubeCut still finds the timer by itself."
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    timerMessage = "Couldn't restore the saved backup setup: ${e.message ?: e.javaClass.simpleName}."
-                }
-            } else if (savedSession != null && savedCorners == null && savedSession.timerFrameMs >= 0) {
-                timerMessage = "The saved backup setup couldn't be read."
-            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -707,12 +623,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 try { SessionStore.updateFootageTags(context, id, puzzle, category) } catch (e: Exception) { }
             }
         }
-    }
-
-    // version 1.x saved one timer setup for the whole app (since 3.0.0 the setup is saved per video in SessionStore);
-    // remove the files that old version left behind
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { TimerStore.clear(context) }
     }
 
     // version 3: every change to the cuts or the settings is saved on the phone (after a short pause, so a burst of edits is one write)
@@ -830,35 +740,14 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         keepTimelineOn(ms)
     }
 
-    // opens the full-screen "Set up timer" helper on the picture under the playhead
-    fun openTimerSetup() {
-        val uri = videoUri
-        val atMs = positionMs
-        if (uri != null) {
-            exoPlayer.pause()
-            scope.launch {
-                val bmp = withContext(Dispatchers.IO) { grabFrame(context, uri, atMs) }
-                if (bmp != null) {
-                    setupMessage = ""
-                    setupAtMs = atMs
-                    setupFrame = bmp
-                } else {
-                    timerMessage = "Couldn't read a picture here"
-                }
-            }
-        }
-    }
-
-    // the real work behind the "Find solves" button (only called after the user pressed Continue). (3.3-C) CubeCut finds the timer itself;
-    // a setup by hand is the backup, used only when it finds none (ADR-0017). [near] = the number the user chose when it asked.
+    // the real work behind the "Find solves" button (only called after the user pressed Continue). (3.3-C) CubeCut finds the timer itself
+    // (4.0-0: there is no setup by hand any more). [near] = the number the user chose when it asked.
     fun runFindSolves(near: Area? = null) {
         val uri = videoUri
-        val engine = timerEngine
         val dur = durationMs
-        if (uri != null && openCvReady && dur > 0 && !analyzing) {
+        if (uri != null && dur > 0 && !analyzing) {
             exoPlayer.pause()
             scope.launch {
-                if (engine != null) startUsing(engine)  // the backup reads with the timer engine (see stopUsing in finally)
                 analyzing = true
                 timerNotFound = false
                 timerQuestion = null
@@ -871,7 +760,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 var finishedText: String? = null
                 try {
                     val started = System.currentTimeMillis()
-                    var withBackup = false
                     val auto = withContext(Dispatchers.Default) {
                         analyzeByItself(
                             context, uri, dur, near,
@@ -884,27 +772,15 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                             isCancelled = { cancelScan || !isActive }
                         )
                     }
-                    // two numbers run: ask, unless a backup was set up, which answers it
-                    if (auto.choices.isNotEmpty() && engine == null) {
+                    // two numbers run: ask which one is the timer
+                    if (auto.choices.isNotEmpty()) {
                         val picture = withContext(Dispatchers.IO) { grabFrame(context, uri, (auto.choices[0].t * 1000).toLong()) }
                         if (picture != null) {
                             timerQuestion = TimerQuestion(auto.choices, picture)
                             throw NeedsUser("Which number is your timer?")
                         }
                     }
-                    val report = auto.scan ?: if (engine != null) withContext(Dispatchers.Default) {
-                        withBackup = true
-                        SolveAnalyzer.analyze(
-                            context, uri, dur, engine,
-                            onProgress = { done, total ->
-                                analysisDone = done
-                                analysisTotal = total
-                                analysisStatus = "Reading the timer along the video: ${done * 100 / maxOf(total, 1)}%"
-                                AnalysisService.update(context, done, total)
-                            },
-                            isCancelled = { cancelScan || !isActive }
-                        )
-                    } else {
+                    val report = auto.scan ?: run {
                         timerNotFound = true
                         throw NeedsUser("Couldn't find the timer.")
                     }
@@ -953,7 +829,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         (if (firstScan) "Done" else "Re-scan done") + " in ${seconds}s: " + merged.summary() + (if (toCheck > 0) ". $toCheck to check" else "") +
                                 (if (maybeMissed > 0) ". $maybeMissed maybe missed" else "")
                     }
-                    if (withBackup) analysisStatus += ". Read with your backup setup."
                     finishedText = analysisStatus
                     setupExpanded = cuts.isEmpty()      // fold the Setup box away once it has done its job
                 } catch (e: CancellationException) {
@@ -968,7 +843,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 } finally {
                     analyzing = false
                     AnalysisService.stop(context)
-                    if (engine != null) stopUsing(engine)       // the scan has really stopped reading by now (also when the editor was closed)
                 }
                 finishedText?.let { AnalysisService.notifyDone(context, it) }
             }
@@ -1651,7 +1525,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 val report = scanReport
 
                 // ===== Setup box: the timer (the heart of the app now) and the clip buffers; folds away =====
-                val engineNow = timerEngine
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
                         // the header row is always visible; tap it to open or close the box
@@ -1699,91 +1572,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                                             "Film with a fixed camera. A small bump is fine.",
                                             "It reads csTimer-like digits and QiYi-like displays."
                                         )
-                                    )
-                                }
-                                // the old way, small: only used when no timer is found (ADR-0017, to be removed in 4.0)
-                                TextButton(onClick = { backupOpen = !backupOpen }, contentPadding = PaddingValues(0.dp)) {
-                                    Text(
-                                        (if (engineNow != null) "Backup: set up by hand (${engineNow.decimals} decimals)" else "Backup: set up by hand") +
-                                                (if (backupOpen) " \u25B2" else " \u25BC"),
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
-                                }
-                                if (backupOpen) BulletLines(
-                                    listOf(
-                                        "Only used when CubeCut finds no timer.",
-                                        "Pause on a finished time, like 12.412. Not 0.000, no hand in front."
-                                    )
-                                )
-                                if (backupOpen) Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    if (engineNow == null) {
-                                        OutlinedButton(
-                                            onClick = { openTimerSetup() },
-                                            enabled = videoUri != null && openCvReady && !analyzing
-                                        ) { Text("Set up by hand") }
-                                    } else {
-                                        OutlinedButton(
-                                            onClick = { openTimerSetup() },
-                                            enabled = videoUri != null && openCvReady && !analyzing
-                                        ) { Text("Set up again") }
-                                    }
-                                    if (engineNow != null) OutlinedButton(          // it tests a setup by hand
-                                        onClick = {
-                                            val uri = videoUri
-                                            val engine = timerEngine
-                                            val atMs = positionMs
-                                            if (uri != null && engine != null) {
-                                                scope.launch {
-                                                    timerMessage = "Reading..."
-                                                    // counted in from the start: a new setup made while the picture loads must not free this engine
-                                                    startUsing(engine)
-                                                    try {
-                                                        val bmp = withContext(Dispatchers.IO) { grabFrame(context, uri, atMs) }
-                                                        if (bmp == null) {
-                                                            timerMessage = "Couldn't read a picture here"
-                                                        } else {
-                                                            val res = withContext(Dispatchers.Default) { engine.readFrame(bmp) }
-                                                            timerMessage = res.message
-                                                            timerDebug = res.debug
-                                                        }
-                                                    } finally {
-                                                        stopUsing(engine)
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        enabled = videoUri != null && timerEngine != null && !analyzing
-                                    ) { Text("Read timer here") }
-                                }
-                                if (backupOpen && engineNow != null) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            retireEngine(timerEngine)
-                                            timerEngine = null
-                                            timerDebug = null
-                                            timerMessage = "Backup removed. Your solves stay."
-                                            footageId?.let { id ->
-                                                scope.launch {
-                                                    withContext(Dispatchers.IO) { try { SessionStore.clearTimerSetup(context, id) } catch (e: Exception) { } }
-                                                }
-                                            }
-                                        },
-                                        enabled = !analyzing && !setupBusy
-                                    ) { Text("Remove the backup") }
-                                }
-                                if (backupOpen && timerMessage.isNotEmpty()) {
-                                    Spacer(Modifier.height(8.dp))
-                                    InfoNote(timerMessage, kind = kindOfMessage(timerMessage))
-                                }
-                                val debugPicture = timerDebug
-                                if (backupOpen && debugPicture != null) {
-                                    Image(
-                                        bitmap = debugPicture.asImageBitmap(),
-                                        contentDescription = null,
-                                        modifier = Modifier.height(56.dp)
                                     )
                                 }
 
@@ -1836,7 +1624,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Button(
                     onClick = { showFindConfirm = true },
-                    enabled = videoUri != null && openCvReady && durationMs > 0 && !analyzing && !importing,
+                    enabled = videoUri != null && durationMs > 0 && !analyzing && !importing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
@@ -1911,12 +1699,9 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                         BulletLines(
                             listOf(
                                 "Is the timer in view and readable while it runs?",
-                                "Put the playhead on the first frame of a final time and tap Add a missed solve.",
-                                "Or pause on a finished time and use the backup."
+                                "Put the playhead on the first frame of a final time and tap Add a missed solve."
                             )
                         )
-                        Spacer(Modifier.height(6.dp))
-                        TextButton(onClick = { openTimerSetup() }, enabled = openCvReady) { Text("Backup: set up by hand") }
                     }
                 } else if (cuts.isEmpty() && !analyzing && report == null) {
                     InfoNote(
@@ -2274,12 +2059,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                 videoUri = videoUri,
                 durationSec = durationMs / 1000.0,
                 listSolves = { expectedFromCuts(cuts) },
-                loadAttempt = {
-                    val id = footageId
-                    if (id == null) null
-                    else withContext(Dispatchers.IO) { try { lastSetupAttempt(context, id) } catch (e: Exception) { null } }
-                },
-                canRun = videoUri != null && openCvReady && durationMs > 0 && !analyzing && !importing && !setupBusy,
+                canRun = videoUri != null && durationMs > 0 && !analyzing && !importing,
                 result = scanToolResult,
                 onResultClose = { scanToolResult = null },
                 onRun = { truth, name -> runScanReport(truth, name) }
@@ -2294,7 +2074,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
             TimerQuestionDialog(
                 question = q,
                 onChoose = { timerQuestion = null; runFindSolves(it.box) },
-                onByHand = { timerQuestion = null; openTimerSetup() },
+                onNeither = { timerQuestion = null; timerNotFound = true; analysisStatus = "" },   // the solves are added by hand then
                 onDismiss = { timerQuestion = null; analysisStatus = "Cancelled." }
             )
         }
@@ -2721,62 +2501,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         TextButton(onClick = { requestDelete(editIndex) }) { Text("Delete cut") }
                         TextButton(onClick = { editIndex = -1 }) { Text("Close") }
-                    }
-                }
-            )
-        }
-
-        // ===== the "Set up timer" screen sits on top of everything while it is open =====
-        val frameForSetup = setupFrame
-        if (frameForSetup != null) {
-            TimerSetupScreen(
-                frame = frameForSetup,
-                busy = setupBusy,
-                message = setupMessage,
-                onCancel = { setupFrame = null },
-                onSave = { corners, typed ->
-                    scope.launch {
-                        setupBusy = true
-                        setupMessage = "Learning your timer..."
-                        val res = withContext(Dispatchers.Default) { TimerVision.createSetup(frameForSetup, corners, typed) }
-                        val setup = res.setup
-                        val ref = res.reference
-                        if (setup != null && ref != null) {
-                            val newEngine = withContext(Dispatchers.Default) { TimerEngine(setup, ref) }
-                            retireEngine(timerEngine)
-                            timerEngine = newEngine
-                            timerNotFound = false
-                            setupExpanded = true                // shows what was learned
-                            backupOpen = true
-                            val zeroWarning = if (typed.any { it.isDigit() } && typed.all { !it.isDigit() || it == '0' })
-                                "\nA zero doesn't teach the timer much. Set up again on a frame that shows a finished time."
-                            else ""
-                            timerMessage = res.message + zeroWarning
-                            timerDebug = null
-                            setupFrame = null
-                            // remember this setup for this video, so it is brought back the next time the session is opened
-                            val savedId = footageId
-                            if (savedId != null) {
-                                if (BuildConfig.DEBUG) rememberRefusedSetup(context, savedId, null)
-                                val problem = withContext(Dispatchers.IO) {
-                                    try {
-                                        SessionStore.saveTimerSetup(context, savedId, setupAtMs, corners, typed)
-                                        ""
-                                    } catch (e: Exception) {
-                                        e.message ?: e.javaClass.simpleName
-                                    }
-                                }
-                                timerMessage += if (problem.isEmpty()) "\nSaved for this video." else "\nCouldn't save this setup: $problem"
-                            } else {
-                                timerMessage += "\nNot saved: this video has no saved session yet."
-                            }
-                        } else {
-                            setupMessage = res.message
-                            // (3.3-A, debug builds) a refused setup is a result too: the scan report tries it again later
-                            val id = footageId
-                            if (BuildConfig.DEBUG && id != null) rememberRefusedSetup(context, id, SetupAttempt(setupAtMs, corners.toList(), typed))
-                        }
-                        setupBusy = false
                     }
                 }
             )

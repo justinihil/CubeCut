@@ -12,6 +12,13 @@ Notes on history:
 
 ## [Unreleased]
 
+### Removed
+- **The setup by hand** (four dots and a typed number) is gone, with *Read timer here* and the *Backup* part of the Setup box. CubeCut finds the timer by itself; when it can't, add the solves by hand in the editor. Solves found with a setup by hand stay as they are.
+- *Which one is your timer?* offers **Neither of them** instead of *set up by hand*.
+
+### Changed
+- **Smaller app:** the image library OpenCV is no longer needed (the debug APK went from 66 to 40 MB). Find solves reads the same pictures as before.
+
 ## [3.3.0] - 2026-11-26
 
 Find solves without a timer setup. CubeCut finds the timer in the video by itself, reads csTimer, flowtimer.io and QiYi-like displays, and points out where a solve may be missing. The saved data is upgraded to database v8 on first start; solves, tags, penalties, exports and backups from 3.2 carry over. Backup and restore from 3.2 now also passed a phone test: a backup, a restore after a reinstall, and reconnecting videos and exported clips.

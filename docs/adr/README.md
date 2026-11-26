@@ -19,7 +19,7 @@ To add a new one, copy [0000-template.md](0000-template.md) to the next number. 
 | [0011](0011-foreground-service-for-notification-only.md) | Foreground service only for the notification; work stays in the screen | Accepted |
 | [0012](0012-min-sdk-30-arm64-only.md) | Android 11+ only, arm64-only, R8 off | Accepted |
 | [0013](0013-rescan-merge-keeps-user-edits.md) | Re-scans merge with saved cuts and keep user edits | Accepted |
-| [0014](0014-display-reader-seam.md) | Digit reading behind a `DisplayReader` seam; seven-segment only for now | Accepted |
+| [0014](0014-display-reader-seam.md) | Digit reading behind a `DisplayReader` seam; seven-segment only for now | Retired in 4.0-0 |
 | [0015](0015-user-saved-backup-file.md) | A backup file the user saves (no videos); restore merges, the phone wins; bulk reconnect by picking files | Accepted |
 | [0016](0016-find-the-timer-without-ml.md) | Find and read solid-digit timers without ML, from example digits of open fonts | Accepted |
-| [0017](0017-finder-first-setup-by-hand-as-backup.md) | The finder comes first; the setup by hand is a backup and goes in 4.0 | Accepted |
+| [0017](0017-finder-first-setup-by-hand-as-backup.md) | The finder comes first; the setup by hand is a backup and goes in 4.0 | Accepted; done in 4.0-0 |

@@ -6,13 +6,13 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 
 | What | Where | Survives |
 |---|---|---|
-| Videos, cuts, export records, timer setup per video | SQLite `cubecut_sessions.db` (`SessionStore`) | Restarts. **Not** uninstall, backup or device transfer ([ADR-0009](adr/0009-no-backup-or-transfer.md)) |
+| Videos, cuts, export records, where the timer was found per video | SQLite `cubecut_sessions.db` (`SessionStore`) | Restarts. **Not** uninstall, backup or device transfer ([ADR-0009](adr/0009-no-backup-or-transfer.md)) |
 | App UI settings: grid/list, columns, sort keys, filters, hidden footage, theme mode, skip seconds, auto-replay, swipe hint | SharedPreferences `cubecut_ui` (`GalleryUiState`) | Restarts |
 | Thumbnails and viewer stills | `cacheDir/thumbs` (`ThumbCache`); capped at 100 MB, trimmed to 80 MB | Until Android clears the cache; rebuilt on demand |
-| Editor working state: selection, zoom, dialogs, the timer engine | `remember` in `EditorScreen` | Nothing. A process death returns to the Gallery, and cuts survive only through the 400 ms autosave |
+| Editor working state: selection, zoom, dialogs | `remember` in `EditorScreen` | Nothing. A process death returns to the Gallery, and cuts survive only through the 400 ms autosave |
 | Exported clips | MediaStore `Movies/CubeCut` (user files) | Uninstall, because they are the user's files |
 | Persisted URI read grants for imported videos | Android (`takePersistableUriPermission` in `SessionStore.keepAccess`) | Restarts, not reinstall. Capped at 512 grants; *Forget* releases one |
-| Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` | — |
+| Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` until 4.0-0; since then left alone (harmless, nothing reads them) | — |
 
 ## Schema (DB version 8)
 
@@ -34,9 +34,9 @@ erDiagram
     real before_pad "default 2.5"
     real after_pad "default 2.5"
     int scramble_all "default 1"
-    int timer_frame_ms "v3; -1 = not set up by hand"
-    text timer_corners "v3; 8 doubles, comma separated"
-    text timer_typed "v3; '' = not set up by hand"
+    int timer_frame_ms "v3; -1 = found, or none (before 4.0: set up by hand)"
+    text timer_corners "v3; 8 doubles, comma separated: the timer box"
+    text timer_typed "v3; not read since 4.0-0"
     int trashed_ms "v4; 0 = not in trash"
     text puzzle "v7; '' = not tagged"
     text category "v7; '' = not tagged"
@@ -126,7 +126,9 @@ On a match it refreshes the stored uri, name and size, and returns `isNew = fals
 
 ## The timer columns
 
-`timer_corners` with a typed number is a setup **by hand**, the backup ([ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)): it is set up again when the video is opened (`timerCornersOf`). `timer_corners` with an empty `timer_typed` and `timer_frame_ms` −1 is where CubeCut **found** the timer by itself (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` never overwrites a setup by hand. What the finder learned isn't stored; every scan learns it again.
+`timer_corners` is where CubeCut **found** the timer (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` writes it after every scan that found a timer, with `timer_frame_ms` −1 and an empty `timer_typed`. What the finder learned isn't stored; every scan learns it again.
+
+Before 4.0 the same columns could hold a timer set up **by hand** (a picture time, the four corners and the typed number; [ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). 4.0-0 removed that setup: such a row is never read as one any more, its corners still serve the zoom until the next scan replaces them, and the columns stay so old rows and backups load unchanged.
 
 ## Hints (v8)
 

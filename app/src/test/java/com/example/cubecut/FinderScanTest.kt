@@ -112,7 +112,7 @@ class FinderScanTest {
         val found = scan { t -> if (t < 4) "15.55" else shown(t) }
         assertEquals("15.55", found[0].timeText)
         assertFalse(found[0].include)
-        assertTrue(found[0].note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START))
+        assertTrue(found[0].note.startsWith(LEFTOVER_NOTE_START))
         assertEquals(times.size + 1, found.size)
     }
 

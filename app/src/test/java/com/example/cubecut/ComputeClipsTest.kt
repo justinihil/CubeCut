@@ -136,7 +136,7 @@ class ComputeClipsTest {
 
     @Test
     fun leftoverCut_isTreatedAsDeleted() {
-        val leftover = cut(1.0, "8.000", included = false, note = SolveAnalyzer.LEFTOVER_NOTE_START + " when the video began")
+        val leftover = cut(1.0, "8.000", included = false, note = LEFTOVER_NOTE_START + " when the video began")
         val clips = computeClips(listOf(leftover, cut(60.0, "12.000")), 2.0, 3.0, 100.0)
         assertEquals(1, clips.size)
         assertEquals(0.0, clips[0].startSec, eps)   // the leftover doesn't move the scramble start
@@ -144,7 +144,7 @@ class ComputeClipsTest {
 
     @Test
     fun leftoverNote_onAnIncludedCut_isANormalSolve() {
-        val c = cut(30.0, "10.000", included = true, note = SolveAnalyzer.LEFTOVER_NOTE_START + " when the video began")
+        val c = cut(30.0, "10.000", included = true, note = LEFTOVER_NOTE_START + " when the video began")
         assertEquals(1, computeClips(listOf(c), 2.0, 3.0, 100.0).size)
     }
 

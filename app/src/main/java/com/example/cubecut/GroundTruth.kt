@@ -45,14 +45,8 @@ val TIMER_KINDS = listOf("csTimer (PC)", "Phone app", "Stackmat", "GAN", "QiYi",
 data class ExpectedSolve(val stopSec: Double, val time: String)
 
 /**
- * A timer setup as it was tried: the picture ([frameMs]), the four corners (8 numbers, in that picture's pixels) and the typed number.
- * It is kept whether or not the setup worked, so a later reader is tried on exactly the same display.
- */
-data class SetupAttempt(val frameMs: Long, val corners: List<Double>, val typed: String)
-
-/**
  * Everything one ground-truth file says. [video] is the file name, used to warn when a file is compared with another video.
- * [setup] is null if no timer setup was ever tried on the video.
+ * (4.0-0) Files made before 4.0 may hold a "setup" (a timer set up by hand); it is ignored.
  * [timesOnly] is the other kind of answer key: just the times in order (csTimer's export, see [parseTimesList]), with no places in the
  * video. [solves] is empty then, and it is never written to JSON.
  */
@@ -62,7 +56,6 @@ data class GroundTruth(
     val durationSec: Double,
     val solves: List<ExpectedSolve>,
     val note: String = "",
-    val setup: SetupAttempt? = null,
     val timesOnly: List<String> = emptyList()
 )
 
@@ -102,7 +95,7 @@ class ScanComparison(
  * taken first, each solve used once, so two solves close together can't both grab the same match.
  */
 fun compareScan(expected: List<ExpectedSolve>, found: List<FoundSolve>): ScanComparison {
-    val leftovers = found.filter { !it.include && it.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START) }
+    val leftovers = found.filter { !it.include && it.note.startsWith(LEFTOVER_NOTE_START) }
     val real = found.filter { it !in leftovers }
     val pairs = ArrayList<Triple<Int, Int, Double>>()
     for (e in expected.indices) for (f in real.indices) {
@@ -208,7 +201,7 @@ class TimesComparison(
  * solve right next to a false one can't be told apart from a wrong time: it counts as a wrong time.
  */
 fun compareTimes(expected: List<String>, found: List<FoundSolve>): TimesComparison {
-    val leftovers = found.filter { !it.include && it.note.startsWith(SolveAnalyzer.LEFTOVER_NOTE_START) }
+    val leftovers = found.filter { !it.include && it.note.startsWith(LEFTOVER_NOTE_START) }
     val real = found.filter { it !in leftovers }.sortedBy { it.stopSec }
     val n = expected.size
     val m = real.size
@@ -272,7 +265,7 @@ fun gradeReading(expected: List<ExpectedSolve>, decimals: Int, durationSec: Doub
                 continue
             }
             if (digits.all { it == '0' }) break
-            val text = TimerVision.formatDigits(digits, decimals)
+            val text = formatDigits(digits, decimals)
             if (sameTime(text, e.time)) right++ else wrong.add(text)
         }
         ReadGrade(e, right, wrong, unreadable)
@@ -379,28 +372,8 @@ fun groundTruthToJson(t: GroundTruth): String {
         .put("durationSec", Math.round(t.durationSec * 1000) / 1000.0)
         .put("note", t.note)
         .put("solves", solves)
-        .put("setup", t.setup?.let { setupToJson(it) })       // null leaves it out
         .toString(2)
 }
-
-private fun setupToJson(s: SetupAttempt): JSONObject {
-    val corners = JSONArray()
-    for (v in s.corners) corners.put(Math.round(v * 10) / 10.0)
-    return JSONObject().put("frameMs", s.frameMs).put("typed", s.typed).put("corners", corners)
-}
-
-private fun setupFromJson(o: JSONObject): SetupAttempt? {
-    val arr = o.optJSONArray("corners") ?: return null
-    val corners = (0 until arr.length()).map { arr.optDouble(it, Double.NaN) }
-    val typed = o.optString("typed", "")
-    return if (corners.size == 8 && corners.none { it.isNaN() } && typed.isNotEmpty()) SetupAttempt(o.optLong("frameMs", 0L), corners, typed) else null
-}
-
-/** One setup attempt as text, for the debug build's memory of a refused setup (see ScanReport.kt). */
-fun setupAttemptToJson(s: SetupAttempt): String = setupToJson(s).toString()
-
-/** Null if [text] isn't a setup attempt. */
-fun parseSetupAttempt(text: String): SetupAttempt? = try { setupFromJson(JSONObject(text)) } catch (e: Exception) { null }
 
 /** Reads a ground-truth file. Throws IllegalArgumentException with a short reason if it isn't one (or is from a newer CubeCut). */
 fun parseGroundTruth(text: String): GroundTruth {
@@ -413,5 +386,5 @@ fun parseGroundTruth(text: String): GroundTruth {
         val s = arr.getJSONObject(it)
         ExpectedSolve(s.getDouble("stopSec"), s.optString("time", ""))
     }
-    return GroundTruth(o.optString("video", ""), o.optString("timer", ""), o.optDouble("durationSec", 0.0), solves.sortedBy { it.stopSec }, o.optString("note", ""), o.optJSONObject("setup")?.let { setupFromJson(it) })
+    return GroundTruth(o.optString("video", ""), o.optString("timer", ""), o.optDouble("durationSec", 0.0), solves.sortedBy { it.stopSec }, o.optString("note", ""))
 }

@@ -21,7 +21,7 @@ android {
 
     buildTypes {
         debug {
-            ndk { abiFilters += "arm64-v8a" }       // like release: an APK built here can be sent to the phone (66 MB, not 190)
+            ndk { abiFilters += "arm64-v8a" }       // like release (since 4.0-0 there are no native libraries, so this changes nothing)
         }
         release {
             ndk { abiFilters += "arm64-v8a" }
@@ -57,5 +57,4 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation("androidx.media3:media3-exoplayer:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
-    implementation("org.opencv:opencv:4.13.0")
 }

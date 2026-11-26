@@ -9,8 +9,8 @@ The **sources of truth** are [app/build.gradle.kts](../app/build.gradle.kts), [g
 | `namespace` / `applicationId` | `com.example.cubecut` | Fine for sideloading. Google Play would refuse `com.example.*`, and changing it later installs as a separate app. TODO(owner): decide on a final id before any store release |
 | `minSdk` | 30 (Android 11) | MediaStore trash and scoped export need 11+. Android 7–10 code was removed ([ADR-0012](adr/0012-min-sdk-30-arm64-only.md)) |
 | `targetSdk` / `compileSdk` | 37 | Current platform |
-| `ndk.abiFilters` (debug and release) | `arm64-v8a` only | OpenCV's native libraries make up most of the APK size, so other ABIs are dropped. Debug too since 3.3 (66 MB instead of 190), so a debug APK can be sent to the phone. x86 emulators can't run it |
-| Release `optimization.enable` | `false` (R8 off) | OpenCV (JNI) and Media3 can break under shrinking. `app/src/main/keepRules/rules.keep` is the unchanged template and has no effect while R8 is off |
+| `ndk.abiFilters` (debug and release) | `arm64-v8a` only | Chosen because OpenCV's native libraries made up most of the APK. **Since 4.0-0 there is no OpenCV and no native library**, so the filter changes nothing; it stays until a decision to drop it ([ADR-0012](adr/0012-min-sdk-30-arm64-only.md)). Debug APK: 40 MB (66 MB with OpenCV) |
+| Release `optimization.enable` | `false` (R8 off) | Media3 can break under shrinking (OpenCV's JNI, the other reason, is gone since 4.0-0). `app/src/main/keepRules/rules.keep` is the unchanged template and has no effect while R8 is off |
 | Java target | 11 | Android Studio template default |
 | Gradle / AGP / Kotlin | Gradle 9.6.0 wrapper, AGP 9.4.1, Kotlin 2.2.10, JVM toolchain 25 (`gradle/gradle-daemon-jvm.properties`) | — |
 | Build types | `debug`, `release` (no flavors) | — |

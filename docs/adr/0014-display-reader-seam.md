@@ -1,6 +1,6 @@
 # ADR-0014: Digit reading behind a DisplayReader seam; seven-segment only for now
 
-- **Status:** Accepted (documented retroactively). Solid digits no longer go through it: [ADR-0016](0016-find-the-timer-without-ml.md)
+- **Status:** Retired in 4.0-0: `DisplayReaders.kt` went with the setup by hand ([ADR-0017](0017-finder-first-setup-by-hand-as-backup.md)). Solid digits had stopped going through it with [ADR-0016](0016-find-the-timer-without-ml.md)
 - **Date:** 1.1.0
 
 ## Context

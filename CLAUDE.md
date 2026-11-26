@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-CubeCut is an offline Android app (Kotlin, Jetpack Compose, Media3, OpenCV). It reads the timer in a speedcubing session video and cuts one clip per solve. It has one module (`:app`) and one flat package (`com.example.cubecut`), with no ViewModel, Navigation or DI.
+CubeCut is an offline Android app (Kotlin, Jetpack Compose, Media3; its timer readers are plain Kotlin, with no OpenCV since 4.0). It reads the timer in a speedcubing session video and cuts one clip per solve. It has one module (`:app`) and one flat package (`com.example.cubecut`), with no ViewModel, Navigation or DI.
 
 **Start here, then go one hop down:**
 - [ARCHITECTURE.md](ARCHITECTURE.md): diagrams, invariants, **"Where to look for X"**, recipes for common changes.
@@ -38,17 +38,16 @@ For each pattern, copy the example named in the last column.
 | Schema change | Bump `DB_VERSION`, add an `if (oldVersion < N)` step, never edit old steps | `SessionStore.Helper.onUpgrade` |
 | Single cut update from the Gallery | Find by `stop_sec`, set `user_edited = 1` | `SessionStore.updateCutScramble` |
 | Pure logic | Top-level functions over `List<CutItem>`, no Android imports | `RescanMerge.kt` |
-| Tuning numbers | `private const val` at the top of the file, with a comment on the trade-off | Top of `SolveAnalyzer.kt` |
+| Tuning numbers | `private const val` at the top of the file, with a comment on the trade-off | Top of `FinderScan.kt` |
 | Background work | `withContext(Dispatchers.IO)` for storage/media, `Default` for CPU. Rethrow `CancellationException` first. Record results inside the same IO block | `runBatchExport` in `Gallery.kt` |
 | Playhead-driven drawing | Pass `position: () -> Long` and read it while drawing; callbacks via `rememberUpdatedState` | `Timeline.kt` |
-| OpenCV memory | `release()` every `Mat` / engine you create, in `finally` | `TimerVision.prep` |
 | Comments | KDoc in plain English explaining **why**; reference params as `[name]`; no `@param` tags | `SessionStore.saveSession` |
 
 ## Never
 
 - **Never permanently delete user media.** Use `MediaStore.createTrashRequest` after a visual warning ([ADR-0008](docs/adr/0008-never-delete-permanently.md)).
 - **Never add the INTERNET permission, networking or cloud services.** ML needs an owner decision first ([ADR-0001](docs/adr/0001-offline-classic-cv-no-ml.md)).
-- **Never start video, timer-engine or `cuts` work while `analyzing`** (or while a batch export runs). OpenCV objects are not thread-safe.
+- **Never start video or `cuts` work while `analyzing`** (or while a batch export runs). The frame source and the scans' memos are not thread-safe.
 - **Never change a cut without setting `edited`.** The exception is the all-clips scramble switch. Otherwise a re-scan overwrites the change.
 - **Never link anything to `cuts.id`.** It changes on every save. Exports link by `stop_sec` within `SAME_SOLVE_SEC`.
 - **Never store clips or pictures in the database.** Clips come from `computeClips`; pictures come from `ThumbCache`.
