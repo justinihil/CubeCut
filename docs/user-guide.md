@@ -4,11 +4,14 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 
 ## Cutting a session
 
-1. **Import** the video with *Import video* in the Gallery. If CubeCut has seen the video before, it says *Imported before*. **Open saved** brings back its saved solves and settings; **Cancel** leaves things as they were. A new video asks **Which puzzle is this?** One puzzle per video works best; *Decide later* skips it (set it later in the Setup box).
+1. **Import** one or more videos with *Import video* in the Gallery. Each new video goes to the **Sessions** tab, and CubeCut starts *Find solves* on it by itself, one video after another. If you pick **one** video CubeCut has seen before, it says *Imported before*: **Open saved** opens it in the editor, **Cancel** leaves things as they were. When you pick several, the ones seen before are skipped and counted. Set the puzzle later, in the editor's Setup box or the video's ⋮ menu.
 2. **The timer** needs nothing: CubeCut finds it by itself, csTimer and other timers with solid digits as well as QiYi-like displays. A timer on the mat may slide or be hit. Keep it in view and readable, also while it runs, for most of the video. **Film with a fixed camera:** a small bump is fine, but if the camera ends up pointing somewhere else, the solves after that can be missed. If two numbers run at the same time, it asks which one is the timer.
 
    **If it finds no timer,** add the solves at the playhead (step 4). There is no setup by hand any more (until 4.0 there was one, as a backup).
-3. **Find solves.** The app reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. It runs in the background: you can leave the editor, use the Gallery, open another video or use other apps meanwhile (a notification shows progress), or press Cancel. While it runs, this video's list can't be changed. Several videos wait their turn.
+3. **Find solves** reads the timer along the whole video. This took about 30 s for a 22-solve session on the test phone; it is slower on slower phones or longer videos. It runs in the background: you can leave the editor, use the Gallery, open another video or use other apps meanwhile (a notification shows progress), or press Cancel. While it runs, this video's list can't be changed. Several videos wait their turn.
+   - The **slim bar above the tabs** says how far it is. Tap it to see every video: *Waiting*, *Reading the timer 40%*, or how it ended. **Choose** answers *Which one is your timer?*; **Add by hand** opens a video whose timer wasn't found; **Open** opens one to review. *Clear finished* empties the list.
+   - A card that says **Timer not found** opens in the editor: add its solves at the playhead. **Choose the timer** means it asks which number is the timer.
+   - To scan a video again, open it and press *Find solves again*.
 4. **Review** the list. The arrows step through solves. Tapping the timeline selects the solve there; playing the video doesn't change the selection.
    - **Missed solve:** put the playhead on the first frame that shows its final time, tap **Add a missed solve at the playhead**, and type the time. The list jumps to the new solve, which blinks briefly.
    - **? Maybe a missed solve** (dashed card): the timer ran without a final time, was reset, or couldn't be read for long. **Go there** moves the playhead; find the first frame of the final time and add the solve, and the hint goes. **Nothing here** drops it for good (Undo for 8 s). A solve missed without any of these signs gets no hint.
@@ -20,15 +23,17 @@ How to cut a session (version 3.x), what to expect, and what to try when somethi
 
 If the timer can't be read, nothing is blocked. You can always add solves by hand, even before Find solves.
 
-## Adding a single solve
+## Videos of one solve
 
-1. Tap *Import video* in the Gallery and pick a video of **one** solve. Choose **One solve** (*A session* opens the editor as above).
-2. It opens in the player straight away. Pause on the stopped timer and type its time in the bar at the top, then *Save*.
-3. Swipe up for the details: penalty, puzzle, note and *Shared on*, as for any clip.
-4. **Trim** is optional (**Edit** in the details). Off: the whole file is the clip and nothing needs exporting. On: drag the two handles; the clip is exported as a copy. End it just after the timer stops: the end is the solve's stop.
-5. Single solves are in the **Clips** tab only, not under Sessions. **Delete video** and **Forget this solve** are at the bottom of the details.
+A video of one solve (a competition attempt, for example) is imported like any other. CubeCut finds its solve and cuts it like any solve, so its clip is exported as a copy, and a penalty renames that copy. To save space, delete the original afterwards (*Delete video*: the clip keeps playing from the copy). If its timer isn't found, add the solve by hand in the editor.
 
-Picking the same video again says *Already in your Gallery*. The editor's own *Import video* is for sessions only.
+The **Sessions** tab's switch shows **All**, **Sessions** or **Single solves** (every video with one solve). The Clips tab's *Filter* switches single solves on or off together.
+
+**Single solves made before 4.0** (imported as *One solve*) keep working as they are:
+- tapping one opens it in the player; its time is typed in the bar at the top;
+- **Trim** is optional (**Edit** in the details). Off: the whole file is the clip and nothing needs exporting. On: drag the two handles; the clip is exported as a copy;
+- **Delete video** and **Forget this solve** are at the bottom of its details;
+- picking its video again says *Already in your Gallery*.
 
 ## Things to know
 

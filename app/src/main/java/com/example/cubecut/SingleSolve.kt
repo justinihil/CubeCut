@@ -66,10 +66,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------------------------------
-// (3.2-F) Clips of single solves. The Gallery's Import video asks "A session or one solve?". A single solve skips Find solves:
-// it is saved at once and opens in the viewer, which asks for its time over the video (penalty, puzzle and trim are in the details). Untrimmed, the file itself is the clip (nothing to
-// export); trimmed, it is exported as a copy like any clip. The solve stops where the clip ends. Single solves live in the Clips
-// tab only (not on the Footage tab) and never open in the editor.
+// (3.2-F) Clips of single solves, imported as "One solve" before 4.0. Such a single solve skipped Find solves: its time was typed in
+// the viewer, over the video (penalty, puzzle and trim are in the details). Untrimmed, the file itself is the clip (nothing to export);
+// trimmed, it is exported as a copy like any clip. The solve stops where the clip ends. It never opens in the editor.
+// (4.0-C) Import no longer asks: every video is scanned, and a video of one solve is a session with one solve. The old single solves
+// keep working as they are, and are listed under Sessions too (switch: Single solves).
 // ---------------------------------------------------------------------------------------
 
 /** What the single-solve window gives back. [puzzle] / [category]: null = not asked (editing), else the video's tags ("" = none). */
@@ -78,25 +79,6 @@ class SingleSolveInput(
     val trimStart: Double?, val trimEnd: Double?,
     val puzzle: String?, val category: String?
 )
-
-/** "A session, or one solve?": asked by the Gallery's Import video for a video CubeCut hasn't seen before. */
-@Composable
-fun ImportKindDialog(onSession: () -> Unit, onSingle: () -> Unit, onCancel: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text("What is in this video?") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onSession, modifier = Modifier.fillMaxWidth()) { Text("A session (many solves)") }
-                Text("Find solves cuts it into one clip per solve.", style = MaterialTheme.typography.bodySmall)
-                OutlinedButton(onClick = onSingle, modifier = Modifier.fillMaxWidth()) { Text("One solve") }
-                Text("It opens in the player. Type its time there.", style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } }
-    )
-}
 
 /** A single solve picked again with Import video: it is already in the Gallery. *Show it* opens it in the viewer. */
 @Composable

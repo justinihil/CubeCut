@@ -14,7 +14,7 @@ Everything CubeCut remembers, how a video is recognised, and how exported files 
 | Persisted URI read grants for imported videos | Android (`takePersistableUriPermission` in `SessionStore.keepAccess`) | Restarts, not reinstall. Capped at 512 grants; *Forget* releases one |
 | Legacy 1.x files `timer_setup.json` / `timer_reference.png` | Deleted at start-up by `TimerStore.clear` until 4.0-0; since then left alone (harmless, nothing reads them) | — |
 
-## Schema (DB version 8)
+## Schema (DB version 9)
 
 ```mermaid
 erDiagram
@@ -43,6 +43,7 @@ erDiagram
     text kind "v7; session or single (3.2-F)"
     real trim_start_sec "v7; NULL = untrimmed (3.2-F)"
     real trim_end_sec "v7; NULL = untrimmed (3.2-F)"
+    text scan_state "v9; queued, no_timer, asks or '' (4.0-C)"
   }
   cuts {
     int id PK "NOT stable: regenerated on every save"
@@ -96,6 +97,7 @@ Migrations (`onUpgrade`) only add, one `if (oldVersion < N)` block per version:
 | v6 | `reviewed` |
 | v7 | `footage`: `puzzle`, `category`, `kind`, `trim_start_sec`, `trim_end_sec`. `cuts`: `puzzle`, `category`, `plus2_count`, `dnf`, `before_pad`, `after_pad`, `shared_on`, plus a one-off fill of `shared_on` from the platform names in `user_note` (the note is left as it is) |
 | v8 | `hints` table |
+| v9 | `footage.scan_state` (4.0-C) |
 
 ### v7 fields (3.2)
 
@@ -108,7 +110,7 @@ Added in 3.2-A with no UI; the later 3.2 phases build the screens. Every default
 | `cuts.plus2_count`, `cuts.dnf` | The penalty (3.2-C). `time_text` keeps what the timer showed, so the solve-only start and the export link don't move. Only what is shown (`shownTime`, `clipTitle`), the sort and *best* (`GalleryClip.seconds` = `penalisedSeconds`: +2 s each, DNF = none) and the file name (`fileTimePart`) use the penalty. DNF and +2 exclude each other in the UI | `updateCutPenalty` (viewer sheet); the Edit window through `saveSession` with `edited` set |
 | `cuts.before_pad`, `cuts.after_pad` | The clip's own buffers in seconds (3.2-D: *Follow video* / *Custom*). NULL = follows the video's slider. `computeClips` uses them for that clip only; its `after_pad` also moves where the next scramble starts | `updateCutPads` (viewer sheet); the Edit window through `saveSession` with `edited` set |
 | `cuts.shared_on` | Where the clip was shared: names from `SOCIAL_PLATFORMS`, comma separated (`encodeSharedOn` / `decodeSharedOn`) | `updateCutSharedOn` (the viewer's *Shared on* chips, 3.2-E). The note is separate text; the one-off v7 fill was the only time it was read from the note |
-| `footage.kind` | `session` (`KIND_SESSION`) or `single` (`KIND_SINGLE`, a clip of one solve, 3.2-F). A single solve has exactly one cut, never opens in the editor and isn't on the Sessions tab | `createSingle` |
+| `footage.kind` | `session` (`KIND_SESSION`) or `single` (`KIND_SINGLE`, a clip of one solve, 3.2-F). A single solve has exactly one cut and never opens in the editor. Since 4.0-C no new ones are made (every video is scanned) and the old ones are listed on the Sessions tab too | `createSingle` (removed in 4.0-C) |
 | `footage.trim_start_sec`, `trim_end_sec` | A single solve's trim in seconds of the file. NULL = untrimmed: the whole file is the clip and needs no export. `singleRange` / `clipsFor` turn it into the clip; the cut's `stop_sec` is the range's end | `createSingle`, `updateSingle` (moves the cut and its export record to the new end in one transaction) |
 
 All the cut fields go through `saveSession`'s insert and `loadCuts`. `mergeRescan` keeps an edited cut as it is, and when it replaces an untouched cut with the new scan it still carries over every field only the user sets (`withUserFieldsOf`).
@@ -122,13 +124,17 @@ There is no `onDowngrade`, so installing an older APK over a newer database cras
 2. same `display_name` + `size_bytes` + `duration_ms`;
 3. same `size_bytes` + `duration_ms` (skipped if the size is unknown), so a renamed file is still recognised.
 
-On a match it refreshes the stored uri, name and size, and returns `isNew = false`. `findKnown` applies the same rules without changing anything. Both *Import video* buttons call it first, and a known video shows *Imported before* (*Open saved* / *Cancel*) before `openOrCreate` runs, so Cancel leaves no trace. Opening a session from the Gallery doesn't ask. `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
+On a match it refreshes the stored uri, name and size, and returns `isNew = false`. `findKnown` applies the same rules without changing anything. *Import video* calls it first. When one video is picked, a known one shows *Imported before*; when several are, known ones are skipped (4.0-C). A known video shows *Imported before* (*Open saved* / *Cancel*) before `openOrCreate` runs, so Cancel leaves no trace. Opening a session from the Gallery doesn't ask. `relink` (*Reconnect video*) attaches a new uri to a saved session and only checks duration within 1500 ms. There is no content hash. Rationale: [ADR-0005](adr/0005-video-identity-heuristics.md).
 
 ## The timer columns
 
 `timer_corners` is where CubeCut **found** the timer (3.3-C): the box around its numbers, only for the zoom in the Edit window (`timerPlaceOf`). `saveFoundTimer` writes it after every scan that found a timer, with `timer_frame_ms` −1 and an empty `timer_typed`. What the finder learned isn't stored; every scan learns it again.
 
 Before 4.0 the same columns could hold a timer set up **by hand** (a picture time, the four corners and the typed number; [ADR-0017](adr/0017-finder-first-setup-by-hand-as-backup.md)). 4.0-0 removed that setup: such a row is never read as one any more, its corners still serve the zoom until the next scan replaces them, and the columns stay so old rows and backups load unchanged.
+
+## Scan state (v9)
+
+How a video's background scan stands (`AnalysisQueue.kt`, 4.0-C), so it survives the app ending. `SessionStore.setScanState` writes it; the queue writes `queued` when a video is put in it, and when the scan ends `no_timer` (*Timer not found* on the card), `asks` (*Choose the timer*) or `''` (done, cancelled or failed). `AnalysisQueue.resume` queues every `queued` or `asks` video again when the app starts, if its file still opens. While the queue holds a job for the video, the job's state is shown instead. It isn't in the backup file: a restored video starts with `''`.
 
 ## Hints (v8)
 

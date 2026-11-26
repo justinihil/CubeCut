@@ -17,10 +17,13 @@
 package com.example.cubecut
 
 import android.app.Activity
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.LayoutInflater
@@ -163,6 +166,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -193,6 +197,9 @@ private const val THUMB_ASPECT = 0.75f
 
 /** The height in pixels of the still pictures shown in the full-screen viewer while swiping (bigger than the grid's). */
 private const val VIEWER_PICTURE_HEIGHT = 900
+
+/** (4.0-C) The extra time before and after a solve that a newly imported video starts with (the same as the editor's). */
+private const val NEW_VIDEO_PAD = 2.5f
 
 private const val MIN_COLUMNS = 2
 private const val MAX_COLUMNS = 6
@@ -257,6 +264,23 @@ enum class ClipKey(val label: String, val short: String) {
         }
     }
 }
+
+/** (4.0-C) Which videos the Sessions tab lists (owner, 2026-11-26): a switch at its top. */
+enum class FootageKind(val label: String) {
+    ALL("All"),
+    SESSIONS("Sessions"),
+    SINGLES("Single solves");
+
+    companion object {
+        fun from(name: String?): FootageKind = FootageKind.entries.firstOrNull { it.name == name } ?: ALL
+    }
+}
+
+/**
+ * (4.0-C) A video of one solve: an old single solve (3.2-F), or any video with exactly one solve. Since 4.0 every video is scanned the
+ * same way, so "single" is what the video holds, not how it was imported. The Sessions tab's switch and the Clips filter use it.
+ */
+fun isOneSolve(f: Footage, stats: FootageStats?): Boolean = f.isSingle || (stats?.solves ?: 0) == 1
 
 enum class FootageSort(val label: String) {
     NEWEST("Newest first"),
@@ -334,7 +358,7 @@ fun sortFootage(list: List<Footage>, sort: FootageSort, stats: Map<Long, Footage
 // ---------------------------------------------------------------------------------------
 
 class GalleryUiState(private val prefs: SharedPreferences) {
-    var tab by mutableStateOf(0)                                  // 0 = Clips, 1 = Footage
+    var tab by mutableStateOf(0)                                  // 0 = Clips, 1 = Sessions (Footage in the code)
     var refresh by mutableStateOf(0)                              // add 1 to load the data again
     var detail by mutableStateOf<GalleryClip?>(null)              // the clip the viewer was opened on (null = viewer closed)
     var detailList by mutableStateOf<List<GalleryClip>>(emptyList())   // the clips the viewer can swipe through, in the order shown
@@ -353,6 +377,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var footageColumns by mutableStateOf(prefs.getInt("footage_columns", 2).coerceIn(MIN_COLUMNS, MAX_COLUMNS))
     var clipKeys by mutableStateOf(ClipKey.parse(prefs.getString("clip_keys", null)))
     var footageSort by mutableStateOf(FootageSort.from(prefs.getString("footage_sort", null)))
+    var footageKind by mutableStateOf(FootageKind.from(prefs.getString("footage_kind", null)))   // (4.0-C) the Sessions tab's switch
     var exportFilter by mutableStateOf(ExportFilter.from(prefs.getString("export_filter", null)))
     var checkOnly by mutableStateOf(prefs.getBoolean("check_only", false))   // show only clips that need a check
     // (3.2-B) show only clips with this puzzle / type tag: null = any, "" = only clips that are not tagged
@@ -385,6 +410,7 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putInt("footage_columns", footageColumns)
             .putString("clip_keys", clipKeys.joinToString(",") { it.name })
             .putString("footage_sort", footageSort.name)
+            .putString("footage_kind", footageKind.name)
             .putString("export_filter", exportFilter.name)
             .putBoolean("check_only", checkOnly)
             .putString("puzzle_filter", puzzleFilter)          // (null removes the key: any tag)
@@ -873,6 +899,23 @@ private fun ClipRow(
 
 private fun footageThumbKey(f: Footage): String = "f_${f.id}"
 
+/**
+ * (4.0-C) What a video's card says about its scan in the background, and whether that needs the user (amber), or null: "Waiting to
+ * scan", "Finding solves 40%", "Timer not found", "Choose the timer". The queue's job wins over the saved mark, which may be older.
+ */
+@Composable
+private fun scanBadgeText(f: Footage): Pair<String, Boolean>? {
+    val job = AnalysisQueue.jobOf(f.id)
+    val state = job?.state
+    return when {
+        state == ScanState.WAITING -> Pair("Waiting to scan", false)
+        state == ScanState.SCANNING -> Pair("Finding solves ${job.percent}%", false)
+        state == ScanState.NO_TIMER || (state == null && f.scanState == SCAN_NO_TIMER) -> Pair("Timer not found", true)
+        state == ScanState.ASKS || (state == null && f.scanState == SCAN_ASKS) -> Pair("Choose the timer", true)
+        else -> null
+    }
+}
+
 @Composable
 private fun FootageCell(
     f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier,
@@ -899,7 +942,9 @@ private fun FootageCell(
             Column(Modifier.align(Alignment.TopStart).padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 if (f.trashedMs > 0) Badge("In trash", RED) else if (!openable) Badge("Video deleted", RED)
                 if ((stats?.check ?: 0) > 0) Badge("${stats?.check} to check", AMBER, Color.Black)
-                if (f.lastScanMs == 0L && f.cutCount == 0) Badge("Not scanned", GREY)
+                val scan = scanBadgeText(f)
+                if (scan != null) Badge(scan.first, if (scan.second) AMBER else GREY, if (scan.second) Color.Black else Color.White)
+                else if (f.lastScanMs == 0L && f.cutCount == 0) Badge("Not scanned", GREY)
                 if (hidden) Badge("Not shown in Clips", GREY)
             }
             Column(
@@ -952,6 +997,7 @@ private fun FootageRow(
                         (if (stats?.best != null) "  |  best ${stats.bestText}" else "") +
                         (if ((stats?.check ?: 0) > 0) "  |  ${stats?.check} to check" else "") +
                         (if (f.trashedMs > 0) "  |  in trash" else if (!openable) "  |  video deleted" else "") +
+                        (scanBadgeText(f)?.let { "  |  " + it.first.lowercase() } ?: "") +
                         (if (hidden) "  |  not shown in Clips" else ""),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2
@@ -1298,9 +1344,17 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     }
     BackHandler(enabled = ui.selecting) { exitSelection() }
 
-    /** Tapping a video on the Footage tab opens it in the editor; a video that can't be opened shows its options instead (Reconnect). */
+    /**
+     * Tapping a video on the Sessions tab opens it in the editor; a video that can't be opened shows its options instead (Reconnect).
+     * (4.0-C) An old single solve never opens in the editor: it opens in the viewer, in the Clips tab.
+     */
     fun openFootage(f: Footage, canOpen: Boolean) {
-        if (canOpen) onOpenEditor(EditorRequest(Uri.parse(f.uri), null)) else footageMenu = f
+        val one = if (f.isSingle) data?.clipsOf(f.id)?.firstOrNull() else null
+        if (one != null) {
+            ui.tab = 0
+            ui.openClip = f.id to one.cut.stopSec
+            ui.refresh++
+        } else if (canOpen) onOpenEditor(EditorRequest(Uri.parse(f.uri), null)) else footageMenu = f
     }
 
     // Android can't tell CubeCut when a video is deleted or restored while the app is open, so everything is checked again each time you
@@ -1394,34 +1448,95 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         }
     }
 
-    // Import video: pick a video, then open it in the editor. (3.1) A video seen before asks first (ReimportDialog); Cancel stays here.
-    // Reconnect video: the same picker, but the chosen video is attached to the session that lost its video, and you stay in the Gallery.
+    // (4.0-C) Import video: pick one or several videos. Each new one is saved and put in the scan queue (AnalysisQueue): the Gallery
+    // stays open and Find solves runs in the background. With one video, one seen before asks first, as before 4.0 (ReimportDialog,
+    // or KnownSingleDialog for an old single solve); with several, the ones seen before are skipped and counted.
+    // Reconnect video: its own picker; the chosen video is attached to the session that lost its video, and you stay in the Gallery.
     var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
-    var importKindFor by remember { mutableStateOf<Uri?>(null) }                 // (3.2-F) a new video: "A session or one solve?"
     var knownSingle by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }    // (3.2-F) a single solve picked again
+    var asking by remember { mutableStateOf<ScanJob?>(null) }                   // (4.0-C) the progress panel's "Choose": which number?
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    /** (4.0-C) Saves the new videos [uris] and queues their scans. [skipped]: picked videos that were imported before. */
+    fun importNew(uris: List<Uri>, skipped: Int) {
+        // Android 13+ asks once whether CubeCut may show its progress notification
+        if (uris.isNotEmpty() && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        scope.launch {
+            var failed = 0
+            val made = withContext(Dispatchers.IO) {
+                uris.mapNotNull { uri ->
+                    try {
+                        val dur = readDurationMs(context, uri)
+                        if (dur <= 0) null
+                        else SessionStore.openOrCreate(context, uri, dur, NEW_VIDEO_PAD, NEW_VIDEO_PAD, DEFAULT_INCLUDE_SCRAMBLE).footage
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    }.also { if (it == null) failed++ }
+                }
+            }
+            for (f in made) AnalysisQueue.enqueue(context, f)
+            message = listOfNotNull(
+                when (made.size) {
+                    0 -> null
+                    1 -> "Imported \"${made[0].title}\". CubeCut finds its solves in the background."
+                    else -> "Imported ${made.size} videos. CubeCut finds their solves in the background."
+                },
+                if (skipped == 1) "1 was imported before." else if (skipped > 1) "$skipped were imported before." else null,
+                if (failed == 1) "1 couldn't be read." else if (failed > 1) "$failed couldn't be read." else null
+            ).joinToString(" ").ifEmpty { "Nothing new to import." }
+            if (made.isNotEmpty()) {
+                ui.tab = 1
+                ui.flashFootage = made[0].id
+            }
+            ui.refresh++
+        }
+    }
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        for (u in uris) SessionStore.keepAccess(context, u)
+        scope.launch {
+            val known = uris.distinct().map { it to findImportedBefore(context, it) }
+            if (known.size == 1) {
+                val (uri, k) = known[0]
+                when {
+                    k != null && k.isSingle -> knownSingle = uri to k
+                    k != null -> reimportAsk = uri to k
+                    else -> importNew(listOf(uri), 0)
+                }
+            } else {
+                importNew(known.filter { it.second == null }.map { it.first }, known.count { it.second != null })
+            }
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val target = relinkFor
         relinkFor = null
-        if (uri != null) {
+        if (uri != null && target != null) {
             SessionStore.keepAccess(context, uri)
-            if (target == null) {
-                scope.launch {
-                    val known = findImportedBefore(context, uri)
-                    when {
-                        known != null && known.isSingle -> knownSingle = uri to known
-                        known != null -> reimportAsk = uri to known
-                        else -> importKindFor = uri
-                    }
+            scope.launch {
+                message = withContext(Dispatchers.IO) {
+                    try { SessionStore.relink(context, target, uri) } catch (e: Exception) { "Couldn't reconnect: ${e.message ?: e.javaClass.simpleName}" }
                 }
-            } else {
-                scope.launch {
-                    message = withContext(Dispatchers.IO) {
-                        try { SessionStore.relink(context, target, uri) } catch (e: Exception) { "Couldn't reconnect: ${e.message ?: e.javaClass.simpleName}" }
-                    }
-                    ui.refresh++
-                }
+                ui.refresh++
             }
         }
+    }
+    // (4.0-C) the progress panel's "Choose": the same question as in the editor; the answer scans the video again near that number
+    val askingJob = asking
+    val question = askingJob?.outcome?.question
+    if (askingJob != null && question != null && askingJob.state == ScanState.ASKS) {
+        TimerQuestionDialog(
+            question = question,
+            onChoose = { c -> asking = null; AnalysisQueue.again(context, askingJob, c.box) },
+            onNeither = { asking = null; AnalysisQueue.settleWithoutTimer(context, askingJob.footageId); ui.refresh++ },
+            onDismiss = { asking = null }
+        )
     }
     val reimport = reimportAsk
     if (reimport != null) {
@@ -1440,28 +1555,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ui.tab = 0
         ui.openClip = footageId to stopSec
         ui.refresh++
-    }
-    val kindUri = importKindFor
-    if (kindUri != null) {
-        ImportKindDialog(
-            onSession = { importKindFor = null; onOpenEditor(EditorRequest(kindUri, null)) },
-            onSingle = {
-                // saved at once with no time; the viewer opens on it and asks for the time over the video
-                importKindFor = null
-                scope.launch {
-                    val made = withContext(Dispatchers.IO) {
-                        try {
-                            val dur = readDurationMs(context, kindUri)
-                            if (dur <= 0) null else SessionStore.createSingle(context, kindUri, dur, "", 0, false, "", "", null, null)
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-                    if (made == null) message = "Couldn't read that video. Try another file." else showSolve(made.first.id, made.second)
-                }
-            },
-            onCancel = { importKindFor = null }
-        )
     }
     val againSingle = knownSingle
     if (againSingle != null) {
@@ -1710,7 +1803,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("CubeCut", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        if (d == null) "Loading..." else "${d.clips.size} clips in ${d.footage.count { !it.isSingle }} sessions",
+                        if (d == null) "Loading..." else "${d.clips.size} clips from ${d.footage.size} videos",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -1726,8 +1819,15 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         DropdownMenuItem(text = { Text("Settings") }, onClick = { showMore = false; showSettings = true })
                     }
                 }
-                Button(onClick = { relinkFor = null; picker.launch(arrayOf("video/*")) }) { Text("Import video") }
+                Button(onClick = { relinkFor = null; importPicker.launch(arrayOf("video/*")) }) { Text("Import video") }
             }
+
+            // ===== (4.0-C) Find solves in the background: one slim line, tap it for every video =====
+            ScanProgressPanel(
+                onOpen = { job -> d?.footage?.firstOrNull { it.id == job.footageId }?.let { openFootage(it, d.openable[it.id] == true) } },
+                onChoose = { job -> asking = job },
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
 
             // ===== the two tabs =====
             TabRow(selectedTabIndex = ui.tab) {
@@ -1753,6 +1853,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     OutlinedButton(onClick = { showFilter = true }) { Text(if (ui.filterActive) "Filter \u2022" else "Filter") }
                 } else {
                     SortMenu(ui.footageSort.label, FootageSort.entries.map { it to it.label }) { ui.footageSort = it; ui.save() }
+                }
+            }
+            if (ui.tab == 1) {
+                // (4.0-C) sessions and single solves in one list, or one of them
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+                    for (k in FootageKind.entries) ChoiceChip(k.label, ui.footageKind == k) { ui.footageKind = k; ui.save() }
                 }
             }
             if (ui.tab == 0) {
@@ -1933,7 +2039,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         if (shown.isEmpty()) {
                             Text(
                                 if (ui.filterActive) "No clips match the filter. Remove a filter above, or tap Filter."
-                                else "No clips yet. Open a session in the editor and press Find solves.",
+                                else "No clips yet. Tap Import video: CubeCut finds the solves by itself.",
                                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp)
                             )
                         } else if (ui.clipsGrid) {
@@ -1971,12 +2077,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             }
                         }
                     } else {
-                        // (3.2-F) single solves live in the Clips tab only
-                        val shown = remember(d, ui.footageSort) { sortFootage(d.footage.filter { !it.isSingle }, ui.footageSort, statsById) }
+                        // (4.0-C) every video, also single solves; the switch above picks sessions or single solves
+                        val shown = remember(d, ui.footageSort, ui.footageKind) {
+                            val picked = when (ui.footageKind) {
+                                FootageKind.ALL -> d.footage
+                                FootageKind.SESSIONS -> d.footage.filter { !isOneSolve(it, statsById[it.id]) }
+                                FootageKind.SINGLES -> d.footage.filter { isOneSolve(it, statsById[it.id]) }
+                            }
+                            sortFootage(picked, ui.footageSort, statsById)
+                        }
                         if (shown.isEmpty()) {
                             InfoNote(
-                                title = "No session videos yet",
-                                text = "Your single solves are in the Clips tab. Import a session to find its solves.",
+                                title = if (ui.footageKind == FootageKind.SINGLES) "No single solves yet" else "No videos yet",
+                                text = if (ui.footageKind == FootageKind.SINGLES) "A video with one solve shows here."
+                                else "Tap Import video. CubeCut finds the solves by itself.",
                                 modifier = Modifier.padding(12.dp)
                             )
                         } else if (ui.footageGrid) {
@@ -2322,8 +2436,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             TextButton(onClick = { ui.hidden = emptySet(); ui.save() }) { Text("All") }
                             TextButton(onClick = { ui.hidden = d.footage.map { it.id }.toSet(); ui.save() }) { Text("None") }
                         }
-                        // (3.2-F) single solves are switched on and off together, so the list stays short
-                        val singles = d.footage.filter { it.isSingle }.map { it.id }
+                        // (3.2-F) single solves are switched on and off together, so the list stays short. (4.0-C) Any video of one solve.
+                        val singles = d.footage.filter { isOneSolve(it, statsById[it.id]) }.map { it.id }
                         if (singles.isNotEmpty()) {
                             val on = singles.any { it !in ui.hidden }
                             Row(
@@ -2334,7 +2448,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 Text("Single solves (${singles.size})", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
-                        for (f in sortFootage(d.footage.filter { !it.isSingle }, FootageSort.NEWEST, statsById)) {
+                        for (f in sortFootage(d.footage.filter { !isOneSolve(it, statsById[it.id]) }, FootageSort.NEWEST, statsById)) {
                             val on = f.id !in ui.hidden
                             Row(
                                 Modifier

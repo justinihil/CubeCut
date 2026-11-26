@@ -71,7 +71,8 @@ stateDiagram-v2
   ClipViewer --> ClipsTab: Back (flashClip)
   ClipViewer --> Editor: Editor button (seekSec)
   SessionsTab --> Editor: tap video (openFootage)
-  ClipsTab --> Editor: Import video (OpenDocument)
+  ClipsTab --> SessionsTab: Import video (OpenMultipleDocuments; scans queued)
+  SessionsTab --> Editor: progress panel Open / Add by hand
   Editor --> SessionsTab: Gallery button / Back (flashFootage)
   Editor --> ClipViewer: View on a card (ui.openClip)
 ```
@@ -153,8 +154,8 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Re-scan merge, timing checks ("too close", "overlap", "too fast") | `mergeRescan`, `checkCuts` in `RescanMerge.kt` |
 | Measuring a scan change (simulated and real footage) | `FinderScanTest`, `HeldTimerTest`, `SegmentFinderTest`, `MissedSolvesTest`, `ReferenceVideoTest` (`src/test`); ground-truth files in `src/test/resources/groundtruth/`; `GroundTruth.kt`; the debug *Scan report* (`ScanReport.kt`, `EditorScreen.runScanReport`). See [algorithms § 8](docs/algorithms.md#ground-truth-harness-33-a) |
 | Adding a missed solve | `startManualCut` (`MainActivity.kt`); `solveAtPlayhead` / `solveOverlappedBy` (`RescanMerge.kt`) |
-| Importing a video, re-import of a known video | An `OpenDocument` launcher (`picker` in `GalleryScreen`, which also handles relink, or in `EditorScreen`) → `keepAccess` → `findImportedBefore` (`Reimport.kt`; a known video shows `ReimportDialog` first) → the editor's "when a video is chosen" effect on `videoUri` → `SessionStore.openOrCreate` (returns `isNew`). (3.2-F) The Gallery asks `ImportKindDialog` first for a new video; a known single solve shows `KnownSingleDialog`; the editor's picker refuses a single solve |
-| Single solves | `SingleSolve.kt`; `clipsFor` / `singleRange` (`ClipExporter.kt`); `createSingle` / `updateSingle`, the missing-single case in `loadGallery`; in `Gallery.kt`: `exportable` (untrimmed = no export), the Sessions tab and Filter list leave them out, the viewer's time bar (`ClipViewer.setTime`) and *Edit* (`singleEdit`), *Delete video* / *Forget this solve* |
+| Importing videos, re-import of a known video | (4.0-C) An `OpenMultipleDocuments` launcher (`importPicker` in `GalleryScreen`) → `keepAccess` → `findImportedBefore` (`Reimport.kt`; one video: `ReimportDialog` / `KnownSingleDialog`; several: known ones skipped) → `importNew` → `SessionStore.openOrCreate` → `AnalysisQueue.enqueue`. Reconnect has its own `OpenDocument` launcher (`picker`, `relinkFor`). The editor has no import since 4.0-C |
+| Single solves | Since 4.0-C any video with one solve: `isOneSolve`, `FootageKind` (the Sessions tab's switch). The old ones (3.2-F): `SingleSolve.kt`; `clipsFor` / `singleRange` (`ClipExporter.kt`); `updateSingle`, the missing-single case in `loadGallery`; in `Gallery.kt`: `exportable` (untrimmed = no export), the Sessions tab and Filter list leave them out, the viewer's time bar (`ClipViewer.setTime`) and *Edit* (`singleEdit`), *Delete video* / *Forget this solve* |
 | Check filter, stepping through checks, *It's fine* | `stepCut`, `checkCut`, the *Only show solves to check* filter (frozen list: `frozen`, `inList`, `freezeList`) and `needsCheck` in `EditorScreen`; `checkCuts` (`RescanMerge.kt`); `CutItem.noteNeedsCheck()` |
 | Database tables, migrations, video identity | `SessionStore.kt` (`Helper.onCreate` / `onUpgrade`, `openOrCreate`); [data-model](docs/data-model.md) |
 | What the Gallery shows, tags, "Solve deleted" | `SessionStore.loadGallery`, `GalleryClip` |
@@ -169,6 +170,7 @@ Clips are never stored. Editor, Gallery and export all call `computeClips` on th
 | Notes, info buttons, message colours | `Notes.kt` (`InfoNote`, `InfoButton`, `kindOfMessage`) |
 | Colours, dark mode | `Theme.kt` (`CubeCutTheme`, `AppColors`, `ThemeMode`) |
 | Background notification during Find solves | `AnalysisService.kt`, started and stopped by `AnalysisQueue` |
+| Progress panel, card marks, waiting scans after a restart | `ScanProgress.kt`; `scanBadgeText` (`Gallery.kt`); `footage.scan_state` and `AnalysisQueue.resume` (called by `AppRoot`) |
 | Find solves in the background, the queue, the per-video lock | `AnalysisQueue.kt` ([ADR-0018](docs/adr/0018-app-wide-analysis-queue.md)); in the editor `runFindSolves` and the effect on `scanJob`; in the Gallery the reload on `AnalysisQueue.finished` |
 | Trash, restore, Recently deleted | `createTrashRequest` launchers in `Gallery.kt` and `MainActivity.kt`; `SessionStore.setFootageTrashed` / `setExportTrashed` / `loadTrash` / `mediaStoreUriOf`; many exported files at once: `startBatchTrash` and `PendingTrash.batch` (one request) |
 | Destructive-action warnings | `DangerButton`, `EffectLine`, `FootageHeader` (`Gallery.kt`) |

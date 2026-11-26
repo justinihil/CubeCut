@@ -57,7 +57,7 @@ For each pattern, copy the example named in the last column.
 - **Never add `SDK_INT` checks below 30, remove `configChanges` entries, or enable R8** without the steps in [docs/android.md](docs/android.md).
 - **Never commit APKs, keystores, `local.properties` or videos.**
 - **Don't reopen settled UX decisions without asking:**
-  - the `OpenDocument` picker;
+  - the document picker (`OpenDocument`; several videos at once with `OpenMultipleDocuments` since 4.0);
   - "Solve N" numbering;
   - no export controls in the editor;
   - delete with Undo (exported solves ask first);

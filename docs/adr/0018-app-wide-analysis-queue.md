@@ -16,8 +16,8 @@ In 4.0, importing starts *Find solves* by itself and doesn't open the editor, an
 ## Consequences
 - The editor no longer holds scan state that matters. A list shown while its video is scanned is stale (`staleCuts`): the editor never saves it over the scan's result, and loads the result when the scan ends.
 - Swiping CubeCut out of the recent apps no longer cancels the scan by itself: it goes on while Android keeps the process (the foreground service asks for that). Not tested yet on the phone; vendor battery savers may still stop it.
-- The queue lives in memory: when Android ends the process, waiting videos aren't scanned. 4.0-C adds a mark in the database so they are queued again at the next start.
-- The scan's question (*Which one is your timer?*) can come while no editor is open: the job waits in state `ASKS` until the user answers (in the editor; in 4.0-C also from the Gallery).
+- The queue lives in memory: when Android ends the process, the scan in progress is lost. 4.0-C added a mark in the database (`footage.scan_state`, DB v9), so waiting videos are queued again at the next start (`AnalysisQueue.resume`).
+- The scan's question (*Which one is your timer?*) can come while no editor is open: the job waits in state `ASKS` until the user answers, in the editor or from the Gallery's progress panel (4.0-C).
 - A Gallery write during a scan (a note) is kept, because the scan reads the saved cuts again just before it saves. A write in the few milliseconds between that read and the save would be lost.
 
 ## Alternatives considered

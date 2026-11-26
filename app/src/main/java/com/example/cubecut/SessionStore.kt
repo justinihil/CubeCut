@@ -70,8 +70,18 @@ class Footage(
     val category: String = "",    // the category tag of the whole video ("" = not tagged), followed the same way
     val kind: String = KIND_SESSION,   // KIND_SESSION, or KIND_SINGLE for a clip of one solve (3.2-F)
     val trimStartSec: Double? = null,  // a single solve's trim, in seconds of the file (null = not trimmed: the whole file plays)
-    val trimEndSec: Double? = null
+    val trimEndSec: Double? = null,
+    val scanState: String = ""         // (4.0-C) SCAN_QUEUED, SCAN_NO_TIMER, SCAN_ASKS, or "" (never scanned in the background, or done)
 )
+
+/** (4.0-C) [Footage.scanState]: waiting for, or in, a background scan. Queued again when the app starts (AnalysisQueue.resume). */
+const val SCAN_QUEUED = "queued"
+
+/** (4.0-C) [Footage.scanState]: the last scan didn't find the timer. The card says *Timer not found*; the solves are added by hand. */
+const val SCAN_NO_TIMER = "no_timer"
+
+/** (4.0-C) [Footage.scanState]: the last scan saw two numbers run and asks which one is the timer. */
+const val SCAN_ASKS = "asks"
 
 /** [Footage.kind] of a whole practice session, found with Find solves. */
 const val KIND_SESSION = "session"
@@ -95,7 +105,7 @@ fun formatDate(ms: Long): String =
 object SessionStore {
 
     private const val DB_NAME = "cubecut_sessions.db"
-    private const val DB_VERSION = 8
+    private const val DB_VERSION = 9
 
     private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
         override fun onConfigure(db: SQLiteDatabase) {
@@ -125,7 +135,8 @@ object SessionStore {
                         "category TEXT NOT NULL DEFAULT '', " +
                         "kind TEXT NOT NULL DEFAULT 'session', " +
                         "trim_start_sec REAL, " +
-                        "trim_end_sec REAL)"
+                        "trim_end_sec REAL, " +
+                        "scan_state TEXT NOT NULL DEFAULT '')"
             )
             db.execSQL(
                 "CREATE TABLE cuts (" +
@@ -243,6 +254,10 @@ object SessionStore {
             if (oldVersion < 8) {
                 // version 8 (CubeCut 3.3): where a solve may be missing, found by Find solves (MissedSolves.kt)
                 createHintsTable(db)
+            }
+            if (oldVersion < 9) {
+                // version 9 (CubeCut 4.0-C): how the video's last background scan ended, or that it waits for one (AnalysisQueue.kt)
+                db.execSQL("ALTER TABLE footage ADD COLUMN scan_state TEXT NOT NULL DEFAULT ''")
             }
         }
     }
@@ -367,45 +382,6 @@ object SessionStore {
         return OpenedSession(getFootage(context, newId)!!, emptyList(), true)
     }
 
-    /**
-     * (3.2-F) Saves a video of one solve: a `single` record and its one cut, in one go. Call it only for a video seen for the first
-     * time ([findKnown] gave null). The cut stops where the clip ends ([trimEnd], or the end of the file), and counts as added by you
-     * (`user_edited`). [puzzle] / [category] tag the video, so the clip follows them. Returns the record and the cut's stop.
-     */
-    fun createSingle(
-        context: Context, uri: Uri, durationMs: Long, timeText: String, plus2Count: Int, dnf: Boolean,
-        puzzle: String, category: String, trimStart: Double?, trimEnd: Double?
-    ): Pair<Footage, Double> {
-        val (name, size) = nameAndSize(context, uri)
-        val shownName = if (name.isNotEmpty()) name else "Solve video"
-        val date = dateTaken(context, uri)
-        val d = db(context)
-        d.beginTransaction()
-        try {
-            val v = ContentValues()
-            v.put("uri", uri.toString())
-            v.put("display_name", shownName)
-            v.put("size_bytes", size)
-            v.put("duration_ms", durationMs)
-            v.put("title", shownName.substringBeforeLast('.', shownName))
-            v.put("date_taken_ms", date)
-            v.put("added_ms", System.currentTimeMillis())
-            v.put("kind", KIND_SINGLE)
-            v.put("puzzle", puzzle)
-            v.put("category", category)
-            putPad(v, "trim_start_sec", trimStart)
-            putPad(v, "trim_end_sec", trimEnd)
-            val id = d.insertOrThrow("footage", null, v)
-            val f = getFootage(context, id)!!
-            val stop = singleRange(f).second
-            d.insertOrThrow("cuts", null, singleCutValues(id, stop, timeText, plus2Count, dnf))
-            d.setTransactionSuccessful()
-            return Pair(getFootage(context, id)!!, stop)
-        } finally {
-            d.endTransaction()
-        }
-    }
-
     private fun singleCutValues(footageId: Long, stop: Double, timeText: String, plus2Count: Int, dnf: Boolean): ContentValues {
         val c = ContentValues()
         c.put("footage_id", footageId)
@@ -497,7 +473,7 @@ object SessionStore {
                 "f.before_pad, f.after_pad, f.scramble_all, " +
                 "(SELECT COUNT(*) FROM cuts c WHERE c.footage_id = f.id), " +
                 "f.timer_frame_ms, f.timer_corners, f.timer_typed, f.trashed_ms, " +
-                "f.puzzle, f.category, f.kind, f.trim_start_sec, f.trim_end_sec " +
+                "f.puzzle, f.category, f.kind, f.trim_start_sec, f.trim_end_sec, f.scan_state " +
                 "FROM footage f"
 
     private fun android.database.Cursor.doubleOrNull(i: Int): Double? = if (isNull(i)) null else getDouble(i)
@@ -509,7 +485,7 @@ object SessionStore {
         cutCount = c.getInt(12),
         timerFrameMs = c.getLong(13), timerCorners = c.getString(14), timerTyped = c.getString(15), trashedMs = c.getLong(16),
         puzzle = c.getString(17), category = c.getString(18), kind = c.getString(19),
-        trimStartSec = c.doubleOrNull(20), trimEndSec = c.doubleOrNull(21)
+        trimStartSec = c.doubleOrNull(20), trimEndSec = c.doubleOrNull(21), scanState = c.getString(22)
     )
 
     fun getFootage(context: Context, id: Long): Footage? =
@@ -1099,6 +1075,13 @@ object SessionStore {
     }
 
     /** Remembers that Find solves has just run on this session. */
+    /** (4.0-C) Writes how the video's background scan stands ([Footage.scanState]). */
+    fun setScanState(context: Context, footageId: Long, state: String) {
+        val v = ContentValues()
+        v.put("scan_state", state)
+        db(context).update("footage", v, "id = ?", arrayOf(footageId.toString()))
+    }
+
     fun markScanned(context: Context, footageId: Long) {
         val v = ContentValues()
         v.put("last_scan_ms", System.currentTimeMillis())

@@ -12,7 +12,17 @@ Notes on history:
 
 ## [Unreleased]
 
+The saved data is upgraded to database v9 on first start.
+
+### Added
+- **Import several videos at once.** Each new video goes to the Sessions tab and *Find solves* starts on it by itself, one after another. Videos imported before are skipped and counted (with one video, *Imported before* asks as before).
+- **Progress panel** above the tabs: one slim line while scans run; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
+- Session cards say **Waiting to scan**, **Finding solves 40%**, **Timer not found** or **Choose the timer**. Waiting scans start again after the app was closed.
+- The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
+
 ### Removed
+- **Import no longer asks "A session or One solve?"**: every video is scanned, and a video of one solve is cut like any solve (exported as a copy, which a penalty can rename). Single solves made before keep working as they are.
+- The editor's own *Import video*: videos are imported in the Gallery.
 - **The setup by hand** (four dots and a typed number) is gone, with *Read timer here* and the *Backup* part of the Setup box. CubeCut finds the timer by itself; when it can't, add the solves by hand in the editor. Solves found with a setup by hand stay as they are.
 - *Which one is your timer?* offers **Neither of them** instead of *set up by hand*.
 

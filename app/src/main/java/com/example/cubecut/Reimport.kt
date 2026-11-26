@@ -38,7 +38,8 @@ import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------------------------------
 // "Imported before": importing a video CubeCut already knows asks first, instead of silently reopening its saved session.
-// Both Import video buttons use this (the editor's and the Gallery's). Opening a session from the Gallery does not ask.
+// The Gallery's Import video uses this when ONE video is picked (4.0-C: several skip the ones seen before). Opening a session from
+// the Gallery does not ask.
 // ---------------------------------------------------------------------------------------
 
 /**

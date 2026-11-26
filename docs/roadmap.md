@@ -52,7 +52,7 @@ The owner then merges `dev → main` and tags the release by hand ([release step
 
 | Version | Branch | Theme | DB |
 |---|---|---|---|
-| **4.0** | `dev-v4.0.0` | Import several videos; Find solves runs in the background; select several sessions; tags and filters | v9, v10 |
+| **4.0** | `dev-v4.0.0` | Import several videos; Find solves runs in the background; select several sessions; tags and filters | v9–v11 |
 
 The owner's list had three versions (v3.1, v3.2, v4.0). The first was split in two so that the quick wins, which need no database change, ship first. The owner's "v3.2" (Find solves) became 3.3, released 2026-11-26.
 
@@ -88,7 +88,7 @@ Owner (C1, C2). Done early, so all new 4.0 text uses the new word.
 - The editor's *Find solves* puts its video in the same queue.
 - **Built 2026-11-26** ([ADR-0018](adr/0018-app-wide-analysis-queue.md)); phone test in 4.0-T. There was no engine left to move (4.0-0). The extra-time sliders are off while the video is scanned, because the scan saves them.
 
-### 4.0-C Import: several videos, no question, scan by itself ⬜
+### 4.0-C Import: several videos, no question, scan by itself 🔶
 The owner's additions "import several videos at once" and "no difference between a session and one solve". Answers A1–A4 and B1–B4.
 - **Several at once** (A2): the same document picker, with several files allowed. There is no limit; the videos queue. Picking one file works as before.
 - **No question** (B): `ImportKindDialog` goes. Every video is scanned, and every found solve is cut and exported the same way, whatever the length of the video (**B3a**, owner 2026-11-26). A one-solve video is a session with one solve: it opens in the editor like any other, and its clip is a copy in `Movies/CubeCut`, so a penalty renames it. To save space, the user can delete the original after export.
@@ -100,9 +100,10 @@ The owner's additions "import several videos at once" and "no difference between
 - **Single solves** (B1): the old ones (3.2-F) keep working as they are, and are now listed under Sessions too. The Sessions tab gets a switch at the top: **All · Sessions · Single solves**. *Single solves* means the old ones plus every video with exactly one solve, and the Clips tab's *Single solves* switch means the same. `KnownSingleDialog` stays for when one picked video is an old single solve.
 - **The editor's own *Import video* goes** (A4). Import is only in the Gallery.
 - Competition videos (B4) mostly hold one solve, so they are one-solve sessions. Their timer (often a Stackmat) is untested.
+- **Built 2026-11-26**; phone test in 4.0-T. DB v9 (`footage.scan_state`): waiting scans are queued again after a restart, and *Timer not found* stays on the card. The progress panel sits above the tabs; its rows offer *Cancel*, *Choose*, *Add by hand* and *Open*. A new video's puzzle is no longer asked at import (4.0-F asks it, for one video).
 
 ### 4.0-D "New" badge ⬜
-DB v9 (`cuts.seen_ms`). It comes before the test rounds (E3), so each batch's results stand out.
+DB v10 (`cuts.seen_ms`). It comes before the test rounds (E3), so each batch's results stand out.
 - The badge goes away when the clip is opened in the viewer or exported, or with *Mark all as seen*.
 - A *New* filter chip.
 
@@ -113,7 +114,7 @@ The owner's addition of 2026-11-26.
 - **The last copy of a solve** (owner): an exported clip whose original video is gone already stays in the Clips tab and keeps playing (*Export only*), and *Forget* stays as it is. Its *Delete file* warning now says so: a red note "This is the last copy of this solve. Its original video is deleted." If the original is still in the trash, it says "Restore the video to keep the solve." Then: "Restore within about 30 days, then it's gone for good." It no longer says "the solve stays in CubeCut", which isn't true here. It isn't called irreversible: the file goes to the phone's trash ([ADR-0008](adr/0008-never-delete-permanently.md)).
 
 ### 4.0-F Tags and filters ⬜
-DB v10. The owner's additions of penalty, home/competition and cube filters. Answers D1–D7.
+DB v11. The owner's additions of penalty, home/competition and cube filters. Answers D1–D7.
 - **One list of tag kinds** in `Tags.kt`: puzzle, type, cube and place. Each entry gives its choices, whether a clip may differ and whether import asks for it. A new tag kind is one entry, plus its column.
 - **Cube** (D1): the cube model ("GAN 12", "RS3M"…), from the user's own list: typed once, then picked. A clip may differ from its video (D6), as with the puzzle.
 - **Place** (D2): *Home*, *Competition* or *Other*. It is set on the video only (D6).

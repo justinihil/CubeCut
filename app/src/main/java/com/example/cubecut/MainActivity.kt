@@ -182,13 +182,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppRoot(ui: GalleryUiState) {
     var editor by remember { mutableStateOf<EditorRequest?>(null) }
+    // (4.0-C) videos that were waiting for Find solves when the app last ended are queued again
+    val appContext = LocalContext.current
+    LaunchedEffect(Unit) { AnalysisQueue.resume(appContext) }
     val request = editor
     if (request != null) {
         EditorScreen(request = request, onClose = { footageId, solveSec ->
             editor = null
             if (footageId != null && solveSec != null) ui.openClip = Pair(footageId, solveSec)         // View on a solve card
             else if (footageId != null) {
-                // Gallery button or Back: open the Footage tab and point out the video you were just in
+                // Gallery button or Back: open the Sessions tab and point out the video you were just in
                 ui.tab = 1
                 ui.flashFootage = footageId
             }
@@ -494,24 +497,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
         }
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
-    }
-
-    // the system file picker (needs no storage permission). It is used instead of the photo picker because Android lets the app
-    // keep its permission to read the chosen video, so a saved session can be opened again after the app or the phone restarted.
-    // (3.1) a video imported before asks first (ReimportDialog). Cancel keeps the editor as it was. The video already open
-    // here doesn't ask: it is simply the same video.
-    var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            SessionStore.keepAccess(context, uri)
-            scope.launch {
-                val known = findImportedBefore(context, uri)
-                if (analyzing) return@launch            // Find solves started meanwhile: never swap the video under it (invariant 1)
-                // (3.2-F) a single solve never opens here: it lives in the Gallery's Clips tab
-                if (known != null && known.isSingle) status = "That video is a single solve. Find it in the Gallery's Clips tab."
-                else if (known != null && known.id != footageId) reimportAsk = uri to known else videoUri = uri
-            }
-        }
     }
 
     // when a video is chosen: load it into the player, then build the film strip
@@ -1227,10 +1212,8 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     Text(statusText, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                 }
                 Spacer(Modifier.width(4.dp))
-                TextButton(onClick = { leaveToGallery() }, enabled = !reportRunning) { Text("Gallery") }
-                Button(onClick = {
-                    picker.launch(arrayOf("video/*"))
-                }, enabled = !analyzing) { Text("Import video") }
+                // (4.0-C) no Import video here any more: videos are imported in the Gallery, and scanned in the background
+                Button(onClick = { leaveToGallery() }, enabled = !reportRunning) { Text("Gallery") }
             }
             Spacer(Modifier.height(6.dp))
 
@@ -2056,7 +2039,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     timerQuestion = null
                     timerNotFound = true
                     analysisStatus = ""
-                    footageId?.let { AnalysisQueue.settleWithoutTimer(it) }
+                    footageId?.let { AnalysisQueue.settleWithoutTimer(context, it) }
                 },
                 onDismiss = { timerQuestion = null; analysisStatus = "Cancelled." }
             )
@@ -2290,20 +2273,6 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
                     askPuzzleNew = false
                     saveVideoTags(choice.puzzle ?: videoPuzzle, choice.category ?: videoCategory)
                 }
-            )
-        }
-
-        // ===== "Imported before": the picked video has a saved session =====
-        val reimport = reimportAsk
-        if (reimport != null) {
-            ReimportDialog(
-                footage = reimport.second,
-                uri = reimport.first,
-                onOpen = {
-                    reimportAsk = null
-                    if (!analyzing) videoUri = reimport.first
-                },
-                onCancel = { reimportAsk = null }
             )
         }
 

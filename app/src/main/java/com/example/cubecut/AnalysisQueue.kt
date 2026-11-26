@@ -85,6 +85,7 @@ object AnalysisQueue {
         private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var appContext: Context? = null                 // for the marks in the database (the application, never a screen)
     private var running = false
     private var runs = 0
 
@@ -101,15 +102,58 @@ object AnalysisQueue {
      * Puts a video in the queue, at the end, unless it is already waiting or being scanned. [near] is the number the user chose when
      * two ran. Call on the main thread.
      */
-    fun enqueue(context: Context, footage: Footage, near: Area? = null) {
-        if (isBusy(footage.id)) return
-        jobs.add(ScanJob(footage.id, Uri.parse(footage.uri), footage.durationMs, footage.title, near, ++runs))
-        if (!running) start(context.applicationContext)
+    fun enqueue(context: Context, footage: Footage, near: Area? = null) =
+        enqueue(context, footage.id, Uri.parse(footage.uri), footage.durationMs, footage.title, near)
+
+    /** The same, for a video whose job is known ([job]): its question was answered with [near]. */
+    fun again(context: Context, job: ScanJob, near: Area?) = enqueue(context, job.footageId, job.uri, job.durationMs, job.title, near)
+
+    private fun enqueue(context: Context, footageId: Long, uri: Uri, durationMs: Long, title: String, near: Area?) {
+        if (isBusy(footageId)) return
+        val app = context.applicationContext
+        appContext = app
+        jobs.add(ScanJob(footageId, uri, durationMs, title, near, ++runs))
+        mark(app, footageId, SCAN_QUEUED)          // so it is queued again if Android ends the app first
+        if (!running) start(app)
+    }
+
+    /**
+     * (4.0-C) Puts back in the queue every video that was waiting (or asking) when the app last ended. Call once when the app starts.
+     * A video that can't be opened any more is left alone: its mark stays until it is reconnected and scanned.
+     */
+    fun resume(context: Context) {
+        val app = context.applicationContext
+        appContext = app
+        scope.launch {
+            val waiting = withContext(Dispatchers.IO) {
+                try {
+                    SessionStore.listFootage(app).filter {
+                        (it.scanState == SCAN_QUEUED || it.scanState == SCAN_ASKS) && it.trashedMs == 0L && SessionStore.canOpen(app, Uri.parse(it.uri))
+                    }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+            for (f in waiting) enqueue(app, f)
+        }
+    }
+
+    /** Saves how a video's scan stands, in the background (a failed write only loses the mark). */
+    private fun mark(app: Context, footageId: Long, state: String) {
+        scope.launch(Dispatchers.IO) { try { SessionStore.setScanState(app, footageId, state) } catch (e: Exception) { } }
+    }
+
+    /** The mark a finished scan leaves on its video. */
+    private fun markOf(state: ScanState): String = when (state) {
+        ScanState.NO_TIMER -> SCAN_NO_TIMER
+        ScanState.ASKS -> SCAN_ASKS
+        else -> ""
     }
 
     /** Stops this video's scan (or takes it out of the queue). Nothing it found is saved. */
     fun cancel(footageId: Long) {
         val j = jobOf(footageId) ?: return
+        appContext?.let { mark(it, footageId, "") }          // not queued again at the next start
         j.cancelAsked = true
         if (j.state == ScanState.WAITING) {
             j.state = ScanState.CANCELLED
@@ -118,8 +162,11 @@ object AnalysisQueue {
         }
     }
 
+
+
     /** The user said neither number is the timer: the video's scan ends as "timer not found" (its solves are added by hand). */
-    fun settleWithoutTimer(footageId: Long) {
+    fun settleWithoutTimer(context: Context, footageId: Long) {
+        mark(context.applicationContext, footageId, SCAN_NO_TIMER)
         val j = jobOf(footageId) ?: return
         if (j.state != ScanState.ASKS) return
         j.outcome = ScanOutcome("Couldn't find the timer.")
@@ -147,6 +194,9 @@ object AnalysisQueue {
                 while (true) {
                     val job = jobs.firstOrNull { it.state == ScanState.WAITING } ?: break
                     scanOne(app, job)
+                    // written before `finished` changes, so a screen that reloads then sees the new mark
+                    val state = markOf(job.state)
+                    withContext(Dispatchers.IO) { try { SessionStore.setScanState(app, job.footageId, state) } catch (e: Exception) { } }
                     done++
                     solves += job.outcome?.solves ?: 0
                     finished++
@@ -202,7 +252,7 @@ object AnalysisQueue {
             }
             val outcome = withContext(Dispatchers.IO) { saveScan(app, job, auto, report, started) }
             if (outcome == null) {
-                job.outcome = ScanOutcome("The video was forgotten meanwhile. Nothing saved.")
+                job.outcome = ScanOutcome(FORGOTTEN)
                 job.state = ScanState.CANCELLED
                 return
             }
@@ -255,4 +305,6 @@ object AnalysisQueue {
     }
 
     private fun countText(n: Int, word: String) = "$n $word" + (if (n == 1) "" else "s")
+
+    private const val FORGOTTEN = "The video was forgotten meanwhile. Nothing saved."
 }
