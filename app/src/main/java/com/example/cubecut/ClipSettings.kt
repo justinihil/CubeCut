@@ -179,10 +179,10 @@ fun CheckedMark(text: String = "\u2713  Checked", modifier: androidx.compose.ui.
 class ClipSettingsChoice(val scramble: Boolean?, val before: Double?, val after: Double?)
 
 /**
- * (4.0) The scramble and the extra time for many clips at once (owner, 2026-11-26): ticked clips, ticked sessions, or every video.
- * [scramble] / [before] / [after] are what the clips have now (null = they differ: "Keep as it is" is chosen). [effects] are the
- * warning's lines (how many clips, how many had their own setting, how many are exported). [allowKeep] false (the Settings defaults'
- * "Apply to all videos"): both parts start chosen, with the values given.
+ * (4.0) The scramble and the extra time for many clips at once (owner, 2026-11-26): ticked clips or ticked sessions.
+ * [scramble] / [before] / [after] are what the clips have now (null = they differ). The sliders are there at once (owner): the extra
+ * time changes only if one is moved, so "leave it" needs no extra tap. [effects] are the warning's lines (how many clips, how many had
+ * their own setting, how many are exported).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -194,13 +194,12 @@ fun ClipSettingsDialog(
     effects: List<String>,
     confirmLabel: String,
     onDismiss: () -> Unit,
-    onDone: (ClipSettingsChoice) -> Unit,
-    allowKeep: Boolean = true
+    onDone: (ClipSettingsChoice) -> Unit
 ) {
-    var pickScramble by remember { mutableStateOf(if (allowKeep) null else scramble ?: true) }   // null = keep as it is
-    var setPads by remember { mutableStateOf(!allowKeep) }
+    var pickScramble by remember { mutableStateOf<Boolean?>(null) }     // null = keep as it is
     var b by remember { mutableStateOf((before ?: 2.5).toFloat()) }
     var a by remember { mutableStateOf((after ?: 2.5).toFloat()) }
+    var padsMoved by remember { mutableStateOf(false) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -211,24 +210,24 @@ fun ClipSettingsDialog(
             ) {
                 Text("Scramble", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (allowKeep) ChoiceChip(if (scramble == null) "Keep as it is (mixed)" else "Keep as it is", pickScramble == null) { pickScramble = null }
+                    ChoiceChip(if (scramble == null) "Keep as it is (mixed)" else "Keep as it is", pickScramble == null) { pickScramble = null }
                     ChoiceChip("With scramble", pickScramble == true) { pickScramble = true }
                     ChoiceChip("Solve only", pickScramble == false) { pickScramble = false }
                 }
                 Text("Extra time", style = MaterialTheme.typography.labelLarge)
-                if (allowKeep) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        ChoiceChip(if (before == null) "Keep as it is (mixed)" else "Keep as it is", !setPads) { setPads = false }
-                        ChoiceChip("Set it", setPads) { setPads = true }
-                    }
-                }
-                if (setPads) {
-                    Text("Before the solve: ${"%.1f".format(b)} s", style = MaterialTheme.typography.bodyMedium)
-                    Slider(value = b, onValueChange = { b = it }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
-                    Text("After the solve: ${"%.1f".format(a)} s", style = MaterialTheme.typography.bodyMedium)
-                    Slider(value = a, onValueChange = { a = it }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
-                    Text("Before counts only when the scramble is left out.", style = MaterialTheme.typography.labelSmall)
-                }
+                Text(
+                    when {
+                        padsMoved -> "Every clip gets these."
+                        before == null || after == null -> "Mixed now. Unchanged unless you move a slider."
+                        else -> "Unchanged unless you move a slider."
+                    },
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text("Before the solve: ${"%.1f".format(b)} s", style = MaterialTheme.typography.bodyMedium)
+                Slider(value = b, onValueChange = { b = it; padsMoved = true }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
+                Text("After the solve: ${"%.1f".format(a)} s", style = MaterialTheme.typography.bodyMedium)
+                Slider(value = a, onValueChange = { a = it; padsMoved = true }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
+                Text("Before counts only when the scramble is left out.", style = MaterialTheme.typography.labelSmall)
                 if (effects.isNotEmpty()) {
                     Spacer(androidx.compose.ui.Modifier.height(6.dp))
                     BulletLines(effects, style = MaterialTheme.typography.bodySmall)
@@ -238,11 +237,71 @@ fun ClipSettingsDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onDone(ClipSettingsChoice(pickScramble, if (setPads) b.toDouble() else null, if (setPads) a.toDouble() else null))
+                    onDone(ClipSettingsChoice(pickScramble, if (padsMoved) b.toDouble() else null, if (padsMoved) a.toDouble() else null))
                 },
-                enabled = pickScramble != null || setPads
+                enabled = pickScramble != null || padsMoved
             ) { Text(confirmLabel) }
         },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/**
+ * (4.0) The *Clip settings* button when nothing is ticked (owner, 2026-11-26: always there, instead of in Settings): what new videos'
+ * clips start with, and, ticked, the same for every video now. [videos] / [ownN] / [exportedN] describe "every video" for the warning.
+ * [onSave] gets (scramble, before, after, apply to all videos).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ClipDefaultsDialog(
+    scramble: Boolean, before: Float, after: Float, videos: Int, ownN: Int, exportedN: Int,
+    onDismiss: () -> Unit, onSave: (Boolean, Float, Float, Boolean) -> Unit
+) {
+    var s by remember { mutableStateOf(scramble) }
+    var b by remember { mutableStateOf(before) }
+    var a by remember { mutableStateOf(after) }
+    var all by remember { mutableStateOf(false) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Clip settings") },
+        text = {
+            Column(
+                androidx.compose.ui.Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("Videos you import from now on start like this.", style = MaterialTheme.typography.bodySmall)
+                Text("Scramble", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ChoiceChip("With scramble", s) { s = true }
+                    ChoiceChip("Solve only", !s) { s = false }
+                }
+                Text("Extra time", style = MaterialTheme.typography.labelLarge)
+                Text("Before the solve: ${"%.1f".format(b)} s", style = MaterialTheme.typography.bodyMedium)
+                Slider(value = b, onValueChange = { b = it }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
+                Text("After the solve: ${"%.1f".format(a)} s", style = MaterialTheme.typography.bodyMedium)
+                Slider(value = a, onValueChange = { a = it }, valueRange = 0f..PAD_MAX, steps = PAD_STEPS)
+                Text("Before counts only when the scramble is left out.", style = MaterialTheme.typography.labelSmall)
+                if (videos > 0) {
+                    androidx.compose.foundation.layout.Row(
+                        androidx.compose.ui.Modifier.clickable { all = !all },
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.Checkbox(checked = all, onCheckedChange = { all = it })
+                        Text("Also apply to all $videos videos now", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (all) {
+                        BulletLines(
+                            listOfNotNull(
+                                if (ownN > 0) "$ownN clip" + (if (ownN == 1) " has its own setting: it gets these too." else "s have their own setting: they get these too.") else null,
+                                if (exportedN > 0) "$exportedN " + (if (exportedN == 1) "clip is exported: export it again to update the file." else "clips are exported: export them again to update the files.") else null
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(s, b, a, all) }) { Text(if (all) "Save and apply" else "Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

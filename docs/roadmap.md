@@ -138,8 +138,8 @@ The hints came in 3.3: they are found without the editor and saved with the vide
 
 ### 4.0-I Clip settings for many clips at once 🔶
 The owner's addition of 2026-11-26, before testing: the scramble and the extra time were per clip (viewer) or per video (editor).
-- **Settings → Clips of new videos** (owner: both places; new imports start with it): scramble and extra time, used by every import from then on. **Apply to all videos…** sets them on every video, after a warning.
-- **Ticked clips or ticked sessions → Clip settings…**: the same for just those; "Keep as it is" leaves a part unchanged.
+- **The Clip settings button** (next to *Sort* / *Filter* on both tabs, when nothing is ticked; owner, 2026-11-26, moved out of *⋮ → Settings*): what new videos start with, and, ticked, *Also apply to all videos now*, after the warning lines.
+- **Ticked clips or ticked sessions → Clip settings…**: the same for just those. The sliders show at once (owner); the extra time changes only if one is moved, and *Keep as it is* leaves the scramble.
 - **Clips with their own setting are overwritten** (owner): whole videos take it as their video setting, so every clip follows it again (no `edited`); clips of a partly ticked video are changed one by one (`edited`).
 - **Exported files don't change** (owner: point it out): the window says how many are exported and that exporting again updates them.
 - Old single solves are left out (their clip is their trim).
@@ -152,7 +152,7 @@ The owner's notes of 2026-11-26, after the first phone test step:
 - **A cancelled video stays in Sessions** (owner: makes sense, preferred), and its row offers **Scan again** besides *Open*. **Find solves** for ticked sessions; **Cancel all** while a batch runs (asks first; the videos stay).
 - **Hold and drag** to tick sessions, as on the Clips tab.
 - **A filter on the Sessions tab** (owner; the tag filters stay on the Clips tab, D7): *Not scanned*, *Timer not found*, *Places to check* (the last two added alongside, flagged to the owner).
-- **The selection bar on the Sessions tab** (owner, after a first try): ✕, count, All/None (of what the filter shows) and **Find solves** filled; below, *Set tags…* and *Clip settings…* as outlined buttons side by side; then apart, at the right, the red bin (Delete videos) and a solid red *Forget*, away from Find solves. The Clips tab's bar matches (owner): *Export* alone on the top row, *Set tags…* and *Clip settings…* as outlined buttons, the red bin (delete exported files) apart at the bottom right.
+- **The selection bar on the Sessions tab** (owner, after a first try): ✕, count, All/None (of what the filter shows) and **Find solves** filled; below, *Set tags…* and *Clip settings…* as outlined buttons side by side; then, each half the width, *Delete videos* (red outline with the bin) and a solid red *Forget*, away from Find solves. The Clips tab's bar matches: *Export* alone on the top row, *Set tags…* and *Clip settings…*, then one full-width *Delete exported files*. A delete that can't happen says why when tapped, like the viewer's *Delete file* (owner).
 - **Built 2026-11-26**; phone test steps 45 to 50.
 
 ### 4.0-T Phone test and test rounds ⬜

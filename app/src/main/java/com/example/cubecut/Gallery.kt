@@ -254,9 +254,9 @@ class PendingTrash(
 
 /**
  * (4.0) What a *Clip settings* window changes: [wholeVideos] get it as their video setting (every clip follows it again); [clips] are
- * ticked clips of videos only partly ticked, changed one by one. [allVideos]: from Settings, every video.
+ * ticked clips of videos only partly ticked, changed one by one.
  */
-class ClipSettingsAsk(val title: String, val wholeVideos: List<Footage>, val clips: List<GalleryClip>, val allVideos: Boolean = false)
+class ClipSettingsAsk(val title: String, val wholeVideos: List<Footage>, val clips: List<GalleryClip>)
 
 /** What the Gallery should point out after loading: a video on the Footage tab, or a clip on the Clips tab. */
 private class FlashTarget(val footageId: Long?, val clip: GalleryClip?)
@@ -1101,6 +1101,24 @@ private fun FootageRow(
     }
 }
 
+/**
+ * (4.0) A red outlined button with the bin: the first step of a delete (its warning comes next). When it can't delete ([active] false)
+ * it is grey but still answers a tap, so [onClick] can say why, like the viewer's *Delete file*.
+ */
+@Composable
+private fun DeleteOutlinedButton(label: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val color = if (active) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    OutlinedButton(
+        onClick = onClick, modifier = modifier,
+        border = androidx.compose.foundation.BorderStroke(1.dp, color),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = color)
+    ) {
+        TrashIcon(color, 18.dp)
+        Spacer(Modifier.width(6.dp))
+        Text(label, maxLines = 1)
+    }
+}
+
 /** The round "more options" button with three dots, shown over a footage picture. */
 @Composable
 private fun MoreButton(size: Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -1281,6 +1299,7 @@ fun AuthorCreditLine(onClick: () -> Unit) {
 // the Gallery screen
 // ---------------------------------------------------------------------------------------
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val context = LocalContext.current
@@ -1627,6 +1646,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var hintsFor by remember { mutableStateOf<Long?>(null) }                    // (4.0-G) the video whose "places to check" window is open
     var clipSettingsFor by remember { mutableStateOf<ClipSettingsAsk?>(null) }   // (4.0) the "Clip settings" window for many clips
     var showScanFilter by remember { mutableStateOf(false) }                    // (4.0) the Sessions tab's Filter window
+    var showClipDefaults by remember { mutableStateOf(false) }                  // (4.0) the Clip settings button: new videos, or all
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     /** (4.0-C) Saves the new videos [uris] and queues their scans. [skipped]: picked videos that were imported before. */
@@ -2015,15 +2035,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                     }
                 }
-                // (3.1-E) the red bin: deletes the exported files of the ticked clips (it warns first). (4.0) Apart, at the bottom right.
-                Row(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.weight(1f))
-                    IconButton(
-                        onClick = { askDelete = true }, enabled = hasFiles && batchDone < 0,
-                        modifier = Modifier.semantics { contentDescription = "Delete exported files" }
-                    ) {
-                        TrashIcon(if (hasFiles && batchDone < 0) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
-                    }
+                // (3.1-E) deletes the exported files of the ticked clips (it warns first). (4.0) A full-width row of its own; like the
+                // viewer's Delete file, a tap when there is nothing to delete says why (owner, 2026-11-26)
+                DeleteOutlinedButton("Delete exported files", hasFiles && batchDone < 0, Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp)) {
+                    if (hasFiles && batchDone < 0) askDelete = true
+                    else message = if (batchDone >= 0) "Wait for the export to finish."
+                    else "Not exported yet, so there's no file to delete.\nWrong solve? Open it and tap Editor to fix or delete it."
                 }
             } else if (ui.selectingVideos && d != null) {
                 // (4.0-E) ticking videos (owner, 2026-11-26). Row 1: close, how many, All / None, the main action (Find solves, filled).
@@ -2070,14 +2087,15 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         enabled = tickedVideos.any { !it.isSingle }, modifier = Modifier.weight(1f)
                     ) { Text("Clip settings…", maxLines = 1) }
                 }
-                Row(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = { askDeleteVideos = tickedVideos }, enabled = canTrash) {
-                        TrashIcon(if (canTrash) AppColors.danger else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f), 24.dp)
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // (4.0) like the viewer's Delete file: when it can't, a tap says why instead of nothing happening
+                    DeleteOutlinedButton("Delete videos", canTrash, Modifier.weight(1f)) {
+                        if (canTrash) askDeleteVideos = tickedVideos
+                        else message = if (batchDone >= 0) "Wait for the export to finish."
+                        else "These videos are already deleted or missing, so there's nothing to move to the trash."
                     }
-                    Spacer(Modifier.width(8.dp))
                     Button(
-                        onClick = { forgettingMany = tickedVideos }, enabled = canForget,
+                        onClick = { forgettingMany = tickedVideos }, enabled = canForget, modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = AppColors.danger, contentColor = Color.White)
                     ) { Text("Forget") }
                 }
@@ -2137,12 +2155,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 Tab(selected = ui.tab == 1, onClick = { if (!ui.selecting) ui.tab = 1 }, text = { Text("Sessions") })
             }
 
-            // ===== view switch, sort and filter =====
-            Row(
+            // ===== view switch, sort and filter; (4.0) Clip settings, always there (owner, 2026-11-26) =====
+            FlowRow(
                 Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 val grid = if (ui.tab == 0) ui.clipsGrid else ui.footageGrid
@@ -2157,6 +2174,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     SortMenu(ui.footageSort.label, FootageSort.entries.map { it to it.label }) { ui.footageSort = it; ui.save() }
                     OutlinedButton(onClick = { showScanFilter = true }) { Text(if (ui.scanFilter != ScanFilter.ANY) "Filter \u2022" else "Filter") }
                 }
+                OutlinedButton(onClick = { showClipDefaults = true }) { Text("Clip settings") }
             }
             if (ui.tab == 1) {
                 // (4.0-C) sessions and single solves in one list, or one of them
@@ -2710,29 +2728,6 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 Text(m.label, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
-                        // (4.0) what new videos' clips start with, and the same for every video at once
-                        Spacer(Modifier.height(10.dp))
-                        Text("Clips of new videos", style = MaterialTheme.typography.labelLarge)
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Include the scramble", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                            Switch(checked = ui.newScramble, onCheckedChange = { ui.newScramble = it; ui.save() })
-                        }
-                        var nb by remember { mutableStateOf(ui.newBefore) }
-                        var na by remember { mutableStateOf(ui.newAfter) }
-                        Text("Before the solve: ${"%.1f".format(nb)} s", style = MaterialTheme.typography.bodyMedium)
-                        Slider(value = nb, onValueChange = { nb = it }, onValueChangeFinished = { ui.newBefore = nb; ui.save() }, valueRange = 0f..8f, steps = 15)
-                        Text("After the solve: ${"%.1f".format(na)} s", style = MaterialTheme.typography.bodyMedium)
-                        Slider(value = na, onValueChange = { na = it }, onValueChangeFinished = { ui.newAfter = na; ui.save() }, valueRange = 0f..8f, steps = 15)
-                        Text("Videos you import from now on start like this.", style = MaterialTheme.typography.labelSmall)
-                        TextButton(
-                            onClick = {
-                                val vids = d?.footage?.filter { !it.isSingle } ?: emptyList()
-                                showSettings = false
-                                clipSettingsFor = ClipSettingsAsk("Clip settings for all ${clipsText(vids.size, "video")}", vids, emptyList(), allVideos = true)
-                            },
-                            enabled = d?.footage?.any { !it.isSingle } == true
-                        ) { Text("Apply to all videos\u2026") }
-                        Spacer(Modifier.height(10.dp))
                         TextButton(onClick = { ui.swipeHintSeen = false; ui.save(); showSettings = false }) {
                             Text("Show the \"swipe up for more\" hint again")
                         }
@@ -3188,6 +3183,27 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             )
         }
 
+        // ===== (4.0) Clip settings with nothing ticked: what new videos start with, and maybe every video now =====
+        if (showClipDefaults && d != null) {
+            val vids = d.footage.filter { !it.isSingle }
+            val all = vids.flatMap { f -> d.clipsOf(f.id).filter { it.index >= 0 } }
+            ClipDefaultsDialog(
+                scramble = ui.newScramble, before = ui.newBefore, after = ui.newAfter, videos = vids.size,
+                ownN = all.count { it.cut.beforePad != null || it.cut.afterPad != null || it.cut.includeScramble != it.footage.scrambleAll },
+                exportedN = all.count { it.exported != null },
+                onDismiss = { showClipDefaults = false },
+                onSave = { sc, b, a, applyAll ->
+                    showClipDefaults = false
+                    ui.newScramble = sc
+                    ui.newBefore = b
+                    ui.newAfter = a
+                    ui.save()
+                    if (applyAll) applyClipSettings(ClipSettingsAsk("All videos", vids, emptyList()), ClipSettingsChoice(sc, b.toDouble(), a.toDouble()))
+                    else message = "Saved. Videos you import from now on start like this."
+                }
+            )
+        }
+
         // ===== (4.0) the scramble and extra time of many clips at once =====
         val settingsAsk = clipSettingsFor
         if (settingsAsk != null && d != null) {
@@ -3197,16 +3213,15 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             val videos = (settingsAsk.wholeVideos + settingsAsk.clips.map { it.footage }).distinctBy { it.id }
             ClipSettingsDialog(
                 title = settingsAsk.title,
-                scramble = if (settingsAsk.allVideos) ui.newScramble else affected.map { it.cut.includeScramble }.distinct().singleOrNull(),
-                before = if (settingsAsk.allVideos) ui.newBefore.toDouble() else videos.map { it.beforePad }.distinct().singleOrNull()?.toDouble(),
-                after = if (settingsAsk.allVideos) ui.newAfter.toDouble() else videos.map { it.afterPad }.distinct().singleOrNull()?.toDouble(),
+                scramble = affected.map { it.cut.includeScramble }.distinct().singleOrNull(),
+                before = videos.map { it.beforePad }.distinct().singleOrNull()?.toDouble(),
+                after = videos.map { it.afterPad }.distinct().singleOrNull()?.toDouble(),
                 effects = listOfNotNull(
                     "${clipsText(affected.size, "clip")} in ${clipsText(videos.size, "video")} change.",
                     if (ownN > 0) "${clipsText(ownN, "clip")} had ${if (ownN == 1) "its" else "their"} own setting: ${if (ownN == 1) "it gets" else "they get"} these too." else null,
                     if (exportedN > 0) "${clipsText(exportedN, "clip")} ${if (exportedN == 1) "is" else "are"} exported: export ${if (exportedN == 1) "it" else "them"} again to update the ${if (exportedN == 1) "file" else "files"}." else null
                 ),
                 confirmLabel = "Apply",
-                allowKeep = !settingsAsk.allVideos,
                 onDismiss = { clipSettingsFor = null },
                 onDone = { choice -> clipSettingsFor = null; applyClipSettings(settingsAsk, choice) }
             )
