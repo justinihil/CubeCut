@@ -126,9 +126,10 @@ DB v11. The owner's additions of penalty, home/competition and cube filters. Ans
 - The new filters are on the Clips tab only (D7), with the existing ones.
 - **Built 2026-11-26**; phone test in 4.0-T. The tag window is the old puzzle window with more sections (`TagKind`). A cube name is typed once with *New cube*; the names already used are the choices. The editor's Setup box sets all four for the video. The cube isn't in exported file names.
 
-### 4.0-G Review possible missed solves ⬜
+### 4.0-G Review possible missed solves 🔶
 The hints came in 3.3: they are found without the editor and saved with the video, and a hint's card is its own composable.
 - **No popup on its own** (E1, replacing the popup of 2026-11-25): the card and the result list say "2 places to check", and tapping that opens the popup. The editor opens, at that place, only if the user takes a hint up. *Nothing here* works from the popup too.
+- **Built 2026-11-26**; phone test in 4.0-T. The card shows an amber "N places to check" (grid: a badge; list: a button), the progress list *Check N*. *Go there* opens the editor with the playhead exactly at the hint. The editor still shows its hints in the list, as in 3.3.
 
 ### 4.0-H The editor as manual mode ⬜
 - What CubeCut can't read is added here by hand, since the setup by hand is gone (4.0-0).

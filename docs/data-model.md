@@ -177,6 +177,8 @@ Single-field writes from the Gallery or viewer (`markCutSeen` and `markAllSeen` 
 
 Clips are worked out with `clipsFor(footage, cuts)`: `computeClips` for a session, `singleRange` for a single solve (3.2-F).
 
+(4.0-G) `GalleryData.hints` holds, for each video that opens, the hints still to show (`hintsToShow`, not dismissed): the cards' "N places to check".
+
 - A video is **present** if `trashed_ms == 0` **and** `canOpen` succeeds. The trash flag wins, because Android still opens trashed files.
 - **Video present:** all its cuts show as clips, tagged *Exported* or not, plus *Solve deleted* exports.
 - **Video gone or trashed:** only clips with a live exported file show (*Export only*). The cuts stay in the database, so re-importing the video brings everything back. Exception (3.2-F): a single solve with no live file still shows, with no picture and a *Video missing* / *In trash* badge, because it has no session card to reconnect or forget it from.

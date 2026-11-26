@@ -23,6 +23,7 @@ The saved data is upgraded to database v11 on first start.
 - **Last copy of a solve:** deleting an exported clip whose original video is gone now warns in red that it is the last copy (also when several are deleted at once).
 - **Cube and place tags.** A video (and a clip, for the cube) can be tagged with the cube model you used (your own list: type a name once, then pick it) and where it was filmed: *Home*, *Competition* or *Other*. Importing one video asks its tags while Find solves runs (*Skip* is fine); with several, tick them on the Sessions tab and tap *Set tags…*.
 - **Filters** for cube, place and penalty (*With penalty*, *+2*, *DNF*, *No penalty*).
+- **Possible missed solves** after a scan in the background: the card says "N places to check" and the progress list *Check N*. Tap to see them; *Go there* opens the editor at that place, *Nothing here* drops it. Nothing pops up by itself.
 - **New badge** on clips you haven't opened or exported yet, with *Filter → Only new clips* and *⋮ → Mark all as seen*. Clips saved before the update count as seen.
 
 ### Removed

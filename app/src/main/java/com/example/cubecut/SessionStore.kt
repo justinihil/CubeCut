@@ -617,11 +617,13 @@ object SessionStore {
         val footage = listFootage(context)
         val clips = ArrayList<GalleryClip>()
         val openable = HashMap<Long, Boolean>()
+        val hintsTo = HashMap<Long, List<MissedHint>>()
         for (f in footage) {
             // a video CubeCut moved to the trash still answers when asked to open, so the trash flag decides, not the answer
             val sourceOk = f.trashedMs == 0L && canOpen(context, Uri.parse(f.uri))
             openable[f.id] = sourceOk
             val cuts = loadCuts(context, f.id)
+            if (sourceOk) hintsTo[f.id] = hintsToShow(loadHints(context, f.id), cuts).filter { !it.dismissed }
             val exports = loadExports(context, f.id).filter { it.trashedMs == 0L && canOpen(context, Uri.parse(it.uri)) }
             if (sourceOk) {
                 val checks = checkCuts(cuts, clipsFor(f, cuts))
@@ -654,7 +656,7 @@ object SessionStore {
                 }
             }
         }
-        return GalleryData(footage, clips, openable)
+        return GalleryData(footage, clips, openable, hintsTo)
     }
 
     // ---------------------------------------------------------------- exported clips
@@ -1235,7 +1237,10 @@ fun clipTitle(footageTitle: String, number: Int, timeText: String, plus2Count: I
     return if (number > 0) "$footageTitle \u00B7 Solve ${"%02d".format(number)} \u00B7 $time" else "$footageTitle \u00B7 $time"
 }
 
-class GalleryData(val footage: List<Footage>, val clips: List<GalleryClip>, val openable: Map<Long, Boolean>) {
+class GalleryData(
+    val footage: List<Footage>, val clips: List<GalleryClip>, val openable: Map<Long, Boolean>,
+    val hints: Map<Long, List<MissedHint>> = emptyMap()     // (4.0-G) each video's hints still to show (hintsToShow), for the cards
+) {
     fun clipsOf(footageId: Long): List<GalleryClip> = clips.filter { it.footage.id == footageId }
 }
 

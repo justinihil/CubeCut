@@ -256,7 +256,7 @@ class PendingTrash(
 private class FlashTarget(val footageId: Long?, val clip: GalleryClip?)
 
 /** What the editor is asked to open: [uri] (null = an empty editor) and optionally the solve to jump to ([seekSec] = its stop time). */
-class EditorRequest(val uri: Uri?, val seekSec: Double? = null)
+class EditorRequest(val uri: Uri?, val seekSec: Double? = null, val atHint: Boolean = false)   // (4.0-G) atHint: seekSec is a hint's place
 
 // ---------------------------------------------------------------------------------------
 // sorting (clips can be sorted by up to three things at once: the first decides, the next one breaks ties)
@@ -950,7 +950,7 @@ private fun scanBadgeText(f: Footage): Pair<String, Boolean>? {
 private fun FootageCell(
     f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, columns: Int, modifier: Modifier = Modifier,
     highlight: Float = 0f, selecting: Boolean = false, selected: Boolean = false, onLongClick: () -> Unit = { },
-    onMenu: () -> Unit, onClick: () -> Unit
+    hintCount: Int = 0, onHints: () -> Unit = { }, onMenu: () -> Unit, onClick: () -> Unit
 ) {
     Box(
         modifier
@@ -978,6 +978,8 @@ private fun FootageCell(
                 val scan = scanBadgeText(f)
                 if (scan != null) Badge(scan.first, if (scan.second) AMBER else GREY, if (scan.second) Color.Black else Color.White)
                 else if (f.lastScanMs == 0L && f.cutCount == 0) Badge("Not scanned", GREY)
+                // (4.0-G) where a solve may be missing: tap it to see them
+                if (hintCount > 0) Badge(placesToCheckText(hintCount), AMBER, Color.Black, Modifier.clickable(onClick = onHints))
                 if (hidden) Badge("Not shown in Clips", GREY)
             }
             Column(
@@ -1006,7 +1008,8 @@ private fun FootageCell(
 @Composable
 private fun FootageRow(
     f: Footage, stats: FootageStats?, openable: Boolean, hidden: Boolean, highlight: Float = 0f,
-    selecting: Boolean = false, selected: Boolean = false, onLongClick: () -> Unit = { }, onMenu: () -> Unit, onClick: () -> Unit
+    selecting: Boolean = false, selected: Boolean = false, onLongClick: () -> Unit = { },
+    hintCount: Int = 0, onHints: () -> Unit = { }, onMenu: () -> Unit, onClick: () -> Unit
 ) {
     Row(
         Modifier
@@ -1041,6 +1044,7 @@ private fun FootageRow(
                 maxLines = 2
             )
         }
+        if (hintCount > 0) TextButton(onClick = onHints) { Text(placesToCheckText(hintCount), color = AppColors.check, style = MaterialTheme.typography.labelMedium) }
         Spacer(Modifier.width(6.dp))
         MoreButton(30.dp, onClick = onMenu)
     }
@@ -1521,6 +1525,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     var reimportAsk by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }
     var knownSingle by remember { mutableStateOf<Pair<Uri, Footage>?>(null) }    // (3.2-F) a single solve picked again
     var asking by remember { mutableStateOf<ScanJob?>(null) }                   // (4.0-C) the progress panel's "Choose": which number?
+    var hintsFor by remember { mutableStateOf<Long?>(null) }                    // (4.0-G) the video whose "places to check" window is open
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     /** (4.0-C) Saves the new videos [uris] and queues their scans. [skipped]: picked videos that were imported before. */
@@ -1965,6 +1970,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
             ScanProgressPanel(
                 onOpen = { job -> d?.footage?.firstOrNull { it.id == job.footageId }?.let { openFootage(it, d.openable[it.id] == true) } },
                 onChoose = { job -> asking = job },
+                onHints = { job -> hintsFor = job.footageId },
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
@@ -2253,6 +2259,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
                                         selecting = ui.selectingVideos, selected = f.id in ui.selectedVideos,
                                         onLongClick = { if (ui.selectingVideos) toggleVideo(f) else startVideoSelection(f) },
+                                        hintCount = d.hints[f.id]?.size ?: 0, onHints = { hintsFor = f.id },
                                         onMenu = { footageMenu = f }
                                     ) { if (ui.selectingVideos) toggleVideo(f) else openFootage(f, d.openable[f.id] == true) }
                                 }
@@ -2265,6 +2272,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
                                         selecting = ui.selectingVideos, selected = f.id in ui.selectedVideos,
                                         onLongClick = { if (ui.selectingVideos) toggleVideo(f) else startVideoSelection(f) },
+                                        hintCount = d.hints[f.id]?.size ?: 0, onHints = { hintsFor = f.id },
                                         onMenu = { footageMenu = f }
                                     ) {
                                         if (ui.selectingVideos) toggleVideo(f) else openFootage(f, d.openable[f.id] == true)
@@ -2919,6 +2927,27 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     }) { Text("Save") }
                 },
                 dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } }
+            )
+        }
+
+        // ===== (4.0-G) the places in one video where a solve may be missing =====
+        val hintsVideo = hintsFor?.let { id -> d?.footage?.firstOrNull { it.id == id } }
+        if (hintsVideo != null && d != null) {
+            MissedHintsDialog(
+                title = placesToCheckText(d.hints[hintsVideo.id]?.size ?: 0).replaceFirstChar { it.uppercase() } + ": " + hintsVideo.title,
+                hints = d.hints[hintsVideo.id] ?: emptyList(),
+                onGoThere = { h ->
+                    hintsFor = null
+                    if (AnalysisQueue.isBusy(hintsVideo.id) || d.openable[hintsVideo.id] != true) message = "That video can't be opened right now."
+                    else onOpenEditor(EditorRequest(Uri.parse(hintsVideo.uri), h.seekSec, atHint = true))
+                },
+                onNothing = { h ->
+                    scope.launch {
+                        withContext(Dispatchers.IO) { try { SessionStore.setHintDismissed(context, hintsVideo.id, h, true) } catch (e: Exception) { } }
+                        ui.refresh++
+                    }
+                },
+                onClose = { hintsFor = null }
             )
         }
 

@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -63,14 +64,41 @@ fun scanStateText(job: ScanJob): String = when (job.state) {
 }
 
 /** Does this finished video need the user (to choose the timer, to add solves by hand, or because it stopped)? */
-fun needsLook(job: ScanJob): Boolean = job.state == ScanState.ASKS || job.state == ScanState.NO_TIMER || job.state == ScanState.FAILED
+fun needsLook(job: ScanJob): Boolean = job.state == ScanState.ASKS || job.state == ScanState.NO_TIMER || job.state == ScanState.FAILED ||
+        (job.state == ScanState.DONE && (job.outcome?.maybeMissed ?: 0) > 0)
+
+/** (4.0-G) "1 place to check", "3 places to check". */
+fun placesToCheckText(n: Int): String = if (n == 1) "1 place to check" else "$n places to check"
+
+/**
+ * (4.0-G) The places in one video where a solve may be missing, after a scan in the background (owner, 2026-11-26: never a popup on its
+ * own; it opens from the card or the progress list). *Go there* opens the editor at that place; *Nothing here* drops the hint.
+ */
+@Composable
+fun MissedHintsDialog(title: String, hints: List<MissedHint>, onGoThere: (MissedHint) -> Unit, onNothing: (MissedHint) -> Unit, onClose: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    if (hints.isEmpty()) "Nothing left to check." else "A solve may be missing here. Go there to add it, or drop the hint.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(6.dp))
+                for (h in hints) MissedHintCard(h, enabled = true, onGoThere = { onGoThere(h) }, onNothing = { onNothing(h) })
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Close") } }
+    )
+}
 
 /**
  * The panel. Shows nothing when no video was asked for. [onOpen] opens a video in the editor (to add its solves by hand, or to look
  * at what was found); [onChoose] asks which number is the timer.
  */
 @Composable
-fun ScanProgressPanel(onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, modifier: Modifier = Modifier) {
+fun ScanProgressPanel(onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, onHints: (ScanJob) -> Unit = { }, modifier: Modifier = Modifier) {
     val jobs = AnalysisQueue.jobs.toList()
     if (jobs.isEmpty()) return
     var open by rememberSaveable { mutableStateOf(false) }
@@ -114,7 +142,7 @@ fun ScanProgressPanel(onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, mo
                     .padding(start = 10.dp, end = 4.dp, bottom = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                for (job in jobs.asReversed()) ScanJobRow(job, onOpen, onChoose)
+                for (job in jobs.asReversed()) ScanJobRow(job, onOpen, onChoose, onHints)
                 if (done.isNotEmpty()) {
                     TextButton(onClick = { AnalysisQueue.clearFinished() }, modifier = Modifier.align(Alignment.End)) { Text("Clear finished") }
                 }
@@ -124,7 +152,7 @@ fun ScanProgressPanel(onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, mo
 }
 
 @Composable
-private fun ScanJobRow(job: ScanJob, onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit) {
+private fun ScanJobRow(job: ScanJob, onOpen: (ScanJob) -> Unit, onChoose: (ScanJob) -> Unit, onHints: (ScanJob) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(job.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -140,7 +168,11 @@ private fun ScanJobRow(job: ScanJob, onOpen: (ScanJob) -> Unit, onChoose: (ScanJ
             ScanState.WAITING, ScanState.SCANNING -> TextButton(onClick = { AnalysisQueue.cancel(job.footageId) }) { Text("Cancel") }
             ScanState.ASKS -> TextButton(onClick = { onChoose(job) }) { Text("Choose") }
             ScanState.NO_TIMER -> TextButton(onClick = { onOpen(job) }) { Text("Add by hand") }
-            ScanState.DONE -> TextButton(onClick = { onOpen(job) }) { Text("Open") }
+            // (4.0-G) places where a solve may be missing are shown on request, never on their own
+            ScanState.DONE -> {
+                val missed = job.outcome?.maybeMissed ?: 0
+                if (missed > 0) TextButton(onClick = { onHints(job) }) { Text("Check $missed") } else TextButton(onClick = { onOpen(job) }) { Text("Open") }
+            }
             ScanState.CANCELLED, ScanState.FAILED -> TextButton(onClick = { onOpen(job) }) { Text("Open") }
         }
     }

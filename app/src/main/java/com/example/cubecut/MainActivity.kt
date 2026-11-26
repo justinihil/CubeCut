@@ -594,7 +594,13 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
             // opened from a Gallery clip: select that solve and put the playhead just before it
             val seekTo = pendingSeek
-            if (seekTo != null) {
+            if (seekTo != null && request.atHint) {
+                // (4.0-G) opened from a hint in the Gallery: the playhead goes exactly where the editor's own "Go there" puts it
+                pendingSeek = null
+                val ms = (seekTo * 1000.0).toLong().coerceIn(0L, maxOf(0L, dur))
+                exoPlayer.seekTo(ms)
+                positionMs = ms
+            } else if (seekTo != null) {
                 pendingSeek = null
                 val nearest = cuts.indices.minByOrNull { Math.abs(cuts[it].stopSec - seekTo) }
                 if (nearest != null && Math.abs(cuts[nearest].stopSec - seekTo) < 0.5) selectedCut = nearest

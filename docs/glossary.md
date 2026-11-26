@@ -56,7 +56,7 @@ Domain words, what they mean in CubeCut, and their names in the code.
 | **Held timer** | A timer found by its final times, because it shows no running time with decimals. `FoundTimer.held` |
 | **Finder** | Finds the timer by itself: a number that rises with the clock, then freezes. `TimerFinder.kt` |
 | **Grid** | Where the digits of a seven-segment number stand: slope, lean, distances. `SegmentGrid` |
-| **Hint** | A stretch of the video where a solve may be missing, and why. Never a clip. `MissedHint` |
+| **Hint** | A stretch of the video where a solve may be missing, and why. Never a clip. After a scan in the background (4.0-G) a card says "N places to check": tapping it (or *Check N* in the progress list) opens them; it never pops up by itself | `MissedHint`, `MissedHintCard`, `MissedHintsDialog`, `GalleryData.hints`, `EditorRequest.atHint` |
 | **Set up by hand** | Until 4.0: a timer marked with four dots and a typed number, the backup when the finder found none. Removed in 4.0-0; what CubeCut can't read is added by hand in the editor | (gone: `TimerReader.kt`, `TimerSetupScreen.kt`, `SolveAnalyzer.kt`) |
 | **Confirmed by the clock** | Start to stop, from the running readings, equals the time on the display. `FinderScan.checkClock`, `CLOCK_NOTE` |
 | **Quick read** | Reading at the display's previous position without running the shape finder (`lastQuad`) |
