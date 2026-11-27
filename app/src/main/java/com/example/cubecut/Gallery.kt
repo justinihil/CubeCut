@@ -82,6 +82,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -445,6 +446,11 @@ class GalleryUiState(private val prefs: SharedPreferences) {
     var cubeFilter by mutableStateOf(prefs.getString("cube_filter", null))                 // (4.0-F) null = any cube, "" = not tagged
     var placeFilter by mutableStateOf(prefs.getString("place_filter", null))               // (4.0-F) null = any place, "" = not tagged
     var penaltyFilter by mutableStateOf(PenaltyFilter.from(prefs.getString("penalty_filter", null)))   // (4.0-F)
+    // (4.0) only clips faster than this many seconds (null = any time; a clip with no time is left out while it is set)
+    var fasterThan by mutableStateOf(prefs.getString("faster_than", null)?.toDoubleOrNull())
+    var clipGroup by mutableStateOf(ClipGroup.from(prefs.getString("clip_group", null)))     // (4.0) the Clips tab's Group by
+    var footageByMonth by mutableStateOf(prefs.getBoolean("footage_by_month", false))       // (4.0) the Sessions tab grouped by month
+    var folded by mutableStateOf(prefs.getStringSet("folded", null)?.toSet() ?: emptySet())  // (4.0) the folded groups' keys (ListGroup.key)
     var themeMode by mutableStateOf(ThemeMode.from(prefs.getString("theme", null)))  // light, dark or as the phone (the whole app)
     // (4.0) what a newly imported video's clips start with: Settings -> Clip settings
     var newScramble by mutableStateOf(prefs.getBoolean("new_scramble", DEFAULT_INCLUDE_SCRAMBLE))
@@ -463,7 +469,23 @@ class GalleryUiState(private val prefs: SharedPreferences) {
 
     val filterActive: Boolean get() =
         hidden.isNotEmpty() || exportFilter != ExportFilter.ALL || checkOnly || newOnly || puzzleFilter != null || categoryFilter != null ||
-                sharedFilter != null || cubeFilter != null || placeFilter != null || penaltyFilter != PenaltyFilter.ANY
+                sharedFilter != null || cubeFilter != null || placeFilter != null || penaltyFilter != PenaltyFilter.ANY || fasterThan != null
+
+    /** Every Clips filter off (the filter line's *Clear all*). */
+    fun clearClipFilters() {
+        hidden = emptySet()
+        exportFilter = ExportFilter.ALL
+        checkOnly = false
+        newOnly = false
+        puzzleFilter = null
+        categoryFilter = null
+        sharedFilter = null
+        cubeFilter = null
+        placeFilter = null
+        penaltyFilter = PenaltyFilter.ANY
+        fasterThan = null
+        save()
+    }
 
     /** Remember the view, sort and filter choices for the next time the app opens. */
     fun save() {
@@ -488,6 +510,10 @@ class GalleryUiState(private val prefs: SharedPreferences) {
             .putFloat("new_after", newAfter)
             .putString("place_filter", placeFilter)
             .putString("penalty_filter", penaltyFilter.name)
+            .putString("faster_than", fasterThan?.toString())
+            .putString("clip_group", clipGroup.name)
+            .putBoolean("footage_by_month", footageByMonth)
+            .putStringSet("folded", HashSet(folded))
             .putString("theme", themeMode.name)
             .putString("hidden", hidden.joinToString(","))
             .putInt("skip_seconds", skipSeconds)
@@ -612,6 +638,33 @@ private fun Modifier.dragToSelect(
     )
 }
 
+/** True when [row] is an item that [match]es, or the heading of a group holding one. */
+private fun <T> groupHas(row: GroupRow<T>, match: (T) -> Boolean): Boolean = when (row) {
+    is GroupRow.Heading -> row.group.items.any(match)
+    is GroupRow.Item -> match(row.item)
+}
+
+/** (4.0) Opens the folded group that holds an item that [match]es: the Gallery is about to point at it (after the viewer or the editor). */
+private fun <T> unfoldGroupOf(rows: List<GroupRow<T>>, ui: GalleryUiState, match: (T) -> Boolean) {
+    val h = rows.firstOrNull { it is GroupRow.Heading && it.folded && it.group.items.any(match) } as? GroupRow.Heading ?: return
+    ui.folded = ui.folded - h.group.key
+    ui.save()
+}
+
+/**
+ * The row of the first item that [match]es in the rows [rows] gives, or null. Waits up to about half a second for it, because a group
+ * that was just opened shows its items only at the next frame.
+ */
+private suspend fun <T> awaitRow(rows: () -> List<GroupRow<T>>, match: (T) -> Boolean): Int? {
+    var tries = 0
+    while (true) {
+        val i = rows().indexOfFirst { it is GroupRow.Item && match(it.item) }
+        if (i >= 0) return i
+        if (tries++ >= 30) return null
+        delay(16)
+    }
+}
+
 /**
  * Makes sure item [index] of a grid is fully on screen. If it has to scroll, the item ends up roughly in the middle. Waits (up to about a
  * second) for the grid to be laid out first, because it may only just have appeared.
@@ -665,6 +718,49 @@ private suspend fun revealListItem(state: LazyListState, index: Int) {
 // ---------------------------------------------------------------------------------------
 // small pieces
 // ---------------------------------------------------------------------------------------
+
+/**
+ * (4.0) A group's heading on the Clips or Sessions tab: an arrow, its [title], then [detail]. Tapping it folds or opens the group
+ * ([onClick]); a folded group shows only this line.
+ */
+@Composable
+private fun GroupHeading(title: String, detail: String, folded: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(if (folded) "\u25B6" else "\u25BC", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)
+        )
+        Text(
+            " \u00B7 $detail", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
+        )
+    }
+}
+
+/** (4.0) The heading of a group of clips: "3x3 · 42 clips · best 8.91". */
+@Composable
+private fun ClipGroupHeading(row: GroupRow.Heading<GalleryClip>, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val items = row.group.items
+    val best = items.filter { it.seconds != null }.minByOrNull { it.seconds ?: Double.MAX_VALUE }
+    val detail = clipsText(items.size, "clip") + if (best != null) " \u00B7 best ${best.shownTime}" else ""
+    GroupHeading(row.group.title, detail, row.folded, modifier, onClick)
+}
+
+/** (4.0) The heading of a month on the Sessions tab: "November 2026 · 14 sessions". */
+@Composable
+private fun VideoGroupHeading(row: GroupRow.Heading<Footage>, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val n = row.group.items.size
+    GroupHeading(row.group.title, if (n == 1) "1 session" else "$n sessions", row.folded, modifier, onClick)
+}
 
 @Composable
 private fun Badge(text: String, background: Color, textColor: Color = Color.White, modifier: Modifier = Modifier) {
@@ -1146,13 +1242,36 @@ private fun MoreButton(size: Dp, modifier: Modifier = Modifier, onClick: () -> U
 
 /** A button that opens a menu of sort choices (used for the Footage tab). */
 @Composable
-private fun <T> SortMenu(current: String, options: List<Pair<T, String>>, padding: PaddingValues = ButtonDefaults.ContentPadding, onPick: (T) -> Unit) {
+private fun <T> SortMenu(
+    current: String, options: List<Pair<T, String>>, padding: PaddingValues = ButtonDefaults.ContentPadding,
+    toggle: String? = null, toggleOn: Boolean = false, onToggle: () -> Unit = {}, onPick: (T) -> Unit
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(onClick = { open = true }, contentPadding = padding) { Text("Sort  \u25BE") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             for ((value, label) in options) {
                 DropdownMenuItem(text = { Text(if (label == current) "\u2713 $label" else label) }, onClick = { open = false; onPick(value) })
+            }
+            // (4.0) a switch below the choices: the Sessions tab's "Group by month"
+            if (toggle != null) {
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text(if (toggleOn) "\u2713 $toggle" else toggle) }, onClick = { open = false; onToggle() })
+            }
+        }
+    }
+}
+
+/** (4.0) The sort window's first line: "Group by" with None, Session, Puzzle or Time. */
+@Composable
+private fun GroupPicker(current: ClipGroup, onPick: (ClipGroup) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Group by", Modifier.width(72.dp), style = MaterialTheme.typography.bodyMedium)
+        Box {
+            OutlinedButton(onClick = { open = true }) { Text(current.label + "  \u25BE", maxLines = 1) }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for (g in ClipGroup.entries) DropdownMenuItem(text = { Text(g.label) }, onClick = { open = false; onPick(g) })
             }
         }
     }
@@ -1177,6 +1296,36 @@ private fun LevelPicker(title: String, current: ClipKey?, allowNone: Boolean, en
         }
     }
 }
+
+/**
+ * (4.0) The Filter window's time line: "Faster than [10] s". Empty = any time. [current] is the saved number; a typed one that isn't a
+ * number above 0 is ignored (the filter stays as it was).
+ */
+@Composable
+private fun FasterThanField(current: Double?, onChange: (Double?) -> Unit) {
+    var text by remember { mutableStateOf(current?.let { formatSeconds(it) } ?: "") }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Faster than", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.width(8.dp))
+        OutlinedTextField(
+            value = text,
+            onValueChange = { t ->
+                text = t.filter { it.isDigit() || it == '.' || it == ',' }.take(6)
+                val v = text.replace(',', '.').toDoubleOrNull()
+                if (text.isEmpty()) onChange(null) else if (v != null && v > 0) onChange(v)
+            },
+            singleLine = true,
+            placeholder = { Text("any") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.width(96.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text("s", style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** "10" for 10.0, "9.5" for 9.5: the time filter's number as typed. */
+private fun formatSeconds(v: Double): String = if (v == Math.floor(v)) v.toLong().toString() else v.toString()
 
 /** How tall a filter chip's touch area is: smaller than Material's 48 dp so every filter fits on one screen (the chip is 32 dp). */
 private val FILTER_CHIP_TOUCH = 40.dp
@@ -1593,11 +1742,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     val clipsListState = rememberLazyListState()
     val footageGridState = rememberLazyGridState()
     val footageListState = rememberLazyListState()
-    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter, ui.cubeFilter, ui.placeFilter, ui.penaltyFilter) {
+    LaunchedEffect(ui.clipKeys, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter, ui.cubeFilter, ui.placeFilter, ui.penaltyFilter, ui.fasterThan, ui.clipGroup) {
         clipsGridState.scrollToItem(0)
         clipsListState.scrollToItem(0)
     }
-    LaunchedEffect(ui.footageSort) {
+    LaunchedEffect(ui.footageSort, ui.footageByMonth) {
         footageGridState.scrollToItem(0)
         footageListState.scrollToItem(0)
     }
@@ -1899,7 +2048,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
     }
 
     // the Clips tab's clips, filtered and sorted
-    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.seenKeys, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter, ui.cubeFilter, ui.placeFilter, ui.penaltyFilter) {
+    val shownClips: List<GalleryClip> = remember(d, ui.hidden, ui.exportFilter, ui.checkOnly, ui.newOnly, ui.seenKeys, ui.clipKeys, ui.puzzleFilter, ui.categoryFilter, ui.sharedFilter, ui.cubeFilter, ui.placeFilter, ui.penaltyFilter, ui.fasterThan) {
         if (d == null) emptyList()
         else sortClips(
             d.clips.filter { c ->
@@ -1907,6 +2056,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         tagMatches(c.puzzle, ui.puzzleFilter) && tagMatches(c.category, ui.categoryFilter) &&
                         tagMatches(c.cube, ui.cubeFilter) && tagMatches(c.place, ui.placeFilter) &&
                         ui.penaltyFilter.matches(c.cut.plus2Count, c.cut.dnf) &&
+                        ui.fasterThan.let { max -> max == null || (c.seconds ?: Double.MAX_VALUE) < max } &&
                         sharedMatches(c.sharedList, ui.sharedFilter) && when (ui.exportFilter) {
                     ExportFilter.ALL -> true
                     ExportFilter.EXPORTED -> c.exported != null
@@ -1917,33 +2067,58 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         )
     }
 
+    // (4.0) the groups of the Clips tab and the Sessions tab, and the rows they show (a heading, then its items unless folded). The
+    // visible lists are what is on screen: hold-and-drag ticks along them, All ticks them, the viewer swipes through them
+    val clipRows: List<GroupRow<GalleryClip>> = remember(shownClips, ui.clipGroup, ui.folded) {
+        val groups = when (ui.clipGroup) {
+            ClipGroup.NONE -> listOf(ListGroup("", "", shownClips))
+            ClipGroup.SESSION -> groupsInOrder(shownClips, { ClipGroup.SESSION.prefix + it.footage.id }, { it.footage.title })
+            ClipGroup.PUZZLE -> groupByPuzzle(shownClips) { it.puzzle }
+            ClipGroup.TIME -> groupByTime(shownClips, ui.clipKeys.firstOrNull() == ClipKey.TIME_SLOWEST) { it.seconds }
+        }
+        rowsOf(groups, ui.folded, ui.clipGroup != ClipGroup.NONE) { it.listKey }
+    }
+    val visibleClips: List<GalleryClip> = remember(clipRows) { visibleItems(clipRows) }
+    val videoRows: List<GroupRow<Footage>> = remember(shownVideos, ui.footageByMonth, ui.folded) {
+        val groups = if (ui.footageByMonth) groupsInOrder(shownVideos, { monthKey(dateOf(it)) }, { monthTitle(monthKey(dateOf(it))) })
+        else listOf(ListGroup("", "", shownVideos))
+        rowsOf(groups, ui.folded, ui.footageByMonth) { "f" + it.id }
+    }
+    val visibleVideos: List<Footage> = remember(videoRows) { visibleItems(videoRows) }
+    fun toggleFold(key: String) {
+        ui.folded = if (key in ui.folded) ui.folded - key else ui.folded + key
+        ui.save()
+    }
+
     // the light-up itself: scroll the video or clip into view (only if it isn't already fully on screen), then a blue glow and border
     // that comes up quickly, stays a moment and fades out (about 1.7 s in all)
     val latestData by rememberUpdatedState(d)
-    val latestShown by rememberUpdatedState(shownClips)
-    val latestStats by rememberUpdatedState(statsById)
+    val latestClipRows by rememberUpdatedState(clipRows)
+    val latestVideoRows by rememberUpdatedState(videoRows)
     LaunchedEffect(flashRun) {
         val target = flashTarget ?: return@LaunchedEffect
         flashTarget = null
         val run = flashRun
-        val loaded = latestData ?: return@LaunchedEffect
+        if (latestData == null) return@LaunchedEffect          // (the data is loaded first)
         val key: String
         val footageId = target.footageId
         val back = target.clip
         if (footageId != null) {
-            val order = sortFootage(loaded.footage.filter { !it.isSingle }, ui.footageSort, latestStats)
-            val i = order.indexOfFirst { it.id == footageId }
-            if (i < 0) return@LaunchedEffect
+            // (4.0) its row (headings count as rows); a folded month opens, so the video can be pointed at
+            unfoldGroupOf(latestVideoRows, ui) { it.id == footageId }
+            val i = awaitRow({ latestVideoRows }) { it.id == footageId } ?: return@LaunchedEffect   // (filtered out: nothing to point at)
             if (ui.footageGrid) revealGridItem(footageGridState, i) else revealListItem(footageListState, i)
             key = "f_$footageId"
         } else if (back != null) {
-            val shown = latestShown
             // the same clip, found by its key, or else by its video and its place in the video (in case the key changed, e.g. after an export)
-            var i = shown.indexOfFirst { it.listKey == back.listKey }
-            if (i < 0) i = shown.indexOfFirst { it.footage.id == back.footage.id && Math.abs(it.cut.stopSec - back.cut.stopSec) < SAME_SOLVE_SEC }
-            if (i < 0) return@LaunchedEffect          // filtered out of the Clips tab: nothing to point at
+            val same: (GalleryClip) -> Boolean = { it.listKey == back.listKey }
+            val near: (GalleryClip) -> Boolean = { it.footage.id == back.footage.id && Math.abs(it.cut.stopSec - back.cut.stopSec) < SAME_SOLVE_SEC }
+            val match = if (latestClipRows.any { r -> groupHas(r, same) }) same else near
+            unfoldGroupOf(latestClipRows, ui, match)
+            val i = awaitRow({ latestClipRows }, match) ?: return@LaunchedEffect          // filtered out of the Clips tab: nothing to point at
+            val clip = (latestClipRows.getOrNull(i) as? GroupRow.Item)?.item ?: return@LaunchedEffect
             if (ui.clipsGrid) revealGridItem(clipsGridState, i) else revealListItem(clipsListState, i)
-            key = "c_" + shown[i].listKey
+            key = "c_" + clip.listKey
         } else {
             return@LaunchedEffect
         }
@@ -1970,7 +2145,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
         ) {
             // ===== header (while choosing clips: how many are chosen, All / None, the bin, Export) =====
             if (ui.selecting && d != null) {
-                val pickable = shownClips.filter { selectable(it, d.openable) }.map { it.listKey }.toSet()
+                val pickable = visibleClips.filter { selectable(it, d.openable) }.map { it.listKey }.toSet()
                 val allOn = pickable.isNotEmpty() && ui.selected.containsAll(pickable)
                 val ticked = d.clips.filter { it.listKey in ui.selected }
                 val canExport = ticked.any { exportable(it, d.openable) }
@@ -2055,7 +2230,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 // Row 2: Set tags and Clip settings, light blue (tonal), side by side. Row 3, apart: what removes things, both in red
                 // outline (Delete videos with the bin, Forget). Each of those two warns first, with a solid red button.
                 val tickedVideos = d.footage.filter { it.id in ui.selectedVideos }
-                val pickable = shownVideos.filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
+                val pickable = visibleVideos.filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
                 val allOn = pickable.isNotEmpty() && ui.selectedVideos.containsAll(pickable)
                 val canTrash = tickedVideos.any { it.trashedMs == 0L && d.openable[it.id] == true } && batchDone < 0
                 val canForget = tickedVideos.isNotEmpty() && batchDone < 0
@@ -2182,7 +2357,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         OutlinedButton(onClick = { showSort = true }, contentPadding = compact) { Text("Sort") }
                         OutlinedButton(onClick = { showFilter = true }, contentPadding = compact) { Text(if (ui.filterActive) "Filter \u2022" else "Filter") }
                     } else {
-                        SortMenu(ui.footageSort.label, FootageSort.entries.map { it to it.label }, compact) { ui.footageSort = it; ui.save() }
+                        SortMenu(
+                            ui.footageSort.label, FootageSort.entries.map { it to it.label }, compact,
+                            toggle = "Group by month", toggleOn = ui.footageByMonth, onToggle = { ui.footageByMonth = !ui.footageByMonth; ui.save() }
+                        ) { ui.footageSort = it; ui.save() }
                         OutlinedButton(onClick = { showScanFilter = true }, contentPadding = compact) { Text(if (ui.scanFilter != ScanFilter.ANY) "Filter \u2022" else "Filter") }
                     }
                 }
@@ -2234,7 +2412,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     val puzzleLabel = ui.puzzleFilter?.let { "Puzzle: " + it.ifEmpty { "not tagged" } }
                     val typeLabel = ui.categoryFilter?.let { "Solve type: " + it.ifEmpty { "not tagged" } }
                     val sharedLabel = ui.sharedFilter?.let { if (it.isEmpty()) "Not shared yet" else "Shared on: $it" }
-                    val active = listOfNotNull(videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null, puzzleLabel, typeLabel, sharedLabel).size
+                    // (4.0) every filter counts, so Clear all shows with two of any kind
+                    val active = listOfNotNull(
+                        videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null, if (ui.newOnly) "New only" else null, puzzleLabel,
+                        typeLabel, sharedLabel, ui.cubeFilter, ui.placeFilter, if (ui.penaltyFilter != PenaltyFilter.ANY) "Penalty" else null, ui.fasterThan
+                    ).size
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -2253,6 +2435,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         ui.cubeFilter?.let { ActiveFilterChip("Cube: " + it.ifEmpty { "not tagged" }) { ui.cubeFilter = null; ui.save() } }
                         ui.placeFilter?.let { ActiveFilterChip("Place: " + it.ifEmpty { "not tagged" }) { ui.placeFilter = null; ui.save() } }
                         if (ui.penaltyFilter != PenaltyFilter.ANY) ActiveFilterChip("Penalty: " + ui.penaltyFilter.label) { ui.penaltyFilter = PenaltyFilter.ANY; ui.save() }
+                        ui.fasterThan?.let { ActiveFilterChip("Faster than ${formatSeconds(it)} s") { ui.fasterThan = null; ui.save() } }
                         if (active >= 2) {
                             Text(
                                 "Clear all",
@@ -2261,15 +2444,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(16.dp))
-                                    .clickable {
-                                        ui.hidden = emptySet()
-                                        ui.exportFilter = ExportFilter.ALL
-                                        ui.checkOnly = false
-                                        ui.puzzleFilter = null
-                                        ui.categoryFilter = null
-                                        ui.sharedFilter = null
-                                        ui.save()
-                                    }
+                                    .clickable { ui.clearClipFilters() }
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
                             )
                         }
@@ -2318,17 +2493,19 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         )
                     } else if (page == 0) {
                         val shown = shownClips
+                        val rows = clipRows
+                        val vis = visibleClips                  // (4.0) what is on screen: folded groups left out
                         // tap: watch it (or, while choosing, tick it); the corner arrows: watch it while choosing.
                         // Long-press (and drag) is handled by the grid or list itself: see dragToSelect.
                         // (the tap Android sends when the finger lifts after a long-press is ignored)
                         val onTap: (GalleryClip) -> Unit = { clip ->
                             if (!drag.longPressed) {
-                                if (ui.selecting) toggleSelect(clip, d.openable) else ui.openViewer(shown, clip)
+                                if (ui.selecting) toggleSelect(clip, d.openable) else ui.openViewer(vis, clip)
                             }
                         }
-                        val onPreview: (GalleryClip) -> Unit = { clip -> if (!drag.longPressed) ui.openViewer(shown, clip) }
+                        val onPreview: (GalleryClip) -> Unit = { clip -> if (!drag.longPressed) ui.openViewer(vis, clip) }
                         // which clip is under a point of the grid or list (null = none, e.g. the gap between two pictures)
-                        fun indexAt(pos: Offset): Int? = if (ui.clipsGrid) {
+                        fun rowAt(pos: Offset): Int? = if (ui.clipsGrid) {
                             clipsGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
                                 pos.x >= info.offset.x && pos.x < info.offset.x + info.size.width &&
                                         pos.y >= info.offset.y && pos.y < info.offset.y + info.size.height
@@ -2338,6 +2515,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 pos.y >= info.offset && pos.y < info.offset + info.size
                             }?.index
                         }
+                        fun indexAt(pos: Offset): Int? = rowAt(pos)?.let { (rows.getOrNull(it) as? GroupRow.Item)?.visibleIndex }
                         fun viewportHeight(): Int =
                             if (ui.clipsGrid) clipsGridState.layoutInfo.viewportSize.height else clipsListState.layoutInfo.viewportSize.height
                         // the finger is over clip [to]: every clip from the first one to [to] is ticked (or unticked); going back undoes it
@@ -2345,14 +2523,14 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             val a = drag.anchor
                             if (a < 0) return
                             drag.last = to
-                            val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { shown.getOrNull(it) }
+                            val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { vis.getOrNull(it) }
                                 .filter { selectable(it, d.openable) }
                                 .map { it.listKey }.toSet()
                             ui.selected = if (drag.ticking) drag.base + range else drag.base - range
                         }
                         // a long-press on clip [i]: start choosing (or carry on), and tick it, or untick it if it was ticked
                         fun dragStart(i: Int): Boolean {
-                            val clip = shown.getOrNull(i) ?: return false
+                            val clip = vis.getOrNull(i) ?: return false
                             if (!selectable(clip, d.openable)) {
                                 message = notSelectableReason(clip, d.openable)
                                 return false
@@ -2370,7 +2548,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             return true
                         }
                         val dragModifier = Modifier.dragToSelect(
-                            key = shown, drag = drag,
+                            key = vis, drag = drag,
                             indexAt = { indexAt(it) }, viewportHeight = { viewportHeight() },
                             onStart = { dragStart(it) }, onOver = { dragOver(it) },
                             onSpeed = { autoScroll = it }, onEnd = { dragging = false }
@@ -2402,7 +2580,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 userScrollEnabled = !dragging,
                                 modifier = Modifier.fillMaxSize().then(dragModifier)
                             ) {
-                                gridItems(shown, key = { it.listKey }) { clip ->
+                                gridItems(rows, key = { it.rowKey }, span = { GridItemSpan(if (it is GroupRow.Heading) maxLineSpan else 1) }) cell@{ row ->
+                                    if (row is GroupRow.Heading) {
+                                        ClipGroupHeading(row, Modifier.animateItem()) { toggleFold(row.group.key) }
+                                        return@cell
+                                    }
+                                    val clip = (row as GroupRow.Item).item
                                     ClipCell(
                                         clip, d.openable, ui.clipsColumns, ui.selecting, clip.listKey in ui.selected, Modifier.animateItem(),
                                         highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
@@ -2418,7 +2601,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 contentPadding = PaddingValues(bottom = 8.dp),
                                 userScrollEnabled = !dragging
                             ) {
-                                listItems(shown, key = { it.listKey }) { clip ->
+                                listItems(rows, key = { it.rowKey }) cell@{ row ->
+                                    if (row is GroupRow.Heading) {
+                                        ClipGroupHeading(row, Modifier.animateItem()) { toggleFold(row.group.key) }
+                                        return@cell
+                                    }
+                                    val clip = (row as GroupRow.Item).item
                                     ClipRow(
                                         clip, d.openable, ui.selecting, clip.listKey in ui.selected,
                                         highlight = if (flashKey == "c_" + clip.listKey) flashLevel else 0f,
@@ -2430,8 +2618,10 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                     } else {
                         val shown = shownVideos
+                        val rows = videoRows
+                        val vis = visibleVideos                 // (4.0) what is on screen: folded months left out
                         // (4.0) hold a card, then drag over others to tick them all, as on the Clips tab (owner, 2026-11-26)
-                        fun videoIndexAt(pos: Offset): Int? = if (ui.footageGrid) {
+                        fun videoRowAt(pos: Offset): Int? = if (ui.footageGrid) {
                             footageGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
                                 pos.x >= info.offset.x && pos.x < info.offset.x + info.size.width &&
                                         pos.y >= info.offset.y && pos.y < info.offset.y + info.size.height
@@ -2441,19 +2631,20 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 pos.y >= info.offset && pos.y < info.offset + info.size
                             }?.index
                         }
+                        fun videoIndexAt(pos: Offset): Int? = videoRowAt(pos)?.let { (rows.getOrNull(it) as? GroupRow.Item)?.visibleIndex }
                         fun videoViewport(): Int =
                             if (ui.footageGrid) footageGridState.layoutInfo.viewportSize.height else footageListState.layoutInfo.viewportSize.height
                         fun videoDragOver(to: Int) {
                             val a = videoDrag.anchor
                             if (a < 0) return
                             videoDrag.last = to
-                            val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { shown.getOrNull(it) }
+                            val range = (minOf(a, to)..maxOf(a, to)).mapNotNull { vis.getOrNull(it) }
                                 .filter { !AnalysisQueue.isBusy(it.id) }.map { it.id }.toSet()
                             ui.selectedVideos = if (videoDrag.ticking) videoDrag.baseIds + range else videoDrag.baseIds - range
                             ui.selectingVideos = ui.selectedVideos.isNotEmpty()
                         }
                         fun videoDragStart(i: Int): Boolean {
-                            val f = shown.getOrNull(i) ?: return false
+                            val f = vis.getOrNull(i) ?: return false
                             if (ui.selecting) return false
                             if (AnalysisQueue.isBusy(f.id)) {
                                 message = "\"${f.title}\" is being scanned. Wait, or cancel it in the progress list."
@@ -2472,7 +2663,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                             return true
                         }
                         val videoDragModifier = Modifier.dragToSelect(
-                            key = shown, drag = videoDrag,
+                            key = vis, drag = videoDrag,
                             indexAt = { videoIndexAt(it) }, viewportHeight = { videoViewport() },
                             onStart = { videoDragStart(it) }, onOver = { videoDragOver(it) },
                             onSpeed = { videoAutoScroll = it }, onEnd = { videoDragging = false }
@@ -2510,7 +2701,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 userScrollEnabled = !videoDragging,
                                 modifier = Modifier.fillMaxSize().then(videoDragModifier)
                             ) {
-                                gridItems(shown, key = { it.id }) { f ->
+                                gridItems(rows, key = { it.rowKey }, span = { GridItemSpan(if (it is GroupRow.Heading) maxLineSpan else 1) }) cell@{ row ->
+                                    if (row is GroupRow.Heading) {
+                                        VideoGroupHeading(row, Modifier.animateItem()) { toggleFold(row.group.key) }
+                                        return@cell
+                                    }
+                                    val f = (row as GroupRow.Item).item
                                     FootageCell(
                                         f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden, ui.footageColumns, Modifier.animateItem(),
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
@@ -2525,7 +2721,12 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                                 Modifier.fillMaxSize().then(videoDragModifier), state = footageListState,
                                 contentPadding = PaddingValues(bottom = 8.dp), userScrollEnabled = !videoDragging
                             ) {
-                                listItems(shown, key = { it.id }) { f ->
+                                listItems(rows, key = { it.rowKey }) cell@{ row ->
+                                    if (row is GroupRow.Heading) {
+                                        VideoGroupHeading(row, Modifier.animateItem()) { toggleFold(row.group.key) }
+                                        return@cell
+                                    }
+                                    val f = (row as GroupRow.Item).item
                                     FootageRow(
                                         f, statsById[f.id], d.openable[f.id] == true, f.id in ui.hidden,
                                         highlight = if (flashKey == "f_${f.id}") flashLevel else 0f,
@@ -2777,9 +2978,11 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                     Column {
                         Text(
                             "Clips follow the first choice. Ties follow the next one. " +
-                                    "Example: Date, then Solve time = each day's solves, fastest first.",
+                                    "Example: Date, then Solve time = each day's solves, fastest first. Grouped: within each group.",
                             style = MaterialTheme.typography.bodySmall
                         )
+                        // (4.0) groups with a heading each; the sort below orders the clips within each group
+                        GroupPicker(ui.clipGroup) { ui.clipGroup = it; ui.save() }
                         LevelPicker("Sort by", k1, false, true) { pick ->
                             ui.clipKeys = listOfNotNull(pick, k2, k3); ui.save()
                         }
@@ -2842,6 +3045,8 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         TagFilterSection("Cube", d.clips.map { it.cube }, emptyList(), ui.cubeFilter) { ui.cubeFilter = it; ui.save() }
                         TagFilterSection("Place", d.clips.map { it.place }, PLACES, ui.placeFilter) { ui.placeFilter = it; ui.save() }
                         FilterChips("Penalty", PenaltyFilter.entries.map { it to it.label }, ui.penaltyFilter) { ui.penaltyFilter = it; ui.save() }
+                        // (4.0) e.g. 10 = every sub-10 (owner, 2026-11-27)
+                        FasterThanField(ui.fasterThan) { ui.fasterThan = it; ui.save() }
                         // (3.2-E) where the clips were shared: every platform, then Not shared yet
                         FilterChips(
                             "Shared on",

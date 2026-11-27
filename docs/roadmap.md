@@ -171,6 +171,9 @@ The owner's notes of 2026-11-26, after the first phone test step:
 - The scan, the reader and `computeClips` change only in these rounds, and are checked against the known-good footage ([algorithms §8](algorithms.md#8-reference-measurements)).
 - The first thing to measure is whether the finder trusts a timer it sees for only one solve.
 
+### 4.0-K Groups and the time filter 🔶
+The owner's notes of 2026-11-27, wanted in 4.0. *Sort → Group by* None / Session / Puzzle / Time on the Clips tab; *Group by month* in the Sessions *Sort* menu. Headings fold on a tap (remembered). Time bands by the size of the time, one rule for every puzzle (1 s below 20 s, 5 s below 1:00, 10 s below 2:00, then 1 min). *Filter → Faster than [__] s*. Also: *Type* became *Solve type*, a clip's tag window says the place is set per session, the progress bar counts what is left. Not asked, flagged: *Clear all* didn't clear the 4.0 filters (new only, cube, place, penalty) and didn't count them; it does now.
+
 ### 4.0-Z Release 4.0 ⬜
 
 ---
