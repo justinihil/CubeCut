@@ -297,7 +297,14 @@ class ReferenceVideoTest {
             TimerHint.Segments(SegmentTracker.follow(srcSeg, { src.at(it) }, src.duration).grid, size.first, size.second)
         } else {
             val t = findTimer({ src.at(it) }, src.duration, fonts(File(from))).timer!!
-            TimerHint.Solid(t.numbers, t.digitHeight, size.first, size.second, t.examples.takeIf { it.isLearned })
+            // CUBECUT_REF_HINT_DIGITS_FROM: the digits learned in another video (another timer in the same place: they must not be used)
+            val digitsFrom = System.getenv("CUBECUT_REF_HINT_DIGITS_FROM").orEmpty()
+            val examples = if (digitsFrom.isEmpty()) t.examples.takeIf { it.isLearned } else {
+                val o = FfmpegVideo(File(digitsFrom))
+                findTimer({ o.at(it) }, o.duration, fonts(File(digitsFrom))).timer!!.examples.also { o.close() }.takeIf { it.isLearned }
+            }
+            println("HINT digits: ${if (examples == null) "none" else if (digitsFrom.isEmpty()) "learned there" else "learned in ${File(digitsFrom).name}"}")
+            TimerHint.Solid(t.numbers, t.digitHeight, size.first, size.second, examples)
         }
         src.close()
         println("HINT from ${File(from).name}: ${if (hint is TimerHint.Solid) "solid ${hint.numbers}" else "seven segments"}")
@@ -317,7 +324,8 @@ class ReferenceVideoTest {
                         segments != null
                     }, hint = h as? TimerHint.Solid)
                     seg = segments
-                    how = "${r.places} places, ${r.wholeFrames} whole pictures, ${r.areaReads} area reads, from hint ${r.fromHint}"
+                    how = "${r.places} places, ${r.wholeFrames} whole pictures, ${r.areaReads} area reads, from hint ${r.fromHint}, digits ${r.digits}; " +
+                            r.notes.filter { it.startsWith("Learned") }.joinToString()
                     solves = if (seg != null) emptyList() else r.timer?.let { t ->
                         scanFoundTimer({ video.at(it)?.let { p -> t.read(p)?.text } }, video.duration, t.runningDecimals, t.stoppedDecimals, video.frameSec, { video.frameTime(it) }).solves
                     } ?: emptyList()

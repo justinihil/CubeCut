@@ -176,7 +176,8 @@ fun analyzeByItself(
         if (found.timer == null && found.choices.isNotEmpty()) timing.timer = "two numbers ran: asks which one"
         val timer = found.timer ?: return AutoScanResult(null, null, found.choices)
         timing.timer = if (timer.held) "solid digits, by its final times" else "solid digits, running time with ${timer.runningDecimals} decimal" +
-                (if (timer.runningDecimals == 1) "" else "s") + ", ${timer.digitHeight.toInt()} px" + (if (fromHint) ", where it was in the video before" else "")
+                (if (timer.runningDecimals == 1) "" else "s") + ", ${timer.digitHeight.toInt()} px" + (if (fromHint) ", where it was in the video before" else "") +
+                (if (found.digits.isNotEmpty()) "; digits ${found.digits}" else "")
         // (a timer found by its final times is read closely in time, so it gets the exact frames)
         val scan = if (timer.held) scanHeldTimer(
             { t -> pic.area(t, timer.area)?.let { timer.readHeld(it) } }, durationSec, frameSec,

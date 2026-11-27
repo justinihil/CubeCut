@@ -58,6 +58,9 @@ private const val EARLY_PLACES_FULL_SIZE = 16
  */
 const val HINT_PLACES = 32
 
+/** (4.0) The digits of the video before are used without learning when they read this share of this video's runs as the clock says. */
+private const val BORROWED_AGREE = 0.75
+
 /** Two numbers run at the same moment: the smaller one could be the timer too when it is at least this tall compared with the bigger one... */
 private const val RIVAL_HEIGHT = 0.6
 
@@ -184,7 +187,8 @@ class FinderResult(
     val wholeFrames: Int,               // how many whole pictures were searched
     val areaReads: Int,                 // how many times only the timer's area was read
     val choices: List<TimerChoice> = emptyList(),
-    val fromHint: Boolean = false       // (4.0) found where the timer of the video before was (TimerHint)
+    val fromHint: Boolean = false,      // (4.0) found where the timer of the video before was (TimerHint)
+    val digits: String = ""             // (4.0) where its digits come from: "learned", "of the video before", "built-in fonts"
 )
 
 private class Seen(val t: Double, val row: TimeRow)
@@ -265,6 +269,7 @@ private class TimerSearch(
     private val hint: TimerHint.Solid?
 ) {
     private var fromHint = false
+    private var digits = ""
     private val notes = ArrayList<String>()
     private val frozen = ArrayList<String>()
     private var places = 0
@@ -301,7 +306,7 @@ private class TimerSearch(
     }
 
     private fun result(timer: FoundTimer?) =
-        FinderResult(timer, notes, places, frozen, wholeFrames, areaReads, if (timer == null) choices else emptyList(), fromHint && timer != null)
+        FinderResult(timer, notes, places, frozen, wholeFrames, areaReads, if (timer == null) choices else emptyList(), fromHint && timer != null, if (timer == null) "" else digits)
 
     fun run(): FinderResult {
         // (4.0) first where the timer of the video before was; the same runs and the same learning follow as after the usual search
@@ -535,6 +540,27 @@ private class TimerSearch(
         }
     }
 
+    /**
+     * (4.0) Do [examples] read the runs [hits] as the clock says, in [BORROWED_AGREE] of their pictures: the running time with the
+     * run's decimals, and start + time = the moment of the picture? A few area reads; the digits of another timer don't.
+     */
+    private fun readsAsTheClock(hits: List<Run>, examples: DigitShapes): Boolean {
+        var total = 0
+        var right = 0
+        for (run in hits) {
+            val start = startOf(run)
+            val a = around(run.map { it.row }, WATCH_ACROSS, WATCH_DOWN)
+            for (s in run) {
+                total++
+                val p = areaFrame(s.t, a) ?: continue
+                areaReads++
+                val r = readArea(p, a, height, dark, examples) ?: continue
+                if (r.decimals == run[0].row.decimals && abs(s.t - start - r.seconds) < 0.16) right++
+            }
+        }
+        return total >= 8 && right >= BORROWED_AGREE * total
+    }
+
     // ---- 2. watch ----
 
     private fun startOf(run: Run): Double = median(run.map { it.t - it.row.seconds })
@@ -596,8 +622,14 @@ private class TimerSearch(
         // (4.0) found where the timer of the video before was: no search of the whole picture for more runs (in a video of one solve
         // there are none, and it cost the owner's phone 10 to 15 s a video); not all digits seen: those of the video before, else the fonts
         val borrowed = if (fromHint) hint?.examples else null
+        // (4.0) the digits of the video before, if they read this video's runs as the clock says: then nothing is learned. If not (another
+        // timer in the same place), they aren't used at all
+        val trusted = borrowed?.takeIf { readsAsTheClock(hits, it) }
+        // (4.0) the stretches of the video learned from: a video of one solve gives three runs of it close together, and the learning
+        // read the same stretch three times (most of the 15 to 20 s a video took on the phone); runs further apart read as before
+        val learnedFrom = ArrayList<ClosedFloatingPointRange<Double>>()
         val runs = (hits.asSequence() + (if (fromHint) emptySequence() else moreRuns(hits))).iterator()
-        while (used < hits.size || (used < hits.size + MORE_RUNS && !enough(shapes))) {
+        while (used < hits.size || (trusted == null && used < hits.size + MORE_RUNS && !enough(shapes))) {
             if (!runs.hasNext()) break                              // (may have to search: only ask when one is needed)
             val run = runs.next()
             used++
@@ -609,15 +641,17 @@ private class TimerSearch(
                 stopped.add(held[0].row.decimals)
                 frozen.add(held[0].row.text)
             }
-            learnFrom(run, running, shapes)
+            if (trusted == null) learnFrom(run, running, shapes, learnedFrom)
         }
         val all = shapes.sumOf { it.size }
         if (rows.isNotEmpty()) setArea(rows)
         val clean = if (enough(shapes)) withoutOddOnes(shapes) else null
-        val own = clean?.let { fonts.learned(it) }
-        val learned = own ?: borrowed
+        val own = if (trusted != null) null else clean?.let { fonts.learned(it) }
+        val learned = trusted ?: own
+        digits = if (trusted != null) "of the video before" else if (own != null) "learned" else "built-in fonts"
         notes.add(
-            "Learned: " + (if (own != null) "yes" else if (learned != null) "not all digits were seen: those of the video before are used" else "NO, not all digits were seen") +
+            if (trusted != null) "Learned: no need, the digits of the video before read its runs as the clock says"
+            else "Learned: " + (if (own != null) "yes" else "NO, not all digits were seen") + (if (borrowed != null) " (those of the video before don't fit)" else "") +
                     ", from $used runs, ${clean?.sumOf { it.size } ?: 0} of $all shapes, per digit " + (clean ?: shapes).map { it.size }
         )
         if (stopped.isEmpty() && learned != null) {
@@ -637,15 +671,21 @@ private class TimerSearch(
         return FoundTimer(area, numbers, height, dark, mostCommon(hits.map { it[0].row.decimals })!!, stoppedDecimals, learned ?: fonts)
     }
 
-    /** One run again at [LEARN_RATE] pictures a second: adds its digits' shapes to [into], named by the clock. */
-    private fun learnFrom(run: Run, running: List<Seen>, into: List<MutableList<FloatArray>>) {
+    /**
+     * One run again at [LEARN_RATE] pictures a second: adds its digits' shapes to [into], named by the clock. (4.0) A moment of the
+     * video that is already in [done] (read for another run) isn't read again; this run's stretch is added to it.
+     */
+    private fun learnFrom(run: Run, running: List<Seen>, into: List<MutableList<FloatArray>>, done: MutableList<ClosedFloatingPointRange<Double>>) {
         val start = startOf(run)
         val decimals = run[0].row.decimals
         val seen = ArrayList<Seen>()
         val from = running.first().t
         val to = min(running.last().t + 2.0, from + LEARN_SEC)
+        val before = done.toList()
+        done.add(from..to)
         for (k in 0..((to - from) * LEARN_RATE).toInt()) {
             val t = from + k.toDouble() / LEARN_RATE
+            if (before.any { t in it }) continue
             val p = areaFrame(t, area) ?: continue
             areaReads++
             for (r in areaRows(p, height, dark, fonts, 0.4f)) if (r.decimals == decimals) seen.add(Seen(t, r))
