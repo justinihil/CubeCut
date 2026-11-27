@@ -53,6 +53,24 @@ import kotlin.math.abs
 /** What came of it: [scan] and [numbers] (the box around the timer's numbers) when it was found; else [choices] = the numbers to ask about (empty = no timer found). */
 class AutoScanResult(val scan: ScanResult?, val numbers: Area?, val choices: List<TimerChoice>)
 
+/**
+ * (4.0) How one Find solves went, for the progress panel's *Copy report* (owner, 2026-11-27: why one video takes longer than another).
+ * Filled in by [analyzeByItself] as it goes, so a scan that stops halfway still tells how far it got.
+ */
+class ScanTiming {
+    var timer = "not found"             // which kind of timer, in words
+    var source = ""                     // GraySource.note()
+    var frameSec = 0.0
+    var size = ""                       // "1080 x 1920"
+    var findSec = 0.0
+    var followSec = 0.0                 // seven segments only
+    var scanSec = 0.0
+    var findPictures = ""               // FrameStats.since for each part
+    var followPictures = ""
+    var scanPictures = ""
+    var pictures = 0                    // pictures asked for in all
+}
+
 /** Find solves can't go on by itself: the timer wasn't found, or the user has to choose. [message] is the status line. */
 class NeedsUser(message: String) : Exception(message)
 
@@ -69,17 +87,36 @@ fun frameTimeOf(source: GraySource, t: Double): Double = source.lastFrameSec().t
  * Blocking; run it on Dispatchers.Default. [isCancelled] is polled; true stops it with [ScanCancelled].
  */
 fun analyzeByItself(
-    context: Context, uri: Uri, durationMs: Long, near: Area?, onProgress: (Boolean, Int) -> Unit, isCancelled: () -> Boolean
+    context: Context, uri: Uri, durationMs: Long, near: Area?, onProgress: (Boolean, Int) -> Unit, isCancelled: () -> Boolean,
+    timing: ScanTiming = ScanTiming()
 ): AutoScanResult {
     val durationSec = durationMs / 1000.0
     val fonts = loadDigitFonts(context)
     val frameSec = videoFrameSec(context, uri)
+    timing.frameSec = frameSec
     val source = openFrameSource(context, uri, durationMs)
+    var partStart = System.nanoTime()
+    var partStats = source.stats()?.copy()
+    /** The seconds since the last part began, and what the pictures took in it; the next part begins now. */
+    fun part(): Pair<Double, String> {
+        val now = System.nanoTime()
+        val sec = (now - partStart) / 1e9
+        val pics = source.stats()?.let { s -> partStats?.let { s.since(it) } } ?: ""
+        partStart = now
+        partStats = source.stats()?.copy()
+        return Pair(sec, pics)
+    }
     try {
         // (4.0) a scan of a found timer asks for its area only, which the decoder makes much quicker than the whole picture
         val pic = object : PicAt {
-            override fun at(t: Double): GrayPic? = source.gray(t)
-            override fun area(t: Double, area: Area): AreaPic? = source.grayArea(t, area)
+            override fun at(t: Double): GrayPic? = source.gray(t).also { p ->
+                timing.pictures++
+                if (p != null && timing.size.isEmpty()) timing.size = "${p.w} x ${p.h}"
+            }
+            override fun area(t: Double, area: Area): AreaPic? = source.grayArea(t, area).also { p ->
+                timing.pictures++
+                if (p != null && timing.size.isEmpty()) timing.size = "${p.frameW} x ${p.frameH}"
+            }
         }
         var segments: FoundSegments? = null
         var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
@@ -91,31 +128,52 @@ fun analyzeByItself(
         }
         // (a number the user chose is a solid one)
         val found = findTimer(pic, durationSec, fonts, near, { onProgress(true, it / 10) }, isCancelled, if (near == null) otherKind else null)
+        part().let { (sec, pics) -> timing.findSec = sec; timing.findPictures = pics }
         segments?.let { s ->
+            timing.timer = "seven segments (QiYi-like)"
             val timer = SegmentTracker.follow(s, pic, durationSec, { onProgress(true, 10 + it / 10) }, isCancelled)
+            part().let { (sec, pics) -> timing.followSec = sec; timing.followPictures = pics }
+            // (4.0) the half-second steps may take a nearby frame of the video's lower layers (GraySource.setNear)
+            source.setNear(true)
             val scan = scanSegments(
-                timer, durationSec, frameSec, { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 20 + 80 * done / total) }, isCancelled
+                timer, durationSec, frameSec, { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 20 + 80 * done / total) }, isCancelled,
+                { source.setNear(!it) }
             )
+            source.setNear(false)
+            part().let { (sec, pics) -> timing.scanSec = sec; timing.scanPictures = pics }
             return AutoScanResult(scan, timer.numbers(), emptyList())
         }
         // last: a seven-segment timer that shows only its final times (csTimer's "digital" fonts with "solve"), from what the search above read
         if (found.timer == null && found.choices.isEmpty()) findHeldSegments(segmentTimes, pic)?.let { grid ->
+            timing.timer = "seven segments, by its final times"
+            part()
             val scan = scanHeldTimer(
                 { t -> pic.at(t)?.let { HeldShown(heldSegmentRow(grid, it)?.first?.text, null) } }, durationSec, frameSec,
                 { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
             )
+            part().let { (sec, pics) -> timing.scanSec = sec; timing.scanPictures = pics }
             return AutoScanResult(scan, grid.box(grid.decimals + 2), emptyList())
         }
+        if (found.timer == null && found.choices.isNotEmpty()) timing.timer = "two numbers ran: asks which one"
         val timer = found.timer ?: return AutoScanResult(null, null, found.choices)
+        timing.timer = if (timer.held) "solid digits, by its final times" else "solid digits, running time with ${timer.runningDecimals} decimal" +
+                (if (timer.runningDecimals == 1) "" else "s") + ", ${timer.digitHeight.toInt()} px"
+        // (a timer found by its final times is read closely in time, so it gets the exact frames)
         val scan = if (timer.held) scanHeldTimer(
             { t -> pic.area(t, timer.area)?.let { timer.readHeld(it) } }, durationSec, frameSec,
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
-        ) else scanFoundTimer(
-            { t -> pic.area(t, timer.area)?.let { timer.read(it)?.text } }, durationSec, timer.runningDecimals, timer.stoppedDecimals, frameSec,
-            { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
-        )
+        ) else {
+            source.setNear(true)
+            scanFoundTimer(
+                { t -> pic.area(t, timer.area)?.let { timer.read(it)?.text } }, durationSec, timer.runningDecimals, timer.stoppedDecimals, frameSec,
+                { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled,
+                exact = { source.setNear(!it) }
+            ).also { source.setNear(false) }
+        }
+        part().let { (sec, pics) -> timing.scanSec = sec; timing.scanPictures = pics }
         return AutoScanResult(scan, timer.numbers, emptyList())
     } finally {
+        timing.source = source.note()
         source.close()
     }
 }

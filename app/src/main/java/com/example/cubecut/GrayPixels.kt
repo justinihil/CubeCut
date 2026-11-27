@@ -174,6 +174,45 @@ fun isDroppable(head: ByteArray, size: Int, codec: FrameCodec, topLayer: Int): B
     return false
 }
 
+/** The temporal layer of an HEVC frame (its first picture NAL), from the first [size] bytes, or -1 if it can't be told. */
+fun hevcLayerOf(head: ByteArray, size: Int): Int {
+    for (s in nalHeaders(head, size)) {
+        if (s + 1 >= size) return -1
+        val type = (head[s].toInt() shr 1) and 0x3F
+        if (type >= 32) continue
+        return (head[s + 1].toInt() and 7) - 1
+    }
+    return -1
+}
+
+/** Is this HEVC frame an IDR picture (NAL type 19 or 20), after which no frame refers to anything before it? */
+fun isHevcIdr(head: ByteArray, size: Int): Boolean {
+    for (s in nalHeaders(head, size)) {
+        if (s >= size) return false
+        val type = (head[s].toInt() shr 1) and 0x3F
+        if (type >= 32) continue
+        return type == 19 || type == 20
+    }
+    return false
+}
+
+/**
+ * (4.0) For reads that may take a nearby frame (the scan's half-second steps): the lowest temporal layer whose frames, with those of
+ * the layers below, are never more than [maxGapUs] apart in [samples] ((time, layer), some seconds of the video). A frame of that layer
+ * is decoded from frames of that layer and below only, so the frames above can be left out. Gives (layer, how far a read may be from the
+ * time asked for: half the largest gap), or (-1, 0) when no layer below [topLayer] is close enough, or a layer can't be told.
+ */
+fun nearLayerFor(samples: List<Pair<Long, Int>>, topLayer: Int, maxGapUs: Long): Pair<Int, Long> {
+    if (samples.size < 16 || samples.any { it.second < 0 }) return Pair(-1, 0L)
+    for (layer in 0 until topLayer) {
+        val times = samples.filter { it.second <= layer }.map { it.first }.sorted()
+        if (times.size < 2) continue
+        val gap = times.zipWithNext().maxOf { (a, b) -> b - a }
+        if (gap <= maxGapUs) return Pair(layer, gap / 2 + 1_000L)
+    }
+    return Pair(-1, 0L)
+}
+
 /**
  * Where each NAL unit's header starts in the first [size] bytes of [d]: after a 00 00 01 start code (00 00 00 01 too), or, when [d]
  * doesn't begin with one, after each 4-byte length. Lazy, so a caller that stops at the first picture NAL reads no further.

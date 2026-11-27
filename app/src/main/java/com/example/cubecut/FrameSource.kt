@@ -73,6 +73,16 @@ interface GraySource {
 
     /** (4.0) Where the time for pictures went, for the debug Scan report; null if this source doesn't count. */
     fun stats(): FrameStats? = null
+
+    /**
+     * (4.0) [on]: from now on a picture may be a frame up to about a frame or two from the time asked for, if that is quicker
+     * (CodecSource: the video's lower layers only). For the scan's half-second steps; its frame-by-frame search switches it off.
+     * [lastFrameSec] always tells the real time.
+     */
+    fun setNear(on: Boolean) {}
+
+    /** (4.0) Which source this is, and why (debug Scan report). */
+    fun note(): String = ""
     fun close()
 }
 
@@ -165,6 +175,12 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
     private val head = ByteArray(SAMPLE_HEAD)
     private val recentIn = java.util.TreeSet<Long>()          // (4.0) the last input times, to know one frame's length (see noteInput)
     private val recentOrder = ArrayDeque<Long>()
+    private var format: MediaFormat? = null
+    private var near = false                      // (4.0) setNear: a read may take the nearest frame of the lower layers
+    private var nearLayer = -1                    // ...the highest layer decoded then (-1 = no such layers, near reads are exact)
+    private var nearSlackUs = 0L                  // ...and how far such a frame may be from the time asked for
+    private var nearChecked = false
+    private var holes = false                     // frames other frames need were left out since the last IDR: an exact read must jump
 
     /** (4.0) Where the time went (debug Scan report). */
     val stats = FrameStats()
@@ -188,6 +204,7 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
                 }
             }
             if (format == null) throw IOException("no video track")
+            this.format = format
             val mime = format.getString(MediaFormat.KEY_MIME)!!
             if (LEAVE_OUT_FRAMES) {
                 kind = when (mime) {
@@ -217,6 +234,51 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
 
     override fun stats(): FrameStats = stats
 
+    override fun setNear(on: Boolean) {
+        if (!STEPS_NEAR) return
+        if (on && !nearChecked) findNearLayer()
+        near = on
+    }
+
+    /** "turned 90°; steps read layers 0-1 of 0-3 (frames up to 33 ms from the time)", for the report. */
+    fun describe(): String = "turned ${rotation}°" + when {
+        !nearChecked -> ""
+        nearLayer < 0 -> "; steps read every frame"
+        else -> "; steps read layers 0-$nearLayer of 0-$topLayer (up to ${nearSlackUs / 1000} ms from the time)"
+    }
+
+    private fun nearOn() = near && nearLayer >= 0
+
+    /** (4.0) Which layers the half-second steps need (nearLayerFor), from a few seconds in the middle of the video. */
+    private fun findNearLayer() {
+        nearChecked = true
+        if (kind != FrameCodec.HEVC || topLayer <= 0) return
+        try {
+            val f = format ?: return
+            val durUs = if (f.containsKey(MediaFormat.KEY_DURATION)) f.getLong(MediaFormat.KEY_DURATION) else 0L
+            val maxIn = if (f.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) f.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) else 0
+            val buf = java.nio.ByteBuffer.allocate(if (maxIn > 0) maxIn else 8 shl 20)
+            probe.seekTo(durUs / 2, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            val samples = ArrayList<Pair<Long, Int>>()
+            val h = ByteArray(SAMPLE_HEAD)
+            while (samples.size < NEAR_SAMPLES) {
+                buf.clear()
+                val size = probe.readSampleData(buf, 0)
+                if (size < 0) break
+                val n = min(size, SAMPLE_HEAD)
+                for (k in 0 until n) h[k] = buf.get(k)
+                samples.add(Pair(probe.sampleTime, hevcLayerOf(h, n)))
+                probe.advance()
+            }
+            val (layer, slack) = nearLayerFor(samples, topLayer, NEAR_GAP_US)
+            nearLayer = layer
+            nearSlackUs = slack
+        } catch (e: Exception) {
+            nearLayer = -1
+        }
+        Log.d("CubeCut", "Frame source: ${describe()}")
+    }
+
     /** The picture at second [t] exactly as the decoder makes it (not turned). */
     fun rawGray(t: Double): GrayPic? = picture(t) { c, o -> planePart(c, o, 0, null).pic }
 
@@ -242,12 +304,15 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         val c = codec ?: throw IllegalStateException("closed")
         // the usual case: the next picture is just ahead of the decoder. Then no keyframe lookup is needed (a keyframe at or before
         // the target is never more than SEEK_PAYS_OFF_US ahead of the decoder), so skip the probe seek.
-        if (posUs >= 0 && targetUs >= posUs - frameDurUs / 2 && targetUs - posUs <= SEEK_PAYS_OFF_US) return
+        // (4.0) an exact read after frames other frames need were left out: decode again from a keyframe, with every layer
+        val refill = holes && !nearOn()
+        if (!refill && posUs >= 0 && targetUs >= posUs - frameDurUs / 2 && targetUs - posUs <= SEEK_PAYS_OFF_US) return
         probe.seekTo(targetUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         val keyUs = max0(probe.sampleTime)
-        val mustSeek = posUs < 0 || targetUs < posUs - frameDurUs / 2 || keyUs - posUs > SEEK_PAYS_OFF_US
+        val mustSeek = refill || posUs < 0 || targetUs < posUs - frameDurUs / 2 || keyUs - posUs > SEEK_PAYS_OFF_US
         if (mustSeek) {
             stats.jumps++
+            holes = false
             extractor.seekTo(targetUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             c.flush()
             inputDone = false
@@ -282,7 +347,19 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
                     }
                     val sampleUs = extractor.sampleTime
                     noteInput(sampleUs)
-                    if (kind != FrameCodec.OTHER && sampleUs < targetUs - frameDurUs / 2) {
+                    if (nearOn()) {
+                        // (4.0) a step of the scan: only the lower layers are decoded; the frame handed out is the nearest of those
+                        val n = min(size, SAMPLE_HEAD)
+                        for (k in 0 until n) head[k] = buf.get(k)
+                        if (isHevcIdr(head, n)) holes = false
+                        val layer = hevcLayerOf(head, n)
+                        if (layer > nearLayer) {
+                            if (!isDroppable(head, n, kind, topLayer)) holes = true
+                            stats.dropped++
+                            extractor.advance()
+                            continue
+                        }
+                    } else if (kind != FrameCodec.OTHER && sampleUs < targetUs - frameDurUs / 2) {
                         val n = min(size, SAMPLE_HEAD)
                         for (k in 0 until n) head[k] = buf.get(k)
                         if (isDroppable(head, n, kind, topLayer)) {
@@ -308,7 +385,7 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
                     if (lastPts >= 0 && pts > lastPts) frameDurUs = min(frameDurUs, max(1_000L, pts - lastPts))
                     lastPts = pts
                     posUs = pts
-                    if (pts >= targetUs - frameDurUs / 2) {
+                    if (pts >= targetUs - (if (nearOn()) nearSlackUs else frameDurUs / 2)) {
                         try {
                             return make(c, o)
                         } finally {
@@ -432,6 +509,22 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         const val LEAVE_OUT_FRAMES = true
 
         /**
+         * (4.0) A half-second step of the scan may take the nearest frame of the video's lower layers, when those come at least this
+         * often (Samsung, 60 fps: every 4th frame, 67 ms; 30 fps: every 2nd): at most a frame or two from the time asked for, and a
+         * half or more of the frames need no decoding. Larger would save more, but the steps would land further off.
+         */
+        const val NEAR_GAP_US = 70_000L
+
+        /** ...worked out from this many frames in the middle of the video. */
+        const val NEAR_SAMPLES = 240
+
+        /**
+         * (4.0) Off for now (2026-11-27): with every step 2 frames late, QiYi 01 got one false solve (12.898, flagged) and with every
+         * step 2 frames early one flowtimer cut moved 2 frames (ReferenceVideoTest, CUBECUT_REF_NEAR). On when that is solved.
+         */
+        const val STEPS_NEAR = false
+
+        /**
          * 16..235 stretched to 0..255, rounded to the nearest, as OpenCV's convertTo did ((y - 16) * 255 / 219 never lands on a half,
          * so the rounding rule doesn't matter).
          */
@@ -515,14 +608,16 @@ private fun similarity(a: GrayPic, b: GrayPic): Double {
 
 /**
  * Compares the fast picture with the old one at a moment where the picture has some detail, tries the four rotations,
- * and keeps the one that matches. Returns false if nothing matches well (then the fast path is not used).
+ * and keeps the one that matches. Returns null when one matches, else why not (then the fast path is not used).
+ * (4.0) A moment that doesn't match (the two sources can give neighbouring frames, which differ when hands move fast) no longer
+ * decides alone: the next of the three moments is tried.
  */
-private fun calibrate(fast: CodecSource, slow: RetrieverSource, durationSec: Double): Boolean {
+private fun calibrate(fast: CodecSource, slow: RetrieverSource, durationSec: Double): String? {
+    val tried = ArrayList<String>()
     for (frac in doubleArrayOf(0.5, 0.3, 0.7)) {
         val t = durationSec * frac
         val ref = slow.gray(t) ?: continue
-        val raw = fast.rawGray(t)
-        if (raw == null) return false
+        val raw = fast.rawGray(t) ?: return "no fast picture at ${videoPlace(t)}"
         if (stdDev(ref) < CHECK_DETAIL) continue          // an almost flat picture can't tell the rotations apart
         var best = -1.0
         var bestDeg = 0
@@ -538,11 +633,11 @@ private fun calibrate(fast: CodecSource, slow: RetrieverSource, durationSec: Dou
         Log.d("CubeCut", "Fast frame source check: best match $best at rotation $bestDeg")
         if (best >= CHECK_MATCH) {
             fast.rotation = bestDeg
-            return true
+            return null
         }
-        return false
+        tried.add("${"%.2f".format(best)} at ${videoPlace(t)}")
     }
-    return false
+    return if (tried.isEmpty()) "no picture with enough detail to compare" else "best match " + tried.joinToString(", ")
 }
 
 /** Fast source with the old one as a safety net: if the decoder ever fails, every later read uses the old way. */
@@ -550,17 +645,21 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
     private val slow = RetrieverSource(context, uri, durationMs)
     private var fast: CodecSource? = null
     private var counted: FrameStats? = null       // the fast source's counters (kept after a fall back, for the report)
+    private var why = ""                          // (4.0) why the slow source is used, for the report
+    private var slowFrom = -1.0                   // ...from which second of the video on (-1 = from the start, or not at all)
 
     init {
         var c: CodecSource? = null
         try {
             c = CodecSource(context, uri)
-            if (calibrate(c, slow, durationMs / 1000.0)) {
+            val check = calibrate(c, slow, durationMs / 1000.0)
+            if (check == null) {
                 fast = c
                 counted = c.stats
                 Log.d("CubeCut", "Frame source: MediaCodec (fast), rotation ${c.rotation}")
             } else {
                 c.close()
+                why = "the fast picture did not match the slow one ($check)"
                 Log.d("CubeCut", "Frame source: MediaMetadataRetriever (the fast picture did not match)")
             }
         } catch (e: Exception) {
@@ -569,6 +668,7 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
             } catch (e2: Exception) {
             }
             fast = null
+            why = "the decoder failed to start: ${e.message ?: e.javaClass.simpleName}"
             Log.d("CubeCut", "Frame source: MediaMetadataRetriever (fast path failed: ${e.message})")
         }
     }
@@ -580,15 +680,34 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
             try {
                 return f.gray(t)
             } catch (e: Exception) {
-                Log.d("CubeCut", "Frame source: fast path failed at ${t}s, back to MediaMetadataRetriever: ${e.message}")
-                try {
-                    f.close()
-                } catch (e2: Exception) {
-                }
-                fast = null
+                fellBack(f, t, e)
             }
         }
         return slow.gray(t)
+    }
+
+    private fun fellBack(f: CodecSource, t: Double, e: Exception) {
+        Log.d("CubeCut", "Frame source: fast path failed at ${t}s, back to MediaMetadataRetriever: ${e.message}")
+        try {
+            f.close()
+        } catch (e2: Exception) {
+        }
+        fast = null
+        slowFrom = t
+        why = "the decoder failed: ${e.message ?: e.javaClass.simpleName}"
+    }
+
+    override fun setNear(on: Boolean) {
+        fast?.setNear(on)
+    }
+
+    override fun note(): String {
+        val f = fast
+        return when {
+            f != null -> "fast (MediaCodec), " + f.describe()
+            slowFrom >= 0 -> "SLOW (MediaMetadataRetriever) from ${videoPlace(slowFrom)} on: $why"
+            else -> "SLOW (MediaMetadataRetriever): $why"
+        }
     }
 
     override fun grayArea(t: Double, area: Area): AreaPic? {
@@ -598,12 +717,7 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
             try {
                 return f.grayArea(t, area)
             } catch (e: Exception) {
-                Log.d("CubeCut", "Frame source: fast path failed at ${t}s, back to MediaMetadataRetriever: ${e.message}")
-                try {
-                    f.close()
-                } catch (e2: Exception) {
-                }
-                fast = null
+                fellBack(f, t, e)
             }
         }
         return slow.gray(t)?.let { AreaPic.of(it, area) }

@@ -137,21 +137,24 @@ private fun middle(v: List<Double>): Double {
  * [tenths]: for a display whose last digits blur while it runs, the seconds it shows to the tenth, or null; its running times are known by
  * them, and a time that seems to stay needs another look.
  * [onProgress] gets (percent, 100). Throws [ScanCancelled] when [isCancelled] says so.
+ * (4.0) [exact] is told true while the scan goes frame by frame (the cut, and whether the timer ran up to it) and false after: in
+ * between, a half-second step may be a nearby frame (GraySource.setNear), and [frameTime] tells its real time.
  */
 fun scanFoundTimer(
     read: (Double) -> String?, durationSec: Double, runningDecimals: Int, stoppedDecimals: Int, frameSec: Double,
     frameTime: (Double) -> Double = { it }, onProgress: (Int, Int) -> Unit = { _, _ -> }, isCancelled: () -> Boolean = { false },
-    tenths: ((Double) -> Double?)? = null
-): ScanResult = FinderScan(read, durationSec, runningDecimals, stoppedDecimals, frameSec, frameTime, onProgress, isCancelled, tenths).run()
+    tenths: ((Double) -> Double?)? = null, exact: (Boolean) -> Unit = {}
+): ScanResult = FinderScan(read, durationSec, runningDecimals, stoppedDecimals, frameSec, frameTime, onProgress, isCancelled, tenths, exact).run()
 
 private class FinderScan(
     private val readAt: (Double) -> String?, private val duration: Double, private val runningDecimals: Int, private val stoppedDecimals: Int,
     private val frameSec: Double, private val frameTime: (Double) -> Double, private val onProgress: (Int, Int) -> Unit, private val isCancelled: () -> Boolean,
-    private val tenths: ((Double) -> Double?)?
+    private val tenths: ((Double) -> Double?)?, private val exact: (Boolean) -> Unit
 ) {
     private val stops = ArrayList<Stop>()
     private val running = ArrayList<TimeAt>()
     private val memo = HashMap<Long, String?>()
+    private val shownAt = HashMap<Long, Double>()       // (4.0) the real time of the frame each read looked at
     private val seen = ArrayList<SeenAt>()
     private var total = 0
     private var readable = 0
@@ -160,7 +163,25 @@ private class FinderScan(
         if (isCancelled()) throw ScanCancelled()
         val key = Math.round(t * 1000)
         if (memo.containsKey(key)) return memo[key]
-        return readAt(t).also { memo[key] = it }
+        return readAt(t).also { memo[key] = it; shownAt[key] = frameTime(t) }
+    }
+
+    /**
+     * (4.0) When the picture read for second [t] was really shown: a half-second step may have taken a frame or two away. The clock
+     * (start = time of the picture - time on the display) goes by it.
+     */
+    private fun shownTime(t: Double): Double = shownAt[Math.round(t * 1000)]?.takeIf { abs(it - t) > 0.75 * frameSec } ?: t
+    // (only when the step really landed on another frame: an exact step is the second asked for, as before 4.0, so that the rules
+    // with a limit, such as a reset within 1.5 s, come out the same; a 4 ms difference once turned a "reset" hint into "ran")
+
+    /** (4.0) [block] reads frame by frame: every picture exactly the frame asked for. */
+    private inline fun <T> frameByFrame(block: () -> T): T {
+        exact(true)
+        try {
+            return block()
+        } finally {
+            exact(false)
+        }
     }
 
     /** A read that counts for how readable the video is. */
@@ -211,7 +232,7 @@ private class FinderScan(
             val v = counted(t)
             if (v == null) {
                 tenths?.invoke(t)?.let {
-                    running.add(TimeAt(t, "", it))
+                    running.add(TimeAt(shownTime(t), "", it))
                     seen[seen.size - 1] = SeenAt(t, null, true)
                 }
                 t += SCAN_STEP
@@ -219,7 +240,7 @@ private class FinderScan(
             }
             if (isZero(v)) { confirmed = null; recent.clear(); t += ZERO_STEP; continue }
             if (stoppedDecimals != runningDecimals && !isStopped(v)) {
-                running.add(TimeAt(t, v))
+                running.add(TimeAt(shownTime(t), v))
                 confirmed = null
                 recent.clear()
                 t += SCAN_STEP
@@ -231,7 +252,7 @@ private class FinderScan(
             if (recent.size > RECENT_N) recent.removeAt(0)
             val held = recent.takeLastWhile { it.text == v && it.t >= t - AGREE_WINDOW_SEC }
             if (held.size < MIN_AGREE) {
-                if (stoppedDecimals == runningDecimals) running.add(TimeAt(t, v, tenths?.invoke(t) ?: shownSeconds(v)))
+                if (stoppedDecimals == runningDecimals) running.add(TimeAt(shownTime(t), v, tenths?.invoke(t) ?: shownSeconds(v)))
                 t += SCAN_STEP
                 continue
             }
@@ -244,7 +265,7 @@ private class FinderScan(
                 lt += SCAN_STEP
             }
             if (stoppedDecimals == runningDecimals && goesOnRising(held, votes)) {
-                running.addAll(votes.filter { it.text != v })
+                running.addAll(votes.filter { it.text != v }.map { TimeAt(shownTime(it.t), it.text, it.seconds) })
                 recent.clear()
                 t += SCAN_STEP
                 continue
@@ -297,11 +318,13 @@ private class FinderScan(
         val gapFrom = if (!other.isNaN()) other else max(lowest, earliest - 0.6)
         val frames = ArrayList<TimeAt>()
         val n = ((earliest - gapFrom) / frameSec).toInt() + 3
-        for (k in -1..n) {
-            val ft = gapFrom + k * frameSec
-            if (ft < 0 || ft > earliest + 2 * frameSec) continue
-            if (isCancelled()) throw ScanCancelled()
-            readAt(ft)?.let { frames.add(TimeAt(frameTime(ft), it)) }
+        frameByFrame {
+            for (k in -1..n) {
+                val ft = gapFrom + k * frameSec
+                if (ft < 0 || ft > earliest + 2 * frameSec) continue
+                if (isCancelled()) throw ScanCancelled()
+                readAt(ft)?.let { frames.add(TimeAt(frameTime(ft), it)) }
+            }
         }
         val shows = frames.filter { it.text == time }
         if (shows.isEmpty()) return Pair(earliest, !other.isNaN())
@@ -344,7 +367,9 @@ private class FinderScan(
     }
 
     /** Was the timer seen running up to the first frame of [s]? */
-    private fun seenRunningUntil(s: Stop): Boolean {
+    private fun seenRunningUntil(s: Stop): Boolean = frameByFrame { seenRunningUntilFrames(s) }
+
+    private fun seenRunningUntilFrames(s: Stop): Boolean {
         val n = (SEEN_RUNNING_SEC / frameSec).toInt()
         for (k in 1..n) {
             val t = s.sec - k * frameSec

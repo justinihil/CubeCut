@@ -72,6 +72,12 @@ class ScanJob(val footageId: Long, val uri: Uri, val durationMs: Long, title: St
     var finding by mutableStateOf(false)        // true while it looks for the timer, false while it reads it along the video
     var outcome by mutableStateOf<ScanOutcome?>(null)
 
+    /** (4.0) For the progress panel's Copy report: when it was asked for, began and ended (ms), and where its time went. */
+    val queuedMs = System.currentTimeMillis()
+    var startedMs = 0L
+    var endedMs = 0L
+    var timing: ScanTiming? = null
+
     @Volatile
     var cancelAsked = false
 }
@@ -224,6 +230,7 @@ object AnalysisQueue {
                 while (true) {
                     val job = jobs.firstOrNull { it.state == ScanState.WAITING } ?: break
                     scanOne(app, job)
+                    job.endedMs = System.currentTimeMillis()
                     // written before `finished` changes, so a screen that reloads then sees the new mark
                     val state = markOf(job.state)
                     withContext(Dispatchers.IO) { try { SessionStore.setScanState(app, job.footageId, state) } catch (e: Exception) { } }
@@ -251,6 +258,9 @@ object AnalysisQueue {
         job.percent = 0
         job.finding = true
         val started = System.currentTimeMillis()
+        job.startedMs = started
+        val timing = ScanTiming()
+        job.timing = timing
         try {
             val auto = withContext(Dispatchers.Default) {
                 analyzeByItself(
@@ -261,7 +271,8 @@ object AnalysisQueue {
                         val p = batchProgress()
                         AnalysisService.update(app, p.percent, 100, batchLabel(p))
                     },
-                    isCancelled = { job.cancelAsked }
+                    isCancelled = { job.cancelAsked },
+                    timing = timing
                 )
             }
             if (auto.choices.isNotEmpty()) {

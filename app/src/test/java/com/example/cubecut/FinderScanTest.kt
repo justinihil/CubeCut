@@ -176,7 +176,7 @@ class FinderScanTest {
     }
 
     private fun scanBlurred(read: (Double) -> Pair<String?, Double?>) =
-        scanFoundTimer({ read(it).first }, duration, 3, 3, frame) { read(it).second }.solves
+        scanFoundTimer({ read(it).first }, duration, 3, 3, frame, tenths = { read(it).second }).solves
 
     @Test
     fun blurredDecimals_runningTimesComeFromTheTenths() {
@@ -249,6 +249,29 @@ class FinderScanTest {
             fail("not cancelled")
         } catch (e: ScanCancelled) {
             // as it should
+        }
+    }
+
+    /**
+     * (4.0) With GraySource.setNear the half-second steps land on a frame up to two frames away (the video's lower layers); only the
+     * frame-by-frame searches get the exact frame. The solves and their cuts must stay the same, and the clock must still confirm them.
+     */
+    @Test
+    fun nearbyFramesForTheSteps_giveTheSameCuts() {
+        for (shift in intArrayOf(-2, -1, 1, 2)) {
+            var exact = false
+            var last = 0.0
+            val found = scanFoundTimer(
+                { t ->
+                    // a step: the nearest frame of the lower layers, here [shift] frames away; frame by frame: that frame
+                    val at = if (exact) t else t + shift * frame
+                    last = at
+                    shown(at)
+                },
+                duration, 1, 2, frame, { last }, exact = { exact = it }
+            ).solves
+            assertAllFound(found)
+            for (f in found) assertEquals("shift $shift", "", f.note)
         }
     }
 }

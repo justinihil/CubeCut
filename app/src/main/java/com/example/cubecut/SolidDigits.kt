@@ -90,8 +90,17 @@ class TimeRow(
     fun withoutShapes(): TimeRow = TimeRow(text, likeness, height, left, top, right, bottom, dark, block, emptyList())
 }
 
-/** A grey picture: one byte per pixel, row by row. */
-class GrayPic(val w: Int, val h: Int, val d: ByteArray) {
+/**
+ * A grey picture: one byte per pixel, row by row.
+ * (4.0) It can also be a WINDOW onto a bigger picture, for the seven-segment tracker only: the [w] x [h] pixels in [d] then lie at
+ * ([ox], [oy]) of a [fw] x [fh] frame. Only SegmentGrid's `between` knows that; it notes in [outside] when it was asked for a pixel the
+ * window doesn't have, and the tracker then reads the whole picture instead, so the result is always the same as from the whole picture.
+ */
+class GrayPic(val w: Int, val h: Int, val d: ByteArray, val ox: Int = 0, val oy: Int = 0, val fw: Int = w, val fh: Int = h) {
+    /** (4.0) A window ([ox] ...) was asked for a pixel outside it (see SegmentGrid's `between`). */
+    var outside = false
+    val isWindow: Boolean get() = ox != 0 || oy != 0 || fw != w || fh != h
+
     /** The part from ([x0], [y0]) up to, not including, ([x1], [y1]). */
     fun crop(x0: Int, y0: Int, x1: Int, y1: Int): GrayPic {
         val cw = x1 - x0

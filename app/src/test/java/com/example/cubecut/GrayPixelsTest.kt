@@ -127,6 +127,37 @@ class GrayPixelsTest {
     }
 
     @Test
+    fun hevcLayersAndIdr_areRead() {
+        assertEquals(2, hevcLayerOf(hevc(3, 2), 9))
+        assertEquals(0, hevcLayerOf(nal(35 shl 1, 1, 0x10) + hevc(20, 0), 14))
+        assertEquals(-1, hevcLayerOf(nal(39 shl 1, 1, 5), 7))
+        assertTrue(isHevcIdr(hevc(20, 0), 9))
+        assertTrue(isHevcIdr(hevc(19, 0), 9))
+        assertFalse(isHevcIdr(hevc(21, 0), 9))                // CRA: frames after it may refer to frames before it
+        assertFalse(isHevcIdr(hevc(1, 0), 9))
+    }
+
+    /** Samsung's layers, as measured in the reference videos: a group of 8 frames is 0 3 2 3 1 3 2 3. */
+    private fun samsung(fps: Int, n: Int): List<Pair<Long, Int>> {
+        val pattern = intArrayOf(0, 3, 2, 3, 1, 3, 2, 3)
+        return List(n) { Pair(it * 1_000_000L / fps, pattern[it % 8]) }
+    }
+
+    @Test
+    fun nearLayer_isTheLowestOneCloseEnough() {
+        // 60 fps: layers 0-1 are every 4th frame (67 ms), so a step lands at most 2 frames away
+        val (l60, slack60) = nearLayerFor(samsung(60, 240), 3, 70_000L)
+        assertEquals(1, l60)
+        assertEquals(34_333L, slack60)
+        // 30 fps: every 4th frame would be 133 ms, so layers 0-2 (every 2nd frame)
+        assertEquals(2, nearLayerFor(samsung(30, 240), 3, 70_000L).first)
+        // only the top layer would do: nothing to gain
+        assertEquals(-1, nearLayerFor(List(240) { Pair(it * 100_000L, it % 2) }, 1, 70_000L).first)
+        // a frame whose layer can't be told: no near reads
+        assertEquals(-1, nearLayerFor(samsung(60, 240).mapIndexed { i, p -> if (i == 5) Pair(p.first, -1) else p }, 3, 70_000L).first)
+    }
+
+    @Test
     fun avc_nonReferenceSlicesAreLeftOut() {
         fun drop(b: Int) = nal(b, 0x88, 0x84).let { isDroppable(it, it.size, FrameCodec.AVC, -1) }
         assertTrue(drop(0x01))                              // nal_ref_idc 0, non-IDR slice

@@ -67,6 +67,10 @@ class SegmentTracker private constructor(private val pic: PicAt, private val dur
         private set
     var farLooks = 0
         private set
+
+    /** (4.0) How often a look reached past the part of the picture it was given, so the whole picture was read (debug report). */
+    var wholeAgain = 0
+        private set
     val decimals: Int get() = grid.decimals
     val grid: SegmentGrid get() = places.values.first()
 
@@ -95,32 +99,56 @@ class SegmentTracker private constructor(private val pic: PicAt, private val dur
     }
 
     private fun readAt(t: Double): SegmentShown {
-        val g = frame(t) ?: return NOTHING
-        reads++
         val before = places.floorEntry(t)?.value
         val after = places.ceilingEntry(t)?.value
         val near = if (before != null) listOfNotNull(before, after) else listOf(after!!)
+        // (4.0) only the part of the picture the looks below can reach (much quicker to make); if they reached further after all,
+        // the whole picture is read, so the result is the same either way
+        val reach = near.map { it.lookArea() }
+        val part = pic.area(t, Area(max(0, reach.minOf { it.left }), max(0, reach.minOf { it.top }), reach.maxOf { it.right }, reach.maxOf { it.bottom }))
+        if (isCancelled()) throw ScanCancelled()
+        val window = part?.let { GrayPic(it.pic.w, it.pic.h, it.pic.d, it.area.left, it.area.top, it.frameW, it.frameH) }
+        var look = window?.let { looked(t, it, near) }
+        if (look == null || window?.outside == true) {
+            if (window != null) wholeAgain++
+            val g = frame(t) ?: return NOTHING
+            look = looked(t, g, near)
+        }
+        reads++
+        if (look.triedFar) lastFar = t
+        if (look.lookedFar) farLooks++
+        if (look.triedFar) inVain++
+        if (look.counts) { places[t] = look.place; inVain = 0 }
+        return look.shown
+    }
+
+    /** What one look at picture [g] found, before anything is remembered (a look in a window that was too small is thrown away). */
+    private class Look(val place: SegmentGrid, val counts: Boolean, val shown: SegmentShown, val triedFar: Boolean, val lookedFar: Boolean)
+
+    private fun looked(t: Double, g: GrayPic, near: List<SegmentGrid>): Look {
         var (place, fits) = near[0].located(g, 3)
         if (fits < LOOK_FURTHER) for (p in near.distinct()) {
             val (p2, f2) = p.located(g, 10)
             if (f2 > fits + BETTER) { place = p2; fits = f2 }
         }
+        var triedFar = false
+        var lookedFar = false
         if (fits < PLACE_FITS && abs(t - lastFar) >= FAR_STEP) {
-            lastFar = t
+            triedFar = true
             if (inVain < 4 || inVain % 4 == 0) {
-                farLooks++
+                lookedFar = true
                 for (p in near.distinct()) {
                     val (p2, f2) = p.foundAgain(g)
                     if (f2 > fits + BETTER) { place = p2; fits = f2 }
                 }
             }
-            inVain++
         }
-        if (fits >= PLACE_FITS && !place.isCutOff(g.w, g.h)) { places[t] = place; inVain = 0 }
-        if (fits < READ_FITS || place.isCutOff(g.w, g.h)) return NOTHING
+        val cutOff = place.isCutOff(g.fw, g.fh)
+        val counts = fits >= PLACE_FITS && !cutOff
+        if (fits < READ_FITS || cutOff) return Look(place, counts, NOTHING, triedFar, lookedFar)
         val read = place.read(g)
         val text = segmentText(read, place.decimals)
-        return SegmentShown(if ('?' in text) null else text, tenthsOf(read, place.decimals))
+        return Look(place, counts, SegmentShown(if ('?' in text) null else text, tenthsOf(read, place.decimals)), triedFar, lookedFar)
     }
 
     /** The rough track, and the one grid that fits all of it. */
@@ -184,8 +212,8 @@ class SegmentTracker private constructor(private val pic: PicAt, private val dur
 /** The solves of a seven-segment timer that was followed. */
 fun scanSegments(
     timer: SegmentTracker, durationSec: Double, frameSec: Double, frameTime: (Double) -> Double = { it },
-    onProgress: (Int, Int) -> Unit = { _, _ -> }, isCancelled: () -> Boolean = { false }
+    onProgress: (Int, Int) -> Unit = { _, _ -> }, isCancelled: () -> Boolean = { false }, exact: (Boolean) -> Unit = {}
 ): ScanResult {
     val read = { t: Double -> timer.shown(t).text }
-    return scanFoundTimer(read, durationSec, timer.decimals, timer.decimals, frameSec, frameTime, onProgress, isCancelled) { timer.shown(it).tenths }
+    return scanFoundTimer(read, durationSec, timer.decimals, timer.decimals, frameSec, frameTime, onProgress, isCancelled, { timer.shown(it).tenths }, exact)
 }

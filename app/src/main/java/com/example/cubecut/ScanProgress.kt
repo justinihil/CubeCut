@@ -16,6 +16,8 @@
  */
 package com.example.cubecut
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -65,6 +67,38 @@ fun scanStateText(job: ScanJob): String = when (job.state) {
     else -> job.outcome?.text ?: ""
 }
 
+/**
+ * (4.0) The progress panel's *Copy report* (owner, 2026-11-27): for every video, why it took as long as it did. Plain text, to paste
+ * into a message: the video, how it ended, the timer, how long it waited, found, followed and scanned, and what the pictures took.
+ */
+fun batchReportText(jobs: List<ScanJob>): String {
+    val out = ArrayList<String>()
+    val ran = jobs.filter { it.startedMs > 0 }
+    val total = ran.sumOf { (if (it.endedMs > 0) it.endedMs else System.currentTimeMillis()) - it.startedMs } / 1000.0
+    out.add("CubeCut ${BuildConfig.VERSION_NAME}${if (BuildConfig.DEBUG) " debug" else ""}: Find solves report, ${jobs.size} video" +
+            (if (jobs.size == 1) "" else "s") + ", ${"%.0f".format(total)} s scanning in all")
+    for ((i, j) in jobs.withIndex()) {
+        val tm = j.timing
+        out.add("")
+        val fps = if (tm != null && tm.frameSec > 0) ", ${"%.0f".format(1 / tm.frameSec)} fps" else ""
+        val size = if (tm != null && tm.size.isNotEmpty()) ", ${tm.size}" else ""
+        out.add("${i + 1}. ${j.title} (${formatTime(j.durationMs)}$fps$size)")
+        out.add("   " + scanStateText(j))
+        if (j.startedMs == 0L) continue
+        val waited = (j.startedMs - j.queuedMs) / 1000.0
+        val took = ((if (j.endedMs > 0) j.endedMs else System.currentTimeMillis()) - j.startedMs) / 1000.0
+        val perMinute = if (j.durationMs > 0) took / (j.durationMs / 60000.0) else 0.0
+        out.add("   Took ${"%.1f".format(took)} s (${"%.1f".format(perMinute)} s per minute of video), after waiting ${"%.0f".format(waited)} s")
+        if (tm == null) continue
+        out.add("   Timer: ${tm.timer}")
+        out.add("   Finding the timer ${"%.1f".format(tm.findSec)} s" + (if (tm.findPictures.isNotEmpty()) ": pictures ${tm.findPictures}" else ""))
+        if (tm.followSec > 0) out.add("   Following it ${"%.1f".format(tm.followSec)} s" + (if (tm.followPictures.isNotEmpty()) ": pictures ${tm.followPictures}" else ""))
+        if (tm.scanSec > 0) out.add("   Scanning ${"%.1f".format(tm.scanSec)} s" + (if (tm.scanPictures.isNotEmpty()) ": pictures ${tm.scanPictures}" else ""))
+        out.add("   ${tm.pictures} pictures; source: ${tm.source}")
+    }
+    return out.joinToString("\n")
+}
+
 /** Does this finished video need the user (to choose the timer, to add solves by hand, or because it stopped)? */
 fun needsLook(job: ScanJob): Boolean = job.state == ScanState.ASKS || job.state == ScanState.NO_TIMER || job.state == ScanState.FAILED ||
         (job.state == ScanState.DONE && (job.outcome?.maybeMissed ?: 0) > 0)
@@ -108,6 +142,8 @@ fun ScanProgressPanel(
     if (jobs.isEmpty()) return
     var open by rememberSaveable { mutableStateOf(false) }
     var askCancelAll by remember { mutableStateOf(false) }
+    var copied by remember(jobs.size, AnalysisQueue.finished) { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     val active = jobs.count { it.state.isActive }
     val done = jobs.filter { !it.state.isActive }
     val toLook = done.count { needsLook(it) }
@@ -147,6 +183,12 @@ fun ScanProgressPanel(
                 Row(Modifier.align(Alignment.End)) {
                     // (4.0) stop the whole batch; the videos stay, each can be scanned again
                     if (active > 1) TextButton(onClick = { askCancelAll = true }) { Text("Cancel all") }
+                    // (4.0) for the owner's test rounds: why some videos took longer (owner, 2026-11-27)
+                    if (done.isNotEmpty()) TextButton(onClick = {
+                        val text = batchReportText(jobs)
+                        context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("CubeCut Find solves report", text))
+                        copied = true
+                    }) { Text(if (copied) "Copied" else "Copy report") }
                     if (done.isNotEmpty()) TextButton(onClick = { AnalysisQueue.clearFinished() }) { Text("Clear finished") }
                 }
             }

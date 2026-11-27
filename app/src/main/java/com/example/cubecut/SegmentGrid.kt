@@ -58,6 +58,12 @@ private const val FAR_PUSHED = 0.00002f
 /** The furthest place of a look for a timer that was lost counts this much less. */
 private const val FAR_LOST = 0.07f
 
+/**
+ * (4.0) [SegmentGrid.lookArea]: this many digit heights around the last six digits. [SegmentGrid.foundAgain] looks about 1.7 digit
+ * heights (2.8 digit widths) around, and a turned timer mixes the two. Too little only costs time: the whole picture is read then.
+ */
+private const val LOOK_MARGIN = 2.6
+
 /** A reach longer than this is looked at at half size first. */
 private const val ROUGH_FROM = 4
 
@@ -111,6 +117,13 @@ data class SegmentGrid(
         val xs = listOf(back.x(l, top), back.x(right, top), back.x(l, bottom), back.x(right, bottom))
         val ys = listOf(back.y(l, top), back.y(right, top), back.y(l, bottom), back.y(right, bottom))
         return Area(floor(xs.min()).toInt(), floor(ys.min()).toInt(), xs.max().toInt() + 1, ys.max().toInt() + 1)
+    }
+
+    /** (4.0) The part of the frame that [read], [located] (reach up to 10) and [foundAgain] can look at, with a little to spare. */
+    fun lookArea(): Area {
+        val b = box(MOST_DIGITS)
+        val m = (LOOK_MARGIN * height).toInt() + 4
+        return Area(b.left - m, b.top - m, b.right + m, b.bottom + m)
     }
 
     /** Are the last digits cut off by the edge of a [w] x [h] picture? */
@@ -425,7 +438,9 @@ private fun typicalContrast(places: List<PlaceRead>, decimals: Int): Float {
 }
 
 /** The value at a point between pixels; outside, the edge is repeated. */
-private fun GrayPic.between(x: Double, y: Double): Float {
+private fun GrayPic.between(x: Double, y: Double): Float = if (isWindow) betweenInWindow(x, y) else betweenWhole(x, y)
+
+private fun GrayPic.betweenWhole(x: Double, y: Double): Float {
     val ix = floor(x).toInt()
     val iy = floor(y).toInt()
     val u = (x - ix).toFloat()
@@ -436,6 +451,34 @@ private fun GrayPic.between(x: Double, y: Double): Float {
     val y1 = (if (iy + 1 < 0) 0 else if (iy + 1 > h - 1) h - 1 else iy + 1) * w
     val a = (d[y0 + x0].toInt() and 255) * (1 - u) + (d[y0 + x1].toInt() and 255) * u
     val b = (d[y1 + x0].toInt() and 255) * (1 - u) + (d[y1 + x1].toInt() and 255) * u
+    return a * (1 - v) + b * v
+}
+
+/**
+ * (4.0) [betweenWhole] for a window onto a [GrayPic.fw] x [GrayPic.fh] frame: the same clamping to the frame's edges, then the pixels
+ * taken from the window. A pixel the window doesn't have sets [GrayPic.outside] (the caller reads the whole picture instead).
+ */
+private fun GrayPic.betweenInWindow(x: Double, y: Double): Float {
+    val ix = floor(x).toInt()
+    val iy = floor(y).toInt()
+    val u = (x - ix).toFloat()
+    val v = (y - iy).toFloat()
+    val fx0 = if (ix < 0) 0 else if (ix > fw - 1) fw - 1 else ix
+    val fx1 = if (ix + 1 < 0) 0 else if (ix + 1 > fw - 1) fw - 1 else ix + 1
+    val fy0 = if (iy < 0) 0 else if (iy > fh - 1) fh - 1 else iy
+    val fy1 = if (iy + 1 < 0) 0 else if (iy + 1 > fh - 1) fh - 1 else iy + 1
+    var x0 = fx0 - ox
+    var x1 = fx1 - ox
+    var y0 = fy0 - oy
+    var y1 = fy1 - oy
+    if (x0 < 0 || x1 >= w || y0 < 0 || y1 >= h) {
+        outside = true
+        x0 = x0.coerceIn(0, w - 1); x1 = x1.coerceIn(0, w - 1); y0 = y0.coerceIn(0, h - 1); y1 = y1.coerceIn(0, h - 1)
+    }
+    val r0 = y0 * w
+    val r1 = y1 * w
+    val a = (d[r0 + x0].toInt() and 255) * (1 - u) + (d[r0 + x1].toInt() and 255) * u
+    val b = (d[r1 + x0].toInt() and 255) * (1 - u) + (d[r1 + x1].toInt() and 255) * u
     return a * (1 - v) + b * v
 }
 

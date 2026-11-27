@@ -285,6 +285,7 @@ private fun byItselfReport(
         inPictures = 0L
         var inReading = 0L
         val atScan = source.stats()?.copy()
+        how.add("Picture source: " + source.note())
         fun <T> timed(t: Double, look: (AreaPic) -> T?): T? {
             val p = pic.area(t, timer.area) ?: return null
             val s = System.nanoTime()
@@ -295,10 +296,14 @@ private fun byItselfReport(
         val scan = if (timer.held) scanHeldTimer(
             { t -> timed(t) { timer.readHeld(it) } }, durationSec, videoFrameSec(context, uri),
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
-        ) else scanFoundTimer(
-            ::read, durationSec, timer.runningDecimals, timer.stoppedDecimals, videoFrameSec(context, uri),
-            { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
-        )
+        ) else {
+            source.setNear(true)
+            scanFoundTimer(
+                ::read, durationSec, timer.runningDecimals, timer.stoppedDecimals, videoFrameSec(context, uri),
+                { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled,
+                exact = { source.setNear(!it) }
+            ).also { source.setNear(false) }
+        }
         val seconds = (System.nanoTime() - scanStart) / 1e9
         how.add(
             "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, ${"%.1f".format(inReading / 1e9)} s reading " +
@@ -353,13 +358,25 @@ private fun segmentReport(
 ): String {
     var pictures = 0
     var inPictures = 0L
-    val pic = PicAt { t ->
-        val start = System.nanoTime()
-        val p = source.gray(t)
-        pictures++
-        inPictures += System.nanoTime() - start
-        p
+    val pic = object : PicAt {
+        override fun at(t: Double): GrayPic? {
+            val start = System.nanoTime()
+            val p = source.gray(t)
+            pictures++
+            inPictures += System.nanoTime() - start
+            return p
+        }
+
+        // (4.0) as Find solves does: the tracker asks for the part around the timer
+        override fun area(t: Double, area: Area): AreaPic? {
+            val start = System.nanoTime()
+            val p = source.grayArea(t, area)
+            pictures++
+            inPictures += System.nanoTime() - start
+            return p
+        }
     }
+    how.add("Picture source: " + source.note())
     val atFollow = source.stats()?.copy()
     val followStart = System.nanoTime()
     val timer = SegmentTracker.follow(found, pic, durationSec, { onProgress(10 + it / 10, 100) }, isCancelled)
@@ -372,14 +389,18 @@ private fun segmentReport(
     inPictures = 0L
     val atScan = source.stats()?.copy()
     val scanStart = System.nanoTime()
+    source.setNear(true)
     val scan = scanSegments(
-        timer, durationSec, videoFrameSec(context, uri), { t -> frameTimeOf(source, t) }, { done, total -> onProgress(20 + 80 * done / total, 100) }, isCancelled
+        timer, durationSec, videoFrameSec(context, uri), { t -> frameTimeOf(source, t) }, { done, total -> onProgress(20 + 80 * done / total, 100) }, isCancelled,
+        { source.setNear(!it) }
     )
+    source.setNear(false)
     val seconds = (System.nanoTime() - scanStart) / 1e9
     val (across, down) = timer.moved()
     how.add(
         "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, the rest reading " +
-                "(${"%.1f".format((seconds * 1e3 - inPictures / 1e6) / maxOf(1, pictures))} ms each); ${timer.farLooks} looks further away; it moved ${across.toInt()} x ${down.toInt()} px"
+                "(${"%.1f".format((seconds * 1e3 - inPictures / 1e6) / maxOf(1, pictures))} ms each); ${timer.farLooks} looks further away, " +
+                "${timer.wholeAgain} reads of the whole picture; it moved ${across.toInt()} x ${down.toInt()} px"
     )
     source.stats()?.let { s -> atScan?.let { how.add("Pictures while scanning: " + s.since(it)) } }
     val flagged = scan.solves.filter { it.note.isNotEmpty() }
@@ -415,6 +436,7 @@ private fun heldSegmentReport(
         p
     }
     fun read(t: Double): String? = pic.at(t)?.let { heldSegmentRow(grid, it)?.first?.text }
+    how.add("Picture source: " + source.note())
     val atScan = source.stats()?.copy()
     val scanStart = System.nanoTime()
     val scan = scanHeldTimer(

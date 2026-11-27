@@ -48,6 +48,7 @@ class ReferenceVideoTest {
 
     /** What the scan saw goes to a file, for MissedSolvesTest. */
     private fun writeTrace(video: File, scan: ScanResult) {
+        if ((System.getenv("CUBECUT_REF_NEAR")?.toIntOrNull() ?: 0) != 0) return      // (MissedSolvesTest reads the traces of the real steps)
         File(dir, "traces").mkdirs()
         File(dir, "traces/" + video.name.replace(".mp4", ".trace.txt")).printWriter().use { w ->
             w.println("D ${scan.trace.durationSec}")
@@ -82,13 +83,15 @@ class ReferenceVideoTest {
             if (timer == null) { problems.add("${v.name}: not found"); continue }
             println("   ${timer.area}, digits ${timer.digitHeight.toInt()} px, decimals ${timer.runningDecimals} running, ${timer.stoppedDecimals} stopped, learned ${timer.examples.isLearned}, froze at ${r.frozen}")
             video.nanos = 0
+            video.stepsNear = true
             val scanning = System.nanoTime()
             var reads = 0
             val scan = if (timer.held) scanHeldTimer(
                 { t -> reads++; video.at(t)?.let { timer.readHeld(it) } }, video.duration, video.frameSec, { t -> video.frameTime(t) }
             ) else scanFoundTimer(
                 { t -> reads++; video.at(t)?.let { timer.read(it)?.text } },
-                video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { t -> video.frameTime(t) }
+                video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { t -> video.frameTime(t) },
+                exact = { video.exact = it }
             )
             val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
             writeTrace(v, scan)
@@ -98,7 +101,7 @@ class ReferenceVideoTest {
             println(
                 "SCAN ${v.name}: expected ${c.expectedCount}, found ${c.matches.size}, missed ${c.missed.size}, false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}; " +
                         "${c.onFrame} on the frame, ${c.close} within 0.1 s, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
-                        "readable ${(scan.readableFraction * 100).toInt()}%; $reads reads, ${"%.1f".format(seconds)} s without getting pictures"
+                        "readable ${(scan.readableFraction * 100).toInt()}%; $reads reads, ${"%.1f".format(seconds)} s without getting pictures; steps ${video.shift} frames off"
             )
             for (f in scan.solves.filter { it.note.isNotEmpty() }) println("   flagged: ${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
             for (h in hintsOf(scan)) println("   hint: ${videoPlace(h.fromSec)} - ${videoPlace(h.toSec)} ${h.text}")
@@ -244,10 +247,11 @@ class ReferenceVideoTest {
             val following = System.nanoTime()
             val timer = SegmentTracker.follow(found, { video.at(it) }, video.duration)
             val followSec = (System.nanoTime() - following - video.nanos) / 1e9
+            video.stepsNear = true
             println("TRACK ${v.name}: from ${found.t} s; refined with ${timer.refinedWith}, fit ${"%.3f".format(timer.fit)} (${"%.3f".format(found.fit)} where found); ${"%.1f".format(followSec)} s without getting pictures")
             video.nanos = 0
             val scanning = System.nanoTime()
-            val scan = scanSegments(timer, video.duration, video.frameSec, { t -> video.frameTime(t) })
+            val scan = scanSegments(timer, video.duration, video.frameSec, { t -> video.frameTime(t) }, exact = { video.exact = it })
             val seconds = (System.nanoTime() - scanning - video.nanos) / 1e9
             writeTrace(v, scan)
             val lines = key(v).readLines().filter { it.isNotBlank() && it[0].isDigit() }.map { it.split(" ") }
@@ -259,7 +263,7 @@ class ReferenceVideoTest {
             println(
                 "SCAN ${v.name}: expected ${c.expectedCount}, found ${c.matches.size}, missed ${c.missed.size}, false ${c.falseSolves.size}, wrong time ${c.wrongTime.size}; " +
                         "${c.onFrame} on the frame, ${c.matches.count { abs(it.offsetSec) <= 0.05 }} within 0.05 s, ${c.close} within 0.1 s, worst ${"%.3f".format(c.worstOffsetSec)} s; " +
-                        "readable ${(scan.readableFraction * 100).toInt()}%; moved ${timer.moved()}; ${timer.reads} reads, ${timer.farLooks} far looks, ${"%.1f".format(seconds)} s without getting pictures"
+                        "readable ${(scan.readableFraction * 100).toInt()}%; moved ${timer.moved()}; ${timer.reads} reads, ${timer.farLooks} far looks, ${timer.wholeAgain} whole again, ${"%.1f".format(seconds)} s without getting pictures; steps ${video.shift} frames off"
             )
             for (f in scan.solves.filter { it.note.isNotEmpty() }) println("   flagged: ${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
             for (f in c.falseSolves) println("   false: ${videoPlace(f.stopSec)} ${f.timeText}")
@@ -340,6 +344,20 @@ class ReferenceVideoTest {
         val duration: Double = text("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file.path).trim().toDouble()
         val frameSec: Double = duration / times.size
         var nanos = 0L                                          // spent getting pictures
+
+        /**
+         * (4.0) The phone's GraySource.setNear, imitated: with CUBECUT_REF_NEAR=n (frames, may be negative) every half-second step of a
+         * scan ([stepsNear], while not [exact]) is the frame n frames after the one asked for, the worst a step may land on the phone;
+         * [frameTime] tells that frame's time. Frame by frame ([exact]) the frame itself, as on the phone.
+         */
+        val shift: Int = System.getenv("CUBECUT_REF_NEAR")?.toIntOrNull() ?: 0
+        var stepsNear = false
+        var exact = false
+        private val shifted get() = shift != 0 && stepsNear && !exact
+        private val keptNear = LinkedHashMap<Int, GrayPic>()
+        private var nearSteps: Process? = null
+        private var nearIn: DataInputStream? = null
+        private var nextNear = 0
         private val kept = LinkedHashMap<Int, GrayPic>()        // by frame number
         private val keptSteps = LinkedHashMap<Int, GrayPic>()   // by half second
         private var steps: Process? = null
@@ -356,7 +374,23 @@ class ReferenceVideoTest {
 
         private fun get(t: Double): GrayPic? {
             val k = Math.round(t * 2).toInt()
-            if (abs(t * 2 - k) < 1e-6) {
+            val stepLike = abs(t * 2 - k) < 1e-6
+            if (stepLike && shifted) {
+                keptNear[k]?.let { return it }
+                if (nearSteps == null) openNear()
+                if (k >= nextNear && k - nextNear < 40) {
+                    var p: GrayPic? = null
+                    while (nextNear <= k) { p = readNear(); nextNear++ }
+                    if (p != null) {
+                        keptNear[k] = p
+                        while (keptNear.size > 20) keptNear.remove(keptNear.keys.first())
+                        return p
+                    }
+                }
+                val i = ((nearest(t) ?: return null) + shift).coerceIn(times.indices)
+                return frames(i, 1).firstOrNull()
+            }
+            if (stepLike && !(shift != 0 && stepsNear && exact)) {
                 keptSteps[k]?.let { return it }
                 if (steps == null && k == 0) openSteps()        // a scan begins: from here on the half seconds come in order
                 if (steps != null && k >= nextStep && k - nextStep < 40) {
@@ -378,7 +412,25 @@ class ReferenceVideoTest {
             return kept[i]
         }
 
-        fun frameTime(t: Double): Double = nearest(t)?.let { times[it] } ?: t
+        fun frameTime(t: Double): Double {
+            val i = nearest(t) ?: return t
+            val k = Math.round(t * 2).toInt()
+            return if (shifted && abs(t * 2 - k) < 1e-6) times[(i + shift).coerceIn(times.indices)] else times[i]
+        }
+
+        /** The half seconds as [shift] frames later: every frame's time moved back by that much, then two a second as usual. */
+        private fun openNear() {
+            val d = "%.6f".format(Locale.ROOT, shift * frameSec)
+            val p = ProcessBuilder("ffmpeg", "-v", "error", "-hwaccel", "cuda", "-i", file.path, "-vf", "setpts=PTS-$d/TB,fps=2:round=up", "-f", "rawvideo", "-pix_fmt", "gray", "-").start()
+            nearSteps = p
+            nearIn = DataInputStream(BufferedInputStream(p.inputStream, 1 shl 22))
+        }
+
+        private fun readNear(): GrayPic? = try {
+            GrayPic(w, h, ByteArray(w * h).also { nearIn!!.readFully(it) })
+        } catch (e: EOFException) {
+            null
+        }
 
         private fun nearest(t: Double): Int? {
             if (t < 0 || t > duration) return null
@@ -409,6 +461,7 @@ class ReferenceVideoTest {
         }
 
         fun close() {
+            nearSteps?.destroy()
             steps?.destroy()
         }
 
