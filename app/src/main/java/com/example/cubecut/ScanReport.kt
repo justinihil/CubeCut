@@ -219,7 +219,7 @@ private fun byItselfReport(
 ): String {
     val durationSec = durationMs / 1000.0
     val fonts = loadDigitFonts(context)
-    val source = PrefetchSource(openFrameSource(context, uri, durationMs), videoFrameSec(context, uri))
+    val source = if (READ_AHEAD) PrefetchSource(openFrameSource(context, uri, durationMs), videoFrameSec(context, uri)) else openFrameSource(context, uri, durationMs)
     try {
         var pictures = 0
         var inPictures = 0L

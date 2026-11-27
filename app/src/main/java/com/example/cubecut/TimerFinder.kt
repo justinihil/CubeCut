@@ -118,8 +118,11 @@ data class Area(val left: Int, val top: Int, val right: Int, val bottom: Int)
  * proof as anywhere (it must rise with the clock); if it isn't there, the usual search follows. Only for pictures of the same size.
  */
 sealed class TimerHint(val frameW: Int, val frameH: Int) {
-    /** Solid digits: the box around its numbers and their height. */
-    class Solid(val numbers: Area, val digitHeight: Double, frameW: Int, frameH: Int) : TimerHint(frameW, frameH)
+    /**
+     * Solid digits: the box around its numbers and their height, and the digits learned there ([examples], null = not learned): a
+     * video of one solve seldom shows all ten, and then these are used (owner, 2026-11-27).
+     */
+    class Solid(val numbers: Area, val digitHeight: Double, frameW: Int, frameH: Int, val examples: DigitShapes? = null) : TimerHint(frameW, frameH)
 
     /** Seven segments: its grid. */
     class Segments(val grid: SegmentGrid, frameW: Int, frameH: Int) : TimerHint(frameW, frameH)
@@ -282,6 +285,18 @@ private class TimerSearch(
         val p = pic.at(t) ?: return null
         frameW = p.w
         frameH = p.h
+        return p
+    }
+
+    /**
+     * (4.0) Only [a] of the picture at second [t]: the same pixels as cut from [frame], made much quicker by the decoder. For the
+     * reads that look at the timer's area alone (watching and learning: a dozen a second of each run).
+     */
+    private fun areaFrame(t: Double, a: Area): AreaPic? {
+        if (isCancelled()) throw ScanCancelled()
+        val p = pic.area(t, a) ?: return null
+        frameW = p.frameW
+        frameH = p.frameH
         return p
     }
 
@@ -500,9 +515,10 @@ private class TimerSearch(
 
     /** What [run]'s number shows at second [t], also when it isn't quite at its place any more. */
     private fun readAround(run: Run, t: Double, examples: DigitShapes): TimeRow? {
-        val p = frame(t) ?: return null
+        val a = around(run.map { it.row }, WATCH_ACROSS, WATCH_DOWN)
+        val p = areaFrame(t, a) ?: return null
         areaReads++
-        return readArea(p, around(run.map { it.row }, WATCH_ACROSS, WATCH_DOWN), height, dark, examples)
+        return readArea(p, a, height, dark, examples)
     }
 
     /** More runs of the same number, at other places, one at a time. */
@@ -546,9 +562,9 @@ private class TimerSearch(
     }
 
     /** The digits are known now: follow the runs to their end again, for timers whose first watch lost them. */
-    private fun watchAgain(hits: List<Run>, learned: DigitShapes): List<List<Seen>> {
+    private fun watchAgain(hits: List<Run>, learned: DigitShapes, more: Boolean = true): List<List<Seen>> {
         val out = ArrayList<List<Seen>>()
-        val runs = (hits.asSequence() + moreRuns(hits)).iterator()
+        val runs = (hits.asSequence() + (if (more) moreRuns(hits) else emptySequence())).iterator()
         while (out.size < RUNS_WANTED && runs.hasNext()) {          // (hasNext may have to search: only ask when one is needed)
             val run = runs.next()
             val start = startOf(run)
@@ -577,7 +593,10 @@ private class TimerSearch(
         val rows = ArrayList<TimeRow>()
         val stopped = ArrayList<Int>()
         var used = 0
-        val runs = (hits.asSequence() + moreRuns(hits)).iterator()
+        // (4.0) found where the timer of the video before was: no search of the whole picture for more runs (in a video of one solve
+        // there are none, and it cost the owner's phone 10 to 15 s a video); not all digits seen: those of the video before, else the fonts
+        val borrowed = if (fromHint) hint?.examples else null
+        val runs = (hits.asSequence() + (if (fromHint) emptySequence() else moreRuns(hits))).iterator()
         while (used < hits.size || (used < hits.size + MORE_RUNS && !enough(shapes))) {
             if (!runs.hasNext()) break                              // (may have to search: only ask when one is needed)
             val run = runs.next()
@@ -595,13 +614,14 @@ private class TimerSearch(
         val all = shapes.sumOf { it.size }
         if (rows.isNotEmpty()) setArea(rows)
         val clean = if (enough(shapes)) withoutOddOnes(shapes) else null
-        val learned = clean?.let { fonts.learned(it) }
+        val own = clean?.let { fonts.learned(it) }
+        val learned = own ?: borrowed
         notes.add(
-            "Learned: " + (if (learned != null) "yes" else "NO, not all digits were seen") + ", from $used runs, " +
-                    "${clean?.sumOf { it.size } ?: 0} of $all shapes, per digit " + (clean ?: shapes).map { it.size }
+            "Learned: " + (if (own != null) "yes" else if (learned != null) "not all digits were seen: those of the video before are used" else "NO, not all digits were seen") +
+                    ", from $used runs, ${clean?.sumOf { it.size } ?: 0} of $all shapes, per digit " + (clean ?: shapes).map { it.size }
         )
         if (stopped.isEmpty() && learned != null) {
-            for (held in watchAgain(hits, learned)) {
+            for (held in watchAgain(hits, learned, more = !fromHint)) {
                 rows.addAll(held.map { it.row })
                 stopped.add(held[0].row.decimals)
                 frozen.add(held[0].row.text)
@@ -626,9 +646,9 @@ private class TimerSearch(
         val to = min(running.last().t + 2.0, from + LEARN_SEC)
         for (k in 0..((to - from) * LEARN_RATE).toInt()) {
             val t = from + k.toDouble() / LEARN_RATE
-            val p = frame(t) ?: continue
+            val p = areaFrame(t, area) ?: continue
             areaReads++
-            for (r in areaRows(p, area, height, dark, fonts, 0.4f)) if (r.decimals == decimals) seen.add(Seen(t, r))
+            for (r in areaRows(p, height, dark, fonts, 0.4f)) if (r.decimals == decimals) seen.add(Seen(t, r))
         }
         if (seen.count { abs(it.t - it.row.seconds - start) < 0.16 } < 10) return
 

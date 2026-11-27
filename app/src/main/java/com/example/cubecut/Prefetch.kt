@@ -31,6 +31,14 @@ import kotlin.math.min
 // thread asks: what the scan gets is the same picture as without this, only sooner. Pure (no Android), so it is tested on the PC.
 // ---------------------------------------------------------------------------------------
 
+/**
+ * (4.0) Off (owner's phone, 2026-11-27): csTimer 01 scanned 71.6 -> 69.0 s, but QiYi 01 135.8 -> 189.3 s. The decoder slowed down next
+ * to the reading (csTimer 39.6 -> 57.1 s of decoding), and the QiYi tracker mostly asked for another area than the one made ahead
+ * (1418 times), so the decoder went back to a keyframe for the same frame. Also, a half-second step (GraySource.setNear) can land a frame
+ * differently when the decoder has decoded further ahead, so the results were not exactly those without it (QiYi "7 updated").
+ */
+const val READ_AHEAD = false
+
 /** The scan's step: the picture after the one it reads is mostly this much later (FinderScan's SCAN_STEP). */
 private const val AHEAD_STEP = 0.5
 

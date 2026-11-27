@@ -297,7 +297,7 @@ class ReferenceVideoTest {
             TimerHint.Segments(SegmentTracker.follow(srcSeg, { src.at(it) }, src.duration).grid, size.first, size.second)
         } else {
             val t = findTimer({ src.at(it) }, src.duration, fonts(File(from))).timer!!
-            TimerHint.Solid(t.numbers, t.digitHeight, size.first, size.second)
+            TimerHint.Solid(t.numbers, t.digitHeight, size.first, size.second, t.examples.takeIf { it.isLearned })
         }
         src.close()
         println("HINT from ${File(from).name}: ${if (hint is TimerHint.Solid) "solid ${hint.numbers}" else "seven segments"}")

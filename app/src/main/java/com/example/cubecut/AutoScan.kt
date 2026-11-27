@@ -97,8 +97,8 @@ fun analyzeByItself(
     val fonts = loadDigitFonts(context)
     val frameSec = videoFrameSec(context, uri)
     timing.frameSec = frameSec
-    // (4.0) the next picture is made while this one is read (PrefetchSource)
-    val source = PrefetchSource(openFrameSource(context, uri, durationMs), frameSec)
+    // (4.0) the next picture made while this one is read (PrefetchSource): off, see READ_AHEAD
+    val source = if (READ_AHEAD) PrefetchSource(openFrameSource(context, uri, durationMs), frameSec) else openFrameSource(context, uri, durationMs)
     var partStart = System.nanoTime()
     var partStats = source.stats()?.copy()
     /** The seconds since the last part began, and what the pictures took in it; the next part begins now. */
@@ -191,7 +191,7 @@ fun analyzeByItself(
             ).also { source.setAhead(false); source.setNear(false) }
         }
         part().let { (sec, pics) -> timing.scanSec = sec; timing.scanPictures = pics }
-        return AutoScanResult(scan, timer.numbers, emptyList(), if (timer.held) null else TimerHint.Solid(timer.numbers, timer.digitHeight, frameW, frameH))
+        return AutoScanResult(scan, timer.numbers, emptyList(), if (timer.held) null else TimerHint.Solid(timer.numbers, timer.digitHeight, frameW, frameH, timer.examples.takeIf { it.isLearned }))
     } finally {
         timing.source = source.note()
         source.close()
