@@ -49,7 +49,7 @@ val PLACES = listOf("Home", "Competition", "Other")
  */
 enum class TagKind(val label: String, val fixed: List<String>, val clipMayDiffer: Boolean, val askOnImport: Boolean, val typedNames: Boolean) {
     PUZZLE("Puzzle", PUZZLES, true, true, true),
-    TYPE("Type", CATEGORIES, true, true, true),
+    TYPE("Solve type", CATEGORIES, true, true, true),          // "Type" alone was unclear (owner, 2026-11-27)
     CUBE("Cube", emptyList(), true, true, true),
     PLACE("Place", PLACES, false, true, false);
 
@@ -64,6 +64,11 @@ enum class TagKind(val label: String, val fixed: List<String>, val clipMayDiffer
  * Stored in `cuts.puzzle` / `cuts.category` only.
  */
 const val NO_TAG = "-"
+
+/**
+ * (4.0) The line at the top of a clip's tag window: the place is the video's only, so it isn't there (the owner looked for it, 2026-11-27).
+ */
+const val CLIP_PLACE_NOTE = "Place is set per session: Sessions tab → Set tags."
 
 /** An "Other" name is cut to this many characters: long enough for "Mirror blocks 3x3", short enough for a file name. */
 private const val MAX_TAG_LENGTH = 24

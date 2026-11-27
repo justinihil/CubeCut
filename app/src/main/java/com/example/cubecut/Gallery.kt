@@ -2232,7 +2232,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         ExportFilter.NOT_EXPORTED -> "Not exported only"
                     }
                     val puzzleLabel = ui.puzzleFilter?.let { "Puzzle: " + it.ifEmpty { "not tagged" } }
-                    val typeLabel = ui.categoryFilter?.let { "Type: " + it.ifEmpty { "not tagged" } }
+                    val typeLabel = ui.categoryFilter?.let { "Solve type: " + it.ifEmpty { "not tagged" } }
                     val sharedLabel = ui.sharedFilter?.let { if (it.isEmpty()) "Not shared yet" else "Shared on: $it" }
                     val active = listOfNotNull(videoLabel, exportLabel, if (ui.checkOnly) "Needs a check" else null, puzzleLabel, typeLabel, sharedLabel).size
                     Row(
@@ -2837,7 +2837,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                         }
                         // (3.2-B) puzzle and type: only the tags some clip has, plus Not tagged
                         TagFilterSection("Puzzle", d.clips.map { it.puzzle }, PUZZLES, ui.puzzleFilter) { ui.puzzleFilter = it; ui.save() }
-                        TagFilterSection("Type", d.clips.map { it.category }, CATEGORIES, ui.categoryFilter) { ui.categoryFilter = it; ui.save() }
+                        TagFilterSection("Solve type", d.clips.map { it.category }, CATEGORIES, ui.categoryFilter) { ui.categoryFilter = it; ui.save() }
                         // (4.0-F) the cube model (your own names), where it was filmed, and the penalty set by hand
                         TagFilterSection("Cube", d.clips.map { it.cube }, emptyList(), ui.cubeFilter) { ui.cubeFilter = it; ui.save() }
                         TagFilterSection("Place", d.clips.map { it.place }, PLACES, ui.placeFilter) { ui.placeFilter = it; ui.save() }
@@ -3023,6 +3023,7 @@ fun GalleryScreen(ui: GalleryUiState, onOpenEditor: (EditorRequest) -> Unit) {
                 followCube = one?.cube,
                 kinds = TagKind.forClips,
                 knownCubes = knownCubes,
+                intro = CLIP_PLACE_NOTE,
                 onDismiss = { tagSelection = false },
                 onDone = { choice -> tagSelection = false; setTagsForSelected(choice, chosen, d) }
             )
@@ -4905,6 +4906,7 @@ fun ClipViewer(
                 followCube = current.footage.cube,
                 kinds = TagKind.forClips,
                 knownCubes = orderTags(allClips.map { it.cube } + allClips.map { it.footage.cube }, emptyList()),
+                intro = CLIP_PLACE_NOTE,
                 onDismiss = { tagWindow = false },
                 onDone = { choice -> tagWindow = false; setTags(current, choice) }
             )

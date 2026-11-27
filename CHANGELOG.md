@@ -16,7 +16,7 @@ The saved data is upgraded to database v12 on first start.
 
 ### Added
 - **Import several videos at once.** Each new video goes to the Sessions tab and *Find solves* starts on it by itself, one after another. Videos imported before are skipped and counted (with one video, *Imported before* asks as before).
-- **Progress panel** above the tabs: one slim line for the whole batch ("2 of 10 videos done · 34%", also in the notification), each video's own bar on its card; *Cancel all*, and *Scan again* for a cancelled video; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
+- **Progress panel** above the tabs: one slim line for what is left ("1 scanning, 3 waiting · 34%", also in the notification), each video's own bar on its card; *Cancel all*, and *Scan again* for a cancelled video; tap it for every video and how it ended, with *Choose* (which number is the timer), *Add by hand* (timer not found), *Open* and *Cancel*. Results stay until *Clear finished*.
 - Session cards say **Waiting to scan**, **Finding solves 40%**, **Timer not found** or **Choose the timer**. Waiting scans start again after the app was closed.
 - The Sessions tab has a switch: **All · Sessions · Single solves** (every video with one solve, also the old single solves).
 - **Filter the Sessions tab:** *Not scanned*, *Timer not found*, *To check* (solves to check and places where a solve may be missing, both).
@@ -43,6 +43,7 @@ The saved data is upgraded to database v12 on first start.
 ### Changed
 - **Find solves gets its pictures faster:** it only prepares the part of each picture around the timer (also for QiYi-like timers), skips frames no other frame needs, and its half-second steps may take a frame or two away when that needs less decoding (the cut itself is still found frame by frame).
 - A QiYi-like display whose digits ghost while they change can no longer make a running time look like a stopped one that the clock then picks.
+- The **Type** tag is now called **Solve type**. A clip's tag window says the place is set on the Sessions tab.
 - **Videos filmed one after another are found faster:** Find solves first looks for the timer where it was in the video before (it still has to see it run), and then uses the digits learned in the video before if they read this video's times right (else it learns them as usual, without reading the same stretch twice). That saves most of the time for short single-solve videos, above all with a QiYi-like timer.
 - **Copy report** in the progress panel (tap the bar above the tabs): for every video, how long it waited, found the timer and scanned, and where the time went, to paste into a message.
 - If the fast way of getting pictures doesn't check out at the first of its three test moments, the other two are tried before Find solves falls back to the slow way.

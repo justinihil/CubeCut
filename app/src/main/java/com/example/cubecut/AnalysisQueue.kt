@@ -96,6 +96,7 @@ object AnalysisQueue {
     private var runs = 0
     private var batchFrom = 1                               // (4.0) the first job of the batch now running (see [batch])
     private var lastTimer: TimerHint? = null                // (4.0) where the timer of the video scanned last was (TimerHint)
+    private var resumed = false                             // (4.0) [resume] ran in this process
 
     /**
      * (4.0) The videos of the batch now running, or of the last one: every job asked for since the queue last started from empty.
@@ -158,6 +159,10 @@ object AnalysisQueue {
      * A video that can't be opened any more is left alone: its mark stays until it is reconnected and scanned.
      */
     fun resume(context: Context) {
+        // (4.0) once per process: Android can rebuild the screen (for example while the file picker is open), and running this again
+        // queued every video still marked "Choose the timer" into the next batch (owner, 2026-11-27: 8 queued after picking 5)
+        if (resumed) return
+        resumed = true
         val app = context.applicationContext
         appContext = app
         scope.launch {
@@ -170,7 +175,7 @@ object AnalysisQueue {
                     emptyList()
                 }
             }
-            for (f in waiting) enqueue(app, f)
+            for (f in waiting) if (jobOf(f.id) == null) enqueue(app, f)        // a video this run already knows keeps its job
         }
     }
 
@@ -250,8 +255,14 @@ object AnalysisQueue {
     }
 
     /** (4.0) The batch in words, for the notification and the bar: "2 of 10 videos done", or one video's name. */
-    fun batchLabel(p: BatchProgress = batchProgress()): String =
-        if (p.total == 1) batch.firstOrNull()?.title ?: "1 video" else "${p.done} of ${p.total} videos done"
+    fun batchLabel(p: BatchProgress = batchProgress()): String {
+        // (4.0) what is left, not "3 of 8 done": a count over several picks read as videos added that weren't picked (owner, 2026-11-27)
+        val scanning = jobs.filter { it.state == ScanState.SCANNING }
+        val waiting = jobs.count { it.state == ScanState.WAITING }
+        return if (waiting == 0 && scanning.size == 1) scanning[0].title
+        else listOfNotNull(if (scanning.isNotEmpty()) "${scanning.size} scanning" else null, if (waiting > 0) "$waiting waiting" else null)
+            .joinToString(", ").ifEmpty { "${p.done} done" }
+    }
 
     /** Scans one video and saves what it found. Never throws: how it ended is in [ScanJob.state] and [ScanJob.outcome]. */
     private suspend fun scanOne(app: Context, job: ScanJob) {

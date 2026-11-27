@@ -147,7 +147,7 @@ The owner's addition of 2026-11-26, before testing: the scramble and the extra t
 
 ### 4.0-J The owner's notes before testing 🔶
 The owner's notes of 2026-11-26, after the first phone test step:
-- **The batch as a whole:** the slim bar and the notification show "2 of 10 videos done · 34%" (weighted by video length), not one video. Each video's own progress is a thin bar on its card.
+- **The batch as a whole:** the slim bar and the notification show "1 scanning, 3 waiting · 34%" (the share weighted by video length), not one video. It said "2 of 10 videos done" until 2026-11-27: after a second pick the owner read it as videos added that weren't picked. Each video's own progress is a thin bar on its card.
 - **"It's fine" in the viewer** looks as in the editor: the amber outlined button, then a green "✓ Checked" (`ItsFineButton`, `CheckedMark`, shared).
 - **A cancelled video stays in Sessions** (owner: makes sense, preferred), and its row offers **Scan again** besides *Open*. **Find solves** for ticked sessions; **Cancel all** while a batch runs (asks first; the videos stay).
 - **Hold and drag** to tick sessions, as on the Clips tab.
