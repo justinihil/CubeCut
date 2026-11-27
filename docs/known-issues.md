@@ -38,6 +38,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 
 Only the Samsung Galaxy S25 Ultra has been used. These have not been checked:
 - other phones, Android 11–14 (the `dataSync` service path) and the backup exclusion on a real transfer;
+- (4.0) reading ahead on a second thread (`PrefetchSource`) only on the owner's phone; the "timer of the video before" (`TimerHint`) only in the order the queue scans, and only on the PC with clips cut from the reference videos;
 - (4.0) leaving out frames nothing needs (`LEAVE_OUT_FRAMES`) and decoding only the lower layers for the scan's steps (`setNear`) on other phones' decoders and on H.264 video; a decoder that fails falls back to the slow source, one that quietly decodes wrong would make the scan worse;
 - Android 15's 6-hour background limit (`onTimeout`);
 - HDR or 10-bit footage, 4K, frame rates other than 30 and 60 fps, the frame-source fallback actually triggering;

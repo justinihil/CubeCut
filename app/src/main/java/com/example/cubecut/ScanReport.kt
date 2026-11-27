@@ -219,7 +219,7 @@ private fun byItselfReport(
 ): String {
     val durationSec = durationMs / 1000.0
     val fonts = loadDigitFonts(context)
-    val source = openFrameSource(context, uri, durationMs)
+    val source = PrefetchSource(openFrameSource(context, uri, durationMs), videoFrameSec(context, uri))
     try {
         var pictures = 0
         var inPictures = 0L
@@ -248,7 +248,7 @@ private fun byItselfReport(
         var segmentSec = 0.0
         var segmentTimer: FoundSegments? = null
         var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
-        val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled) {
+        val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled, otherKind = {
             val before = pictures
             val beforeNanos = inPictures
             val from = System.nanoTime()
@@ -260,7 +260,7 @@ private fun byItselfReport(
             segmentTimer = s.found
             segmentTimes = s.held
             s.found != null
-        }
+        })
         val finding = (System.nanoTime() - start) / 1e9 - segmentSec
         val how = ArrayList<String>()
         how.add("")
@@ -298,11 +298,12 @@ private fun byItselfReport(
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled
         ) else {
             source.setNear(true)
+            source.setAhead(true)
             scanFoundTimer(
                 ::read, durationSec, timer.runningDecimals, timer.stoppedDecimals, videoFrameSec(context, uri),
                 { t -> frameTimeOf(source, t) }, { done, total -> onProgress(10 + 90 * done / total, 100) }, isCancelled,
                 exact = { source.setNear(!it) }
-            ).also { source.setNear(false) }
+            ).also { source.setAhead(false); source.setNear(false) }
         }
         val seconds = (System.nanoTime() - scanStart) / 1e9
         how.add(
@@ -390,10 +391,12 @@ private fun segmentReport(
     val atScan = source.stats()?.copy()
     val scanStart = System.nanoTime()
     source.setNear(true)
+    source.setAhead(true)
     val scan = scanSegments(
         timer, durationSec, videoFrameSec(context, uri), { t -> frameTimeOf(source, t) }, { done, total -> onProgress(20 + 80 * done / total, 100) }, isCancelled,
         { source.setNear(!it) }
     )
+    source.setAhead(false)
     source.setNear(false)
     val seconds = (System.nanoTime() - scanStart) / 1e9
     val (across, down) = timer.moved()

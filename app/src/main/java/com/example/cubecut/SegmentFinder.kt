@@ -36,6 +36,13 @@ private const val SEGMENT_STEP = 0.5
 /** How far a tenth may be off the clock. */
 private const val SEGMENT_OFF = 0.11
 
+/**
+ * (4.0) Places looked at where the seven-segment timer of the video before was. Fewer than for solid digits, and no search far away:
+ * each place costs several looks at the whole picture, and when the timer isn't there they are all lost (PC: +9 s, 32 places with
+ * the far search, on a video with another timer). A timer that is there shows in the first places where it runs.
+ */
+private const val HINT_SEGMENT_PLACES = 16
+
 /** First rows worth checking: their likeness, and how many per place. */
 private const val ROW_WORTH = 0.72
 private const val ROWS_CHECKED = 24
@@ -100,6 +107,53 @@ private fun spreadPlaces(duration: Double, most: Int): List<Double> {
     return out.take(most).distinct()
 }
 
+/**
+ * The pictures of a run that begins with [first] at second [t], if all of them can be read with [grid] and rise with the clock; and the
+ * times they show. [frame] gives the others; [kept] keeps them for the next grid tried at this place.
+ */
+private fun rising(
+    grid: SegmentGrid, t: Double, first: GrayPic, kept: MutableMap<Int, GrayPic>, frame: (Double) -> GrayPic?
+): Pair<List<GrayPic>, List<Double>>? {
+    val shown = ArrayList<Double>()
+    for (k in 0 until SEGMENT_PICTURES) {
+        val g = if (k == 0) first else kept[k] ?: frame(t + k * SEGMENT_STEP)?.also { kept[k] = it } ?: return null
+        val (here, fits) = grid.located(g, 3)
+        if (fits < FITS) return null
+        shown.add(tenthsOf(here.read(g, grid.decimals + 1), grid.decimals) ?: return null)
+        // (seconds without their tens: a faint first digit may be missed)
+        if (abs((shown[k] - shown[0] - k * SEGMENT_STEP + 5).mod(10.0) - 5) > SEGMENT_OFF) return null
+    }
+    return Pair(listOf(first) + (1 until SEGMENT_PICTURES).map { kept.getValue(it) }, shown)
+}
+
+/**
+ * (4.0) The seven-segment timer where the one of the video before was ([hint]): at up to [HINT_SEGMENT_PLACES] places, its grid is looked
+ * for around there (also pushed a little), and must rise with the clock in six pictures as in [findSegments]. Null if it isn't there.
+ */
+fun findSegmentsNear(
+    pic: PicAt, durationSec: Double, hint: TimerHint.Segments, onProgress: (Int) -> Unit = {}, isCancelled: () -> Boolean = { false }
+): FoundSegments? {
+    fun frame(t: Double): GrayPic? {
+        if (isCancelled()) throw ScanCancelled()
+        return if (t > durationSec) null else pic.at(t)
+    }
+    val places = spreadPlaces(durationSec, HINT_SEGMENT_PLACES)
+    for ((i, t) in places.withIndex()) {
+        onProgress(min(99, 100 * (i + 1) / places.size))
+        if (t + (SEGMENT_PICTURES - 1) * SEGMENT_STEP > durationSec) continue
+        val first = frame(t) ?: continue
+        if (first.w != hint.frameW || first.h != hint.frameH) return null
+        var (grid, fits) = hint.grid.located(first, 10)
+        if (fits < FITS) hint.grid.foundAgain(first).let { (g, f) -> if (f > fits) { grid = g; fits = f } }
+        if (fits < FITS) continue
+        val kept = HashMap<Int, GrayPic>()
+        val (pics, shown) = rising(grid, t, first, kept, ::frame) ?: continue
+        val (better, fit) = grid.located(first, 4).first.refined(pics)
+        return FoundSegments(better, t, shown, fit)
+    }
+    return null
+}
+
 /** Looks for a seven-segment timer. [onProgress] gets 0..100. Throws [ScanCancelled] when [isCancelled] says so. */
 fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}, isCancelled: () -> Boolean = { false }): SegmentResult {
     var places = 0
@@ -109,20 +163,6 @@ fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}
     fun frame(t: Double): GrayPic? {
         if (isCancelled()) throw ScanCancelled()
         return if (t > durationSec) null else pic.at(t)
-    }
-
-    /** The pictures of a run that begins with [first] at second [t], if all of them can be read and rise with the clock; and the times they show. */
-    fun rising(grid: SegmentGrid, t: Double, first: GrayPic, kept: MutableMap<Int, GrayPic>): Pair<List<GrayPic>, List<Double>>? {
-        val shown = ArrayList<Double>()
-        for (k in 0 until SEGMENT_PICTURES) {
-            val g = if (k == 0) first else kept[k] ?: frame(t + k * SEGMENT_STEP)?.also { kept[k] = it } ?: return null
-            val (here, fits) = grid.located(g, 3)
-            if (fits < FITS) return null
-            shown.add(tenthsOf(here.read(g, grid.decimals + 1), grid.decimals) ?: return null)
-            // (seconds without their tens: a faint first digit may be missed)
-            if (abs((shown[k] - shown[0] - k * SEGMENT_STEP + 5).mod(10.0) - 5) > SEGMENT_OFF) return null
-        }
-        return Pair(listOf(first) + (1 until SEGMENT_PICTURES).map { kept.getValue(it) }, shown)
     }
 
     val held = ArrayList<Pair<Sighting, SegmentGrid>>()
@@ -145,7 +185,7 @@ fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}
             tried++
             checked++
             heldSegmentRow(grid, first)?.let { (row, here) -> held.add(Pair(Sighting(t, row), here)) }
-            val (pics, shown) = rising(grid, t, first, kept) ?: continue
+            val (pics, shown) = rising(grid, t, first, kept, ::frame) ?: continue
             val fitStart = System.nanoTime()
             checkNanos += fitStart - checkStart
             val (better, fit) = grid.located(first, 4).first.refined(pics)

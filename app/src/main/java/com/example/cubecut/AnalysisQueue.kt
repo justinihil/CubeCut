@@ -95,6 +95,7 @@ object AnalysisQueue {
     private var running = false
     private var runs = 0
     private var batchFrom = 1                               // (4.0) the first job of the batch now running (see [batch])
+    private var lastTimer: TimerHint? = null                // (4.0) where the timer of the video scanned last was (TimerHint)
 
     /**
      * (4.0) The videos of the batch now running, or of the last one: every job asked for since the queue last started from empty.
@@ -272,9 +273,11 @@ object AnalysisQueue {
                         AnalysisService.update(app, p.percent, 100, batchLabel(p))
                     },
                     isCancelled = { job.cancelAsked },
-                    timing = timing
+                    timing = timing,
+                    hint = lastTimer
                 )
             }
+            auto.hint?.let { lastTimer = it }
             if (auto.choices.isNotEmpty()) {
                 val picture = withContext(Dispatchers.IO) { grabFrame(app, job.uri, (auto.choices[0].t * 1000).toLong()) }
                 if (picture != null) {

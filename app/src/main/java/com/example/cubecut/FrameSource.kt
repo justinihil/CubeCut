@@ -83,6 +83,9 @@ interface GraySource {
 
     /** (4.0) Which source this is, and why (debug Scan report). */
     fun note(): String = ""
+
+    /** (4.0) [on]: make the picture the scan will most likely ask for next while it reads this one (PrefetchSource). */
+    fun setAhead(on: Boolean) {}
     fun close()
 }
 

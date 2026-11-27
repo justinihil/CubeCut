@@ -278,6 +278,69 @@ class ReferenceVideoTest {
         assertTrue("$problems", problems.isEmpty())
     }
 
+    /**
+     * (4.0) Find solves with the timer of the video before as a hint (TimerHint): CUBECUT_REF_HINT_FROM is that video (a path), the
+     * videos are CUBECUT_REF_VIDEOS in CUBECUT_REF. Each video is found and scanned the usual way and with the hint: the solves must be
+     * exactly the same; the lines tell how much searching the hint saved. A hint of another kind, or from elsewhere, must change nothing.
+     */
+    @Test
+    fun findsWhereTheTimerOfTheVideoBeforeWas() {
+        val from = System.getenv("CUBECUT_REF_HINT_FROM").orEmpty()
+        assumeTrue("set CUBECUT_REF_HINT_FROM to run", from.isNotEmpty())
+        val wanted = System.getenv("CUBECUT_REF_VIDEOS").orEmpty()
+        assumeTrue("set CUBECUT_REF_VIDEOS to run", wanted.isNotEmpty())
+        // the hint: where the timer of that video is, found as Find solves would
+        val src = FfmpegVideo(File(from))
+        val size = src.at(src.duration / 2)!!.let { Pair(it.w, it.h) }
+        val srcSeg = findSegments({ src.at(it) }, src.duration).found
+        val hint: TimerHint = if (srcSeg != null) {
+            TimerHint.Segments(SegmentTracker.follow(srcSeg, { src.at(it) }, src.duration).grid, size.first, size.second)
+        } else {
+            val t = findTimer({ src.at(it) }, src.duration, fonts(File(from))).timer!!
+            TimerHint.Solid(t.numbers, t.digitHeight, size.first, size.second)
+        }
+        src.close()
+        println("HINT from ${File(from).name}: ${if (hint is TimerHint.Solid) "solid ${hint.numbers}" else "seven segments"}")
+        val problems = ArrayList<String>()
+        val targets = dir.listFiles { f -> f.name.endsWith(".mp4") && (wanted == "1" || wanted in f.name) }.orEmpty().sortedBy { it.name }
+        for (v in targets) {
+            val runs = listOf<TimerHint?>(null, hint).map { h ->
+                val video = FfmpegVideo(v)
+                val started = System.nanoTime()
+                var seg = (h as? TimerHint.Segments)?.let { findSegmentsNear({ video.at(it) }, video.duration, it) }
+                val how: String
+                val solves: List<FoundSolve>
+                if (seg == null) {
+                    var segments: FoundSegments? = null
+                    val r = findTimer({ video.at(it) }, video.duration, fonts(v), otherKind = {
+                        segments = findSegments({ video.at(it) }, video.duration).found
+                        segments != null
+                    }, hint = h as? TimerHint.Solid)
+                    seg = segments
+                    how = "${r.places} places, ${r.wholeFrames} whole pictures, ${r.areaReads} area reads, from hint ${r.fromHint}"
+                    solves = if (seg != null) emptyList() else r.timer?.let { t ->
+                        scanFoundTimer({ video.at(it)?.let { p -> t.read(p)?.text } }, video.duration, t.runningDecimals, t.stoppedDecimals, video.frameSec, { video.frameTime(it) }).solves
+                    } ?: emptyList()
+                } else {
+                    how = "seven segments where the hint was"
+                    solves = emptyList()
+                }
+                val found = seg
+                val all = if (found != null) {
+                    val timer = SegmentTracker.follow(found, { video.at(it) }, video.duration)
+                    scanSegments(timer, video.duration, video.frameSec, { video.frameTime(it) }).solves
+                } else solves
+                val sec = (System.nanoTime() - started - video.nanos) / 1e9
+                println("HINTED ${v.name} ${if (h == null) "usual" else "with hint"}: $how; ${"%.1f".format(sec)} s without getting pictures; " +
+                        "${"%.1f".format(video.nanos / 1e9)} s getting them; solves ${all.map { "%.3f %s".format(Locale.ROOT, it.stopSec, it.timeText) }}")
+                video.close()
+                all.map { Triple(Math.round(it.stopSec * 1000), it.timeText, it.note) }
+            }
+            if (runs[0] != runs[1]) problems.add("${v.name}: the hint changed the solves")
+        }
+        assertTrue("$problems", problems.isEmpty())
+    }
+
     /** The whole chain on the first video, with the picture moved after a third and again after two thirds of it. */
     @Test
     fun smallCameraMoves() {

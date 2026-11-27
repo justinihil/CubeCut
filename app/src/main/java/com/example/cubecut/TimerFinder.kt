@@ -52,6 +52,12 @@ private const val MAX_PLACES_FULL_SIZE = 64
 private const val EARLY_PLACES = 40
 private const val EARLY_PLACES_FULL_SIZE = 16
 
+/**
+ * (4.0) Places looked at around the timer of the video before (TimerHint) before the usual search: a video of one solve needs about 12
+ * to see three runs, and each one is a few reads of a small area instead of four searches of the whole picture.
+ */
+const val HINT_PLACES = 32
+
 /** Two numbers run at the same moment: the smaller one could be the timer too when it is at least this tall compared with the bigger one... */
 private const val RIVAL_HEIGHT = 0.6
 
@@ -105,6 +111,19 @@ fun interface PicAt {
 
 /** A box in frame pixels ([right] and [bottom] are just outside). */
 data class Area(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
+/**
+ * (4.0) Where the timer of the video scanned before was (owner, 2026-11-27: a batch of single-solve videos spent most of its time
+ * finding the timer). Videos filmed one after another mostly have it in the same place, so it is looked for there first, with the same
+ * proof as anywhere (it must rise with the clock); if it isn't there, the usual search follows. Only for pictures of the same size.
+ */
+sealed class TimerHint(val frameW: Int, val frameH: Int) {
+    /** Solid digits: the box around its numbers and their height. */
+    class Solid(val numbers: Area, val digitHeight: Double, frameW: Int, frameH: Int) : TimerHint(frameW, frameH)
+
+    /** Seven segments: its grid. */
+    class Segments(val grid: SegmentGrid, frameW: Int, frameH: Int) : TimerHint(frameW, frameH)
+}
 
 /** (4.0) The part [area] of a [frameW] x [frameH] picture, as [pic]. [area] lies inside the picture. */
 class AreaPic(val pic: GrayPic, val area: Area, val frameW: Int, val frameH: Int) {
@@ -161,7 +180,8 @@ class FinderResult(
     val frozen: List<String>,           // the stopped times it saw while watching
     val wholeFrames: Int,               // how many whole pictures were searched
     val areaReads: Int,                 // how many times only the timer's area was read
-    val choices: List<TimerChoice> = emptyList()
+    val choices: List<TimerChoice> = emptyList(),
+    val fromHint: Boolean = false       // (4.0) found where the timer of the video before was (TimerHint)
 )
 
 private class Seen(val t: Double, val row: TimeRow)
@@ -233,13 +253,15 @@ private fun rises(a: TimeRow, b: TimeRow, dt: Double): Boolean {
  */
 fun findTimer(
     pic: PicAt, durationSec: Double, fonts: DigitShapes, near: Area? = null, onProgress: (Int) -> Unit = {}, isCancelled: () -> Boolean = { false },
-    otherKind: (() -> Boolean)? = null
-): FinderResult = TimerSearch(pic, durationSec, fonts, near, onProgress, isCancelled, otherKind).run()
+    otherKind: (() -> Boolean)? = null, hint: TimerHint.Solid? = null
+): FinderResult = TimerSearch(pic, durationSec, fonts, near, onProgress, isCancelled, otherKind, hint).run()
 
 private class TimerSearch(
     private val pic: PicAt, private val duration: Double, private val fonts: DigitShapes, private val near: Area?,
-    private val onProgress: (Int) -> Unit, private val isCancelled: () -> Boolean, private val otherKind: (() -> Boolean)?
+    private val onProgress: (Int) -> Unit, private val isCancelled: () -> Boolean, private val otherKind: (() -> Boolean)?,
+    private val hint: TimerHint.Solid?
 ) {
+    private var fromHint = false
     private val notes = ArrayList<String>()
     private val frozen = ArrayList<String>()
     private var places = 0
@@ -263,9 +285,25 @@ private class TimerSearch(
         return p
     }
 
-    private fun result(timer: FoundTimer?) = FinderResult(timer, notes, places, frozen, wholeFrames, areaReads, if (timer == null) choices else emptyList())
+    private fun result(timer: FoundTimer?) =
+        FinderResult(timer, notes, places, frozen, wholeFrames, areaReads, if (timer == null) choices else emptyList(), fromHint && timer != null)
 
     fun run(): FinderResult {
+        // (4.0) first where the timer of the video before was; the same runs and the same learning follow as after the usual search
+        if (hint != null && near == null) {
+            val hits = hintedSearch(hint)
+            if (hits.isNotEmpty()) {
+                fromHint = true
+                val rows = hits.flatMap { h -> h.map { it.row } }
+                dark = mostCommon(rows.map { it.dark })!!
+                height = median(rows.map { it.height })
+                setArea(rows)
+                val timer = learn(hits)
+                if (timer != null) return result(timer)
+                fromHint = false
+                notes.add("The usual search follows.")
+            }
+        }
         val half = Search(SEARCH_SHRINK, MAX_PLACES)
         val full = Search(1, MAX_PLACES_FULL_SIZE)
         var hits: List<Run> = emptyList()
@@ -303,6 +341,11 @@ private class TimerSearch(
             sightings.addAll(sightingsOf(t + k * RUN_STEP, rows))
             seen.add(rows)
         }
+        return runsOf(t, seen)
+    }
+
+    /** The runs among the rows [seen] in [RUN_PICTURES] pictures from second [t] on. */
+    private fun runsOf(t: Double, seen: List<List<TimeRow>>): List<Run> {
         val out = ArrayList<Run>()
         for (first in seen[0]) {
             val run = arrayListOf(Seen(t, first))
@@ -317,6 +360,57 @@ private class TimerSearch(
     }
 
     private fun worst(run: Run): Float = run.minOf { it.row.likeness }
+
+    /**
+     * (4.0) The search of [search] (the same places, the same runs, one per place, three wanted), but only in the area around the timer of
+     * the video before ([h], with the room the watch allows), read as a part of the picture. Empty if it isn't there.
+     */
+    private fun hintedSearch(h: TimerHint.Solid): List<Run> {
+        val n = h.numbers
+        val room = Area(
+            max(0, (n.left - WATCH_ACROSS * h.digitHeight).toInt()), max(0, (n.top - WATCH_DOWN * h.digitHeight).toInt()),
+            min(h.frameW, (n.right + WATCH_ACROSS * h.digitHeight).toInt()), min(h.frameH, (n.bottom + WATCH_DOWN * h.digitHeight).toInt())
+        )
+        val s = Search(SEARCH_SHRINK, HINT_PLACES)
+        searchShrink = s.shrink
+        val hits = ArrayList<Run>()
+        var looked = 0
+        for (t in s.order) {
+            if (t + (RUN_PICTURES - 1) * RUN_STEP + 0.5 > duration) continue
+            looked++
+            places++
+            onProgress(min(45, places))
+            val seen = ArrayList<List<TimeRow>>()
+            for (k in 0 until RUN_PICTURES) {
+                if (isCancelled()) throw ScanCancelled()
+                val p = pic.area(t + k * RUN_STEP, room) ?: break
+                if (p.frameW != h.frameW || p.frameH != h.frameH) {
+                    notes.add("The video before had pictures of another size.")
+                    return emptyList()
+                }
+                frameW = p.frameW
+                frameH = p.frameH
+                areaReads++
+                val rows = findTimeRows(p.pic, fonts, listOf(false, true), shrink = searchShrink, offX = p.area.left, offY = p.area.top)
+                if (rows.isEmpty()) break
+                seen.add(rows)
+            }
+            if (seen.size == RUN_PICTURES) hits.addAll(runsOf(t, seen))
+            if (hits.size < RUNS_WANTED) continue
+            val biggest = hits.maxOf { it[0].row.height }
+            val best = LinkedHashMap<Double, Run>()
+            for (r in hits) if (r[0].row.height > 0.8 * biggest) {
+                val b = best[r[0].t]
+                if (b == null || worst(r) > worst(b)) best[r[0].t] = r
+            }
+            if (best.size >= RUNS_WANTED) {
+                notes.add("Search: $looked places where the timer of the video before was, ${best.size} runs of the timer")
+                return best.values.toList()
+            }
+        }
+        notes.add("Where the timer of the video before was: $looked places, not there")
+        return emptyList()
+    }
 
     /** A search through the video that can stop and go on: the pictures' size, the places (spread over the video, halving the gaps), and what it saw. */
     private inner class Search(val shrink: Int, most: Int) {
