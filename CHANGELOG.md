@@ -41,6 +41,7 @@ The saved data is upgraded to database v12 on first start.
 - **Times already on the timer when the video begins** are no longer kept (they were listed in the editor as *Not a clip*). Saved ones go at the upgrade.
 
 ### Changed
+- **Find solves gets its pictures faster:** it only prepares the part of each picture around the timer, and skips frames no other frame needs. Nothing it finds changes.
 - **Find solves runs in the background.** You can leave the editor, use the Gallery or open another video while it runs; videos wait their turn. Only the video being scanned is locked (its list, *Forget*, *Delete video* and *Reconnect*). The notification names the video, and one says when all are done.
 - Closing CubeCut from the recent apps no longer stops Find solves.
 - **"Extra time" is now called "Padding"** everywhere.

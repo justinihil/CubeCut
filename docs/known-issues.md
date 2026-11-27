@@ -38,6 +38,7 @@ Things that are wrong, fragile or untested today. When one is fixed, remove it f
 
 Only the Samsung Galaxy S25 Ultra has been used. These have not been checked:
 - other phones, Android 11–14 (the `dataSync` service path) and the backup exclusion on a real transfer;
+- (4.0) leaving out frames nothing needs (`LEAVE_OUT_FRAMES`) on other phones' decoders and on H.264 video; a decoder that fails falls back to the slow source, one that quietly decodes wrong would make the scan worse;
 - Android 15's 6-hour background limit (`onTimeout`);
 - HDR or 10-bit footage, 4K, frame rates other than 30 and 60 fps, the frame-source fallback actually triggering;
 - a timer showing 2 decimals (supported in code, never tried);

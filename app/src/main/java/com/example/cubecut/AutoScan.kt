@@ -76,7 +76,11 @@ fun analyzeByItself(
     val frameSec = videoFrameSec(context, uri)
     val source = openFrameSource(context, uri, durationMs)
     try {
-        val pic = PicAt { t -> source.gray(t) }
+        // (4.0) a scan of a found timer asks for its area only, which the decoder makes much quicker than the whole picture
+        val pic = object : PicAt {
+            override fun at(t: Double): GrayPic? = source.gray(t)
+            override fun area(t: Double, area: Area): AreaPic? = source.grayArea(t, area)
+        }
         var segments: FoundSegments? = null
         var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
         val otherKind = {
@@ -104,10 +108,10 @@ fun analyzeByItself(
         }
         val timer = found.timer ?: return AutoScanResult(null, null, found.choices)
         val scan = if (timer.held) scanHeldTimer(
-            { t -> pic.at(t)?.let { timer.readHeld(it) } }, durationSec, frameSec,
+            { t -> pic.area(t, timer.area)?.let { timer.readHeld(it) } }, durationSec, frameSec,
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
         ) else scanFoundTimer(
-            { t -> pic.at(t)?.let { timer.read(it)?.text } }, durationSec, timer.runningDecimals, timer.stoppedDecimals, frameSec,
+            { t -> pic.area(t, timer.area)?.let { timer.read(it)?.text } }, durationSec, timer.runningDecimals, timer.stoppedDecimals, frameSec,
             { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled
         )
         return AutoScanResult(scan, timer.numbers, emptyList())

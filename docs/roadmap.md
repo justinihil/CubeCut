@@ -156,6 +156,11 @@ The owner's notes of 2026-11-26, after the first phone test step:
 - **Built 2026-11-26**; phone test steps 45 to 50.
 - **Owner notes of 2026-11-27:** the editor's Setup box is gone (padding with *Clip settings*, tags with *Set tags…* in the Gallery); "Extra time" is now **Padding**, with an ⓘ; the viewer's *Delete exported file* (a tap with nothing to delete points to the editor for a find that isn't a solve); **Not a solve** next to *It's fine* in the viewer (red outline, a warning, then the solve goes; no Undo); left-over finds are never saved (DB v12 deletes the saved ones). Phone test steps 56 to 64.
 
+### 4.0-S Faster Find solves (owner, 2026-11-27) 🟡
+- **Built, not measured on the phone:** the timing split in the debug *Scan report*; only the timer's area made for found timers; frames nothing needs left out ([algorithms § 2](algorithms.md#2-where-frames-come-from)). Neither changes a picture the readers see; the 4x4 and flowtimer reference videos give the same reads and results on the PC.
+- **Next, one at a time, each against all reference videos** (they change which pictures are read): the cut search starting where the running clock says the stop is (about 10 frames instead of 30 per solve); 4 s instead of 2 s steps while a found time is held (reset, scramble and solve take at least 6 s); longer steps while the timer runs with the same start (weakens the clock check and the hints, so last).
+- Not planned: fewer block sizes when reading, reusing a reading when the picture looks the same, halving the gap for the cut (blended frames), smaller pictures.
+
 ### 4.0-T Phone test and test rounds ⬜
 - First, one numbered phone test list for 4.0-0 to 4.0-H, grouped by phase: given to the owner on 2026-11-26 and kept in `D:\CubeCutRef\v4.0-phone-test.md` (54 steps).
 - Then the owner imports batches of videos and puts the ones that didn't work in `D:\CubeCutRef`. Claude finds out why (answer first), and the fixes follow as separate commits. Each round starts a new thread: `Test round: <files and what happened>`.

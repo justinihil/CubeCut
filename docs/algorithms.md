@@ -69,7 +69,12 @@ Deleted cuts leave no trace, so a re-scan can bring one back. That was a deliber
   - If the check fails, the decoder throws, or it stalls for about 4 s, the scan switches to `RetrieverSource` for good.
   - Logcat tag `CubeCut`, lines starting `Frame source:`, say which source is used and why.
 
-**Tried and removed:** scanning in 2–3 parallel pieces gave no gain (105 s vs 107 s), because the hardware decoder is the bottleneck.
+**Faster pictures (4.0, owner 2026-11-27).** Measured before on the phone: csTimer 01 spent 86.7 of its 106.8 s scan getting 3036 pictures (28 ms each), against 6.5 ms reading each. Two changes, neither of which changes a picture the readers see (`GrayPixelsTest` checks the pixels against the pre-4.0 code):
+- **Only what is read is made.** The phone's videos are stored on their side (rotation tag −90), so every picture was stretched (2 million pixels) into one array and turned into a second. Now the decoder's plane is stretched and turned in one pass, in 64-pixel tiles (`uprightPart`, `GrayPixels.kt`), and a scan of a found timer (csTimer, phone apps, flowtimer, final times) asks for the timer's area only (`PicAt.area` → `GraySource.grayArea` → `AreaPic`): a few percent of the picture. The seven-segment tracker still takes whole pictures (its searches reach past the timer), made in the same one pass.
+- **Frames nothing needs are left out** (`isDroppable`, `LEAVE_OUT_FRAMES`). The phone's HEVC is stored in four temporal layers (keyframe every 0.95 s); its top layer's non-reference frames (NAL type 2, TSA_N), 31 to 40 % of all frames in the reference videos, are never used to decode another frame. One before the frame asked for is not sent to the decoder at all. H.264: frames with `nal_ref_idc` 0. A frame's length now also comes from the frames sent in (`noteInput`), since the frames that come out are no longer next to each other.
+- The debug *Scan report* says where the time went: `Pictures while scanning: decoder … s (N frames, M left out, J jumps), grey … s` (`FrameStats`).
+
+**Tried and removed:** scanning in 2–3 parallel pieces gave no gain (105 s vs 107 s), because the hardware decoder is the bottleneck. (That was measured with `MediaMetadataRetriever`, before `CodecSource`.)
 
 ## 3. Reading the timer
 

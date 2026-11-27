@@ -223,14 +223,26 @@ private fun byItselfReport(
     try {
         var pictures = 0
         var inPictures = 0L
-        val pic = PicAt { t ->
-            val start = System.nanoTime()
-            val p = source.gray(t)
-            pictures++
-            inPictures += System.nanoTime() - start
-            p
+        val pic = object : PicAt {
+            override fun at(t: Double): GrayPic? {
+                val start = System.nanoTime()
+                val p = source.gray(t)
+                pictures++
+                inPictures += System.nanoTime() - start
+                return p
+            }
+
+            // (4.0) as Find solves does: a found timer's area only
+            override fun area(t: Double, area: Area): AreaPic? {
+                val start = System.nanoTime()
+                val p = source.grayArea(t, area)
+                pictures++
+                inPictures += System.nanoTime() - start
+                return p
+            }
         }
 
+        val atStart = source.stats()?.copy()
         val start = System.nanoTime()
         val segments = ArrayList<String>()
         var segmentSec = 0.0
@@ -258,6 +270,7 @@ private fun byItselfReport(
             "Took ${"%.1f".format(finding)} s: ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, ${"%.1f".format(finding - inPictures / 1e9)} s " +
                     "for ${r.wholeFrames} whole-picture searches and ${r.areaReads} area reads"
         )
+        source.stats()?.let { s -> atStart?.let { how.add("Pictures while finding: " + s.since(it)) } }
         how.addAll(segments)
         segmentTimer?.let { return segmentReport(context, uri, durationSec, it, source, truth, videoName, app, how, onProgress, isCancelled) }
         if (r.timer == null && r.choices.isEmpty()) findHeldSegments(segmentTimes, pic, how)?.let {
@@ -271,8 +284,9 @@ private fun byItselfReport(
         pictures = 0
         inPictures = 0L
         var inReading = 0L
-        fun <T> timed(t: Double, look: (GrayPic) -> T?): T? {
-            val p = pic.at(t) ?: return null
+        val atScan = source.stats()?.copy()
+        fun <T> timed(t: Double, look: (AreaPic) -> T?): T? {
+            val p = pic.area(t, timer.area) ?: return null
             val s = System.nanoTime()
             return look(p).also { inReading += System.nanoTime() - s }
         }
@@ -290,6 +304,7 @@ private fun byItselfReport(
             "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, ${"%.1f".format(inReading / 1e9)} s reading " +
                     "(${"%.1f".format(inReading / 1e6 / maxOf(1, pictures))} ms each)"
         )
+        source.stats()?.let { s -> atScan?.let { how.add("Pictures while scanning: " + s.since(it)) } }
         val flagged = scan.solves.filter { it.note.isNotEmpty() }
         if (flagged.isNotEmpty()) how.add("Flagged for checking:")
         for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
@@ -345,14 +360,17 @@ private fun segmentReport(
         inPictures += System.nanoTime() - start
         p
     }
+    val atFollow = source.stats()?.copy()
     val followStart = System.nanoTime()
     val timer = SegmentTracker.follow(found, pic, durationSec, { onProgress(10 + it / 10, 100) }, isCancelled)
     how.add(
         "Followed: ${"%.1f".format((System.nanoTime() - followStart) / 1e9)} s, ${"%.1f".format(inPictures / 1e9)} s of it for $pictures pictures; " +
                 "grid refined with ${timer.refinedWith} pictures, fit ${"%.3f".format(timer.fit)}"
     )
+    source.stats()?.let { s -> atFollow?.let { how.add("Pictures while following: " + s.since(it)) } }
     pictures = 0
     inPictures = 0L
+    val atScan = source.stats()?.copy()
     val scanStart = System.nanoTime()
     val scan = scanSegments(
         timer, durationSec, videoFrameSec(context, uri), { t -> frameTimeOf(source, t) }, { done, total -> onProgress(20 + 80 * done / total, 100) }, isCancelled
@@ -363,6 +381,7 @@ private fun segmentReport(
         "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, the rest reading " +
                 "(${"%.1f".format((seconds * 1e3 - inPictures / 1e6) / maxOf(1, pictures))} ms each); ${timer.farLooks} looks further away; it moved ${across.toInt()} x ${down.toInt()} px"
     )
+    source.stats()?.let { s -> atScan?.let { how.add("Pictures while scanning: " + s.since(it)) } }
     val flagged = scan.solves.filter { it.note.isNotEmpty() }
     if (flagged.isNotEmpty()) how.add("Flagged for checking:")
     for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")
@@ -396,6 +415,7 @@ private fun heldSegmentReport(
         p
     }
     fun read(t: Double): String? = pic.at(t)?.let { heldSegmentRow(grid, it)?.first?.text }
+    val atScan = source.stats()?.copy()
     val scanStart = System.nanoTime()
     val scan = scanHeldTimer(
         { t -> pic.at(t)?.let { HeldShown(heldSegmentRow(grid, it)?.first?.text, null) } }, durationSec, videoFrameSec(context, uri),
@@ -406,6 +426,7 @@ private fun heldSegmentReport(
         "Scan: ${"%.1f".format(seconds)} s, ${"%.1f".format(inPictures / 1e9)} s for $pictures pictures, the rest reading " +
                 "(${"%.1f".format((seconds * 1e3 - inPictures / 1e6) / maxOf(1, pictures))} ms each)"
     )
+    source.stats()?.let { s -> atScan?.let { how.add("Pictures while scanning: " + s.since(it)) } }
     val flagged = scan.solves.filter { it.note.isNotEmpty() }
     if (flagged.isNotEmpty()) how.add("Flagged for checking:")
     for (f in flagged) how.add("${videoPlace(f.stopSec)} ${f.timeText}: ${f.note}")

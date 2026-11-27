@@ -95,10 +95,27 @@ private const val READ_HEIGHT = 45.0
 /** Gives the picture closest to a second of the video, or null if there is none. */
 fun interface PicAt {
     fun at(t: Double): GrayPic?
+
+    /**
+     * (4.0) Only [area] of the picture at second [t] (kept inside the picture), or null. The same pixels as cut from [at]; a source
+     * that can make just that part (the video decoder) does, which is much quicker than the whole picture.
+     */
+    fun area(t: Double, area: Area): AreaPic? = at(t)?.let { AreaPic.of(it, area) }
 }
 
 /** A box in frame pixels ([right] and [bottom] are just outside). */
 data class Area(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
+/** (4.0) The part [area] of a [frameW] x [frameH] picture, as [pic]. [area] lies inside the picture. */
+class AreaPic(val pic: GrayPic, val area: Area, val frameW: Int, val frameH: Int) {
+    companion object {
+        /** [area] of [frame], kept inside it, as before 4.0 (right and bottom cut to the picture). */
+        fun of(frame: GrayPic, area: Area): AreaPic {
+            val a = Area(area.left, area.top, min(frame.w, area.right), min(frame.h, area.bottom))
+            return AreaPic(frame.crop(a.left, a.top, a.right, a.bottom), a, frame.w, frame.h)
+        }
+    }
+}
 
 /** A timer the finder is sure about: where it is, how big its digits are, and what they look like. */
 class FoundTimer(
@@ -112,11 +129,17 @@ class FoundTimer(
     val held: Boolean = false           // found by its final times (HeldFinder.kt): it shows no running time with decimals
 ) {
     /** What the timer shows in a whole frame, or null. */
-    fun read(frame: GrayPic): TimeRow? = readArea(frame, area, digitHeight, dark, examples)
+    fun read(frame: GrayPic): TimeRow? = read(AreaPic.of(frame, area))
+
+    /** (4.0) The same from just its area ([PicAt.area] with [area]). */
+    fun read(p: AreaPic): TimeRow? = readArea(p, area, digitHeight, dark, examples)
 
     /** The same for a [held] timer: a final time, or whole seconds. */
-    fun readHeld(frame: GrayPic): HeldShown {
-        val rows = areaRows(frame, area, digitHeight, dark, examples, MIN_LIKENESS, whole = true, shrink = max(1, (digitHeight / READ_HEIGHT).roundToInt())).filter { isInside(it, area, digitHeight, frame) }
+    fun readHeld(frame: GrayPic): HeldShown = readHeld(AreaPic.of(frame, area))
+
+    /** (4.0) The same from just its area. */
+    fun readHeld(p: AreaPic): HeldShown {
+        val rows = areaRows(p, digitHeight, dark, examples, MIN_LIKENESS, whole = true, shrink = max(1, (digitHeight / READ_HEIGHT).roundToInt())).filter { isInside(it, area, digitHeight, p.frameW) }
         val time = pickRow(rows.filter { '.' in it.text && it.decimals == stoppedDecimals })
         if (time != null) return HeldShown(time.text, null)
         val whole = pickRow(rows.filter { '.' !in it.text && it.height > WHOLE_HEIGHT * digitHeight })
@@ -144,11 +167,15 @@ class FinderResult(
 private class Seen(val t: Double, val row: TimeRow)
 private typealias Run = List<Seen>
 
-private fun isInside(r: TimeRow, area: Area, height: Double, frame: GrayPic): Boolean =
-    (area.left <= 0 || r.left - area.left >= EDGE * height) && (area.right >= frame.w || area.right - r.right >= EDGE * height)
+private fun isInside(r: TimeRow, area: Area, height: Double, frameW: Int): Boolean =
+    (area.left <= 0 || r.left - area.left >= EDGE * height) && (area.right >= frameW || area.right - r.right >= EDGE * height)
 
 private fun readArea(frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes): TimeRow? =
-    pickRow(areaRows(frame, area, height, dark, examples, MIN_LIKENESS).filter { isInside(it, area, height, frame) })
+    readArea(AreaPic.of(frame, area), area, height, dark, examples)
+
+/** [area] as asked for (its right edge may lie outside the picture, which the edge rule needs), [p] as cut from the picture. */
+private fun readArea(p: AreaPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes): TimeRow? =
+    pickRow(areaRows(p, height, dark, examples, MIN_LIKENESS).filter { isInside(it, area, height, p.frameW) })
 
 /** A timer's area: its numbers with room around them, inside a [w] x [h] frame. */
 fun roomAround(rows: List<TimeRow>, height: Double, w: Int, h: Int): Area = roomAround(rows, height, MARGIN_ACROSS, MARGIN_DOWN, w, h)
@@ -161,10 +188,15 @@ private fun roomAround(rows: List<TimeRow>, height: Double, across: Double, down
 private fun areaRows(
     frame: GrayPic, area: Area, height: Double, dark: Boolean, examples: DigitShapes, minLikeness: Float, whole: Boolean = false,
     shrink: Int = max(1, (height / READ_HEIGHT).toInt())
+): List<TimeRow> = areaRows(AreaPic.of(frame, area), height, dark, examples, minLikeness, whole, shrink)
+
+private fun areaRows(
+    p: AreaPic, height: Double, dark: Boolean, examples: DigitShapes, minLikeness: Float, whole: Boolean = false,
+    shrink: Int = max(1, (height / READ_HEIGHT).toInt())
 ): List<TimeRow> =
     findTimeRows(
-        frame.crop(area.left, area.top, min(frame.w, area.right), min(frame.h, area.bottom)), examples, listOf(dark),
-        minHeight = 0.55 * height, maxHeight = 1.6 * height, minLikeness = minLikeness, offX = area.left, offY = area.top,
+        p.pic, examples, listOf(dark),
+        minHeight = 0.55 * height, maxHeight = 1.6 * height, minLikeness = minLikeness, offX = p.area.left, offY = p.area.top,
         shrink = shrink, whole = whole
     )
 

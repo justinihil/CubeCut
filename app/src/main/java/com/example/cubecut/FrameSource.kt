@@ -65,9 +65,33 @@ private const val CHECK_DETAIL = 10.0
 interface GraySource {
     fun gray(t: Double): GrayPic?
 
+    /** (4.0) Only [area] of it (kept inside the picture): the same pixels, made much quicker when the source can (CodecSource). */
+    fun grayArea(t: Double, area: Area): AreaPic? = gray(t)?.let { AreaPic.of(it, area) }
+
     /** The real time of the picture [gray] gave last, or NaN if this source doesn't know it. */
     fun lastFrameSec(): Double = Double.NaN
+
+    /** (4.0) Where the time for pictures went, for the debug Scan report; null if this source doesn't count. */
+    fun stats(): FrameStats? = null
     fun close()
+}
+
+/** (4.0) Where the time for getting pictures goes (debug Scan report). [since] tells the part after an earlier [copy]. */
+class FrameStats {
+    var decodeNanos = 0L        // waiting for the decoder, and moving it
+    var greyNanos = 0L          // turning its pictures into upright grey
+    var decoded = 0             // frames that came out of the decoder
+    var dropped = 0             // frames left out because nothing needs them (isDroppable)
+    var jumps = 0               // seeks to a keyframe
+
+    fun copy(): FrameStats = FrameStats().also {
+        it.decodeNanos = decodeNanos; it.greyNanos = greyNanos; it.decoded = decoded; it.dropped = dropped; it.jumps = jumps
+    }
+
+    /** "decoder 41.2 s (38102 frames, 25014 left out, 512 jumps), grey 3.1 s" for the part after [before]. */
+    fun since(before: FrameStats): String =
+        "decoder ${"%.1f".format((decodeNanos - before.decodeNanos) / 1e9)} s (${decoded - before.decoded} frames, " +
+                "${dropped - before.dropped} left out, ${jumps - before.jumps} jumps), grey ${"%.1f".format((greyNanos - before.greyNanos) / 1e9)} s"
 }
 
 /** The original way: ask Android for one exact frame each time. Slow, but works everywhere. */
@@ -123,29 +147,6 @@ private fun bitmapToGray(bmp: Bitmap): GrayPic {
     }
 }
 
-/** [src] turned clockwise by [deg] (0, 90, 180 or 270). 0 gives [src] itself (a GrayPic is never changed in place). */
-private fun rotated(src: GrayPic, deg: Int): GrayPic {
-    if (deg == 0) return src
-    val w = src.w
-    val h = src.h
-    val d = src.d
-    val turned = deg == 90 || deg == 270
-    val ow = if (turned) h else w
-    val oh = if (turned) w else h
-    val out = ByteArray(w * h)
-    for (y in 0 until h) {
-        for (x in 0 until w) {
-            val (nx, ny) = when (deg) {
-                90 -> Pair(h - 1 - y, x)
-                180 -> Pair(w - 1 - x, h - 1 - y)
-                else -> Pair(y, w - 1 - x)
-            }
-            out[ny * ow + nx] = d[y * w + x]
-        }
-    }
-    return GrayPic(ow, oh, out)
-}
-
 /** One running decoder that is moved along the video as little as possible. */
 class CodecSource(context: Context, uri: Uri) : GraySource {
     private val extractor = MediaExtractor()      // feeds the decoder
@@ -159,6 +160,14 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
     private var frameDurUs = 33_333L              // length of one frame; shrinks to the real value as frames come out
     private var fullRange = false                 // true if the brightness already uses 0..255 (otherwise 16..235 is stretched)
     private var scratch = ByteArray(0)
+    private var kind = FrameCodec.OTHER           // (4.0) how to tell a frame nothing needs (isDroppable)
+    private var topLayer = -1                     // (4.0) HEVC: the highest temporal layer, whose non-reference frames nothing needs
+    private val head = ByteArray(SAMPLE_HEAD)
+    private val recentIn = java.util.TreeSet<Long>()          // (4.0) the last input times, to know one frame's length (see noteInput)
+    private val recentOrder = ArrayDeque<Long>()
+
+    /** (4.0) Where the time went (debug Scan report). */
+    val stats = FrameStats()
 
     /** Degrees clockwise that turn the decoded picture upright. Worked out by [openFrameSource]. */
     var rotation = 0
@@ -179,7 +188,18 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
                 }
             }
             if (format == null) throw IOException("no video track")
-            val c = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
+            val mime = format.getString(MediaFormat.KEY_MIME)!!
+            if (LEAVE_OUT_FRAMES) {
+                kind = when (mime) {
+                    MediaFormat.MIMETYPE_VIDEO_HEVC -> FrameCodec.HEVC
+                    MediaFormat.MIMETYPE_VIDEO_AVC -> FrameCodec.AVC
+                    else -> FrameCodec.OTHER
+                }
+                if (kind == FrameCodec.HEVC) topLayer = try {
+                    format.getByteBuffer("csd-0")?.let { b -> ByteArray(b.remaining()).also { b.duplicate().get(it) } }?.let { hevcTopLayer(it) } ?: -1
+                } catch (e: Exception) { -1 }
+            }
+            val c = MediaCodec.createDecoderByType(mime)
             codec = c
             c.configure(format, null, null, 0)      // no surface: we get the pictures as plain memory
             c.start()
@@ -189,19 +209,29 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         }
     }
 
-    override fun gray(t: Double): GrayPic? {
-        val raw = rawGray(t) ?: return null
-        return rotated(raw, rotation)
-    }
+    override fun gray(t: Double): GrayPic? = picture(t) { c, o -> planePart(c, o, rotation, null).pic }
+
+    override fun grayArea(t: Double, area: Area): AreaPic? = picture(t) { c, o -> planePart(c, o, rotation, area) }
 
     override fun lastFrameSec(): Double = if (lastPts >= 0) lastPts / 1_000_000.0 else Double.NaN
 
+    override fun stats(): FrameStats = stats
+
     /** The picture at second [t] exactly as the decoder makes it (not turned). */
-    fun rawGray(t: Double): GrayPic? {
+    fun rawGray(t: Double): GrayPic? = picture(t) { c, o -> planePart(c, o, 0, null).pic }
+
+    /** The decoder moved to second [t], and its picture there made by [make]; the time is counted in [stats]. */
+    private fun <T> picture(t: Double, make: (MediaCodec, Int) -> T): T? {
         if (t < 0.0) return null
-        val targetUs = (t * 1_000_000.0).toLong()
-        moveTo(targetUs)
-        return decodeTo(targetUs)
+        val start = System.nanoTime()
+        val greyBefore = stats.greyNanos
+        try {
+            val targetUs = (t * 1_000_000.0).toLong()
+            moveTo(targetUs)
+            return decodeTo(targetUs, make)
+        } finally {
+            stats.decodeNanos += System.nanoTime() - start - (stats.greyNanos - greyBefore)
+        }
     }
 
     /**
@@ -217,6 +247,7 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         val keyUs = max0(probe.sampleTime)
         val mustSeek = posUs < 0 || targetUs < posUs - frameDurUs / 2 || keyUs - posUs > SEEK_PAYS_OFF_US
         if (mustSeek) {
+            stats.jumps++
             extractor.seekTo(targetUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             c.flush()
             inputDone = false
@@ -227,8 +258,12 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
 
     private fun max0(x: Long): Long = if (x < 0) 0L else x
 
-    /** Decodes until the first frame at (or just before) [targetUs] comes out, and returns it as gray. Null at the end of the video. */
-    private fun decodeTo(targetUs: Long): GrayPic? {
+    /**
+     * Decodes until the first frame at (or just before) [targetUs] comes out, and returns what [make] makes of it. Null at the end
+     * of the video. (4.0) A frame before the target that no other frame is decoded from is left out (isDroppable): it could never
+     * be handed out for this target, and nothing else needs it, so every frame that is handed out is the same as before.
+     */
+    private fun <T> decodeTo(targetUs: Long, make: (MediaCodec, Int) -> T): T? {
         val c = codec ?: throw IllegalStateException("closed")
         var idle = 0
         while (true) {
@@ -237,13 +272,28 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
                 val i = c.dequeueInputBuffer(0)
                 if (i < 0) break
                 val buf = c.getInputBuffer(i) ?: throw IOException("no decoder input buffer")
-                val size = extractor.readSampleData(buf, 0)
-                if (size < 0) {
-                    c.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                    inputDone = true
-                } else {
-                    c.queueInputBuffer(i, 0, size, extractor.sampleTime, 0)
+                while (true) {
+                    buf.clear()
+                    val size = extractor.readSampleData(buf, 0)
+                    if (size < 0) {
+                        c.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        inputDone = true
+                        break
+                    }
+                    val sampleUs = extractor.sampleTime
+                    noteInput(sampleUs)
+                    if (kind != FrameCodec.OTHER && sampleUs < targetUs - frameDurUs / 2) {
+                        val n = min(size, SAMPLE_HEAD)
+                        for (k in 0 until n) head[k] = buf.get(k)
+                        if (isDroppable(head, n, kind, topLayer)) {
+                            stats.dropped++
+                            extractor.advance()
+                            continue                // the same input buffer takes the next sample
+                        }
+                    }
+                    c.queueInputBuffer(i, 0, size, sampleUs, 0)
                     extractor.advance()
+                    break
                 }
             }
 
@@ -254,12 +304,13 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
                 val pts = info.presentationTimeUs
                 val end = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                 if (hasFrame) {
+                    stats.decoded++
                     if (lastPts >= 0 && pts > lastPts) frameDurUs = min(frameDurUs, max(1_000L, pts - lastPts))
                     lastPts = pts
                     posUs = pts
                     if (pts >= targetUs - frameDurUs / 2) {
                         try {
-                            return toGray(c, o)
+                            return make(c, o)
                         } finally {
                             c.releaseOutputBuffer(o, false)
                         }
@@ -288,44 +339,66 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         }
     }
 
-    /** The brightness (Y) plane of output buffer [index] in grey, stretched to 0..255 if the video uses 16..235. */
-    private fun toGray(c: MediaCodec, index: Int): GrayPic {
-        val image = c.getOutputImage(index) ?: throw IOException("the decoder gives no readable picture")
-        try {
-            val plane = image.planes[0]
-            if (plane.pixelStride != 1) throw IOException("unexpected picture layout")
-            var left = 0
-            var top = 0
-            var right = image.width
-            var bottom = image.height
-            val crop = image.cropRect
-            if (crop != null && crop.width() > 0 && crop.height() > 0) {
-                left = crop.left
-                top = crop.top
-                right = crop.right
-                bottom = crop.bottom
-            }
-            val stride = plane.rowStride
-            val need = stride * bottom
-            if (scratch.size < need) scratch = ByteArray(need)
-            val buf = plane.buffer
-            buf.rewind()
-            buf.get(scratch, 0, min(buf.remaining(), need))
+    /**
+     * (4.0) One frame's length, from the times of the frames sent to the decoder (each against its neighbours in time). Since frames
+     * are left out, the frames that come out are no longer next to each other, so their times alone could make it look twice as long.
+     */
+    private fun noteInput(us: Long) {
+        if (!recentIn.add(us)) return
+        recentOrder.addLast(us)
+        recentIn.lower(us)?.let { frameDurUs = min(frameDurUs, max(1_000L, us - it)) }
+        recentIn.higher(us)?.let { frameDurUs = min(frameDurUs, max(1_000L, it - us)) }
+        if (recentOrder.size > 32) recentIn.remove(recentOrder.removeFirst())
+    }
 
-            val w = right - left
-            val h = bottom - top
-            val out = ByteArray(w * h)
-            for (y in 0 until h) {
-                val from = (top + y) * stride + left
-                if (fullRange) {
-                    System.arraycopy(scratch, from, out, y * w, w)
-                } else {
-                    for (x in 0 until w) out[y * w + x] = STRETCH[scratch[from + x].toInt() and 0xFF]
+    /**
+     * The brightness (Y) plane of output buffer [index], turned clockwise by [deg] and stretched to 0..255 if the video uses 16..235:
+     * the whole picture, or (4.0) only upright [wanted] (kept inside the picture), in one pass (uprightPart, GrayPixels.kt). Only the
+     * rows and columns needed are copied out of the decoder.
+     */
+    private fun planePart(c: MediaCodec, index: Int, deg: Int, wanted: Area?): AreaPic {
+        val start = System.nanoTime()
+        try {
+            val image = c.getOutputImage(index) ?: throw IOException("the decoder gives no readable picture")
+            try {
+                val plane = image.planes[0]
+                if (plane.pixelStride != 1) throw IOException("unexpected picture layout")
+                var left = 0
+                var top = 0
+                var right = image.width
+                var bottom = image.height
+                val crop = image.cropRect
+                if (crop != null && crop.width() > 0 && crop.height() > 0) {
+                    left = crop.left
+                    top = crop.top
+                    right = crop.right
+                    bottom = crop.bottom
                 }
+                val w = right - left
+                val h = bottom - top
+                val (uw, uh) = uprightSize(w, h, deg)
+                val area = if (wanted == null) Area(0, 0, uw, uh) else Area(wanted.left, wanted.top, min(uw, wanted.right), min(uh, wanted.bottom))
+                if (area.left < 0 || area.top < 0 || area.right <= area.left || area.bottom <= area.top) {
+                    // an area partly outside the picture: cut from the whole picture, as before 4.0 (AreaPic.of)
+                    return AreaPic.of(planePart(c, index, deg, null).pic, wanted!!)
+                }
+                val raw = rawAreaFor(area, w, h, deg)
+                val rw = raw.right - raw.left
+                val rh = raw.bottom - raw.top
+                if (scratch.size < rw * rh) scratch = ByteArray(rw * rh)
+                val stride = plane.rowStride
+                val buf = plane.buffer
+                for (y in 0 until rh) {
+                    buf.position((top + raw.top + y) * stride + left + raw.left)
+                    buf.get(scratch, y * rw, rw)
+                }
+                val pic = uprightPart(RawPlane(scratch, rw, raw.left, raw.top, w, h), deg, if (fullRange) null else STRETCH, area)
+                return AreaPic(pic, area, uw, uh)
+            } finally {
+                image.close()
             }
-            return GrayPic(w, h, out)
         } finally {
-            image.close()
+            stats.greyNanos += System.nanoTime() - start
         }
     }
 
@@ -351,6 +424,12 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
 
     private companion object {
         const val SEEK_PAYS_OFF_US = 300_000L    // a keyframe more than this far ahead of the decoder: jump instead of decoding through
+
+        /**
+         * (4.0) Leave out frames nothing needs (isDroppable): about a third of a Samsung phone's HEVC frames, so the decoder has a third
+         * less to do. Every picture handed out stays the same. False switches it off (for comparing on a phone).
+         */
+        const val LEAVE_OUT_FRAMES = true
 
         /**
          * 16..235 stretched to 0..255, rounded to the nearest, as OpenCV's convertTo did ((y - 16) * 255 / 219 never lands on a half,
@@ -470,6 +549,7 @@ private fun calibrate(fast: CodecSource, slow: RetrieverSource, durationSec: Dou
 private class AutoSource(context: Context, uri: Uri, private val durationMs: Long) : GraySource {
     private val slow = RetrieverSource(context, uri, durationMs)
     private var fast: CodecSource? = null
+    private var counted: FrameStats? = null       // the fast source's counters (kept after a fall back, for the report)
 
     init {
         var c: CodecSource? = null
@@ -477,6 +557,7 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
             c = CodecSource(context, uri)
             if (calibrate(c, slow, durationMs / 1000.0)) {
                 fast = c
+                counted = c.stats
                 Log.d("CubeCut", "Frame source: MediaCodec (fast), rotation ${c.rotation}")
             } else {
                 c.close()
@@ -510,7 +591,27 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
         return slow.gray(t)
     }
 
+    override fun grayArea(t: Double, area: Area): AreaPic? {
+        if (t < 0.0 || t * 1000.0 > durationMs) return null
+        val f = fast
+        if (f != null) {
+            try {
+                return f.grayArea(t, area)
+            } catch (e: Exception) {
+                Log.d("CubeCut", "Frame source: fast path failed at ${t}s, back to MediaMetadataRetriever: ${e.message}")
+                try {
+                    f.close()
+                } catch (e2: Exception) {
+                }
+                fast = null
+            }
+        }
+        return slow.gray(t)?.let { AreaPic.of(it, area) }
+    }
+
     override fun lastFrameSec(): Double = fast?.lastFrameSec() ?: Double.NaN
+
+    override fun stats(): FrameStats? = counted
 
     override fun close() {
         try {
