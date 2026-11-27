@@ -48,9 +48,10 @@ class ReferenceVideoTest {
 
     /** What the scan saw goes to a file, for MissedSolvesTest. */
     private fun writeTrace(video: File, scan: ScanResult) {
-        if ((System.getenv("CUBECUT_REF_NEAR")?.toIntOrNull() ?: 0) != 0) return      // (MissedSolvesTest reads the traces of the real steps)
-        File(dir, "traces").mkdirs()
-        File(dir, "traces/" + video.name.replace(".mp4", ".trace.txt")).printWriter().use { w ->
+        // (MissedSolvesTest reads the traces of the real steps: a run with its steps moved writes elsewhere)
+        val folder = if ((System.getenv("CUBECUT_REF_NEAR")?.toIntOrNull() ?: 0) != 0) "traces-near" else "traces"
+        File(dir, folder).mkdirs()
+        File(dir, "$folder/" + video.name.replace(".mp4", ".trace.txt")).printWriter().use { w ->
             w.println("D ${scan.trace.durationSec}")
             for (x in scan.trace.seen) w.println("S ${x.t} ${x.text} ${x.readable}")
             for (x in scan.trace.running) w.println("R ${x.t} ${x.seconds}")

@@ -194,6 +194,15 @@ class FinderScanTest {
     }
 
     @Test
+    fun blurredDecimals_ghostDigitsReadTwice_areNotChosenByTheClock() {
+        // (4.0) a QiYi's digits ghost while they change and read as 8s: in the third solve (9.410, started at 90 s) the steps at 98.0
+        // and 98.5 both read "8.698" while it ran (8.0 and 8.5); the clock would take it, but it shows 0.7 s before 8.698 could stop
+        val found = scanBlurred { t -> if (t > 97.9 && t < 98.6) Pair("8.698", 8.6) else blurred(t) }
+        assertEquals(times.map { "%.3f".format(Locale.ROOT, it) }, found.map { it.timeText })
+        assertEquals(stop(2), found[2].stopSec, frame + 1e-6)
+    }
+
+    @Test
     fun blurredDecimals_oneDigitMisreadAfterTheStop_doesntMoveTheCut() {
         // the first pictures after the stop of no. 2 (14.070) read as 11.070 now and then
         val found = scanBlurred { t -> blurred(t).let { if (it.first == "14.070" && t < stop(1) + 1 && floor(t * 2) == t * 2) Pair("11.070", 11.0) else it } }

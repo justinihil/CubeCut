@@ -98,6 +98,13 @@ private const val STILL_RUNNING_READS = 3
 /** The same for a display whose last digits blur: so close to the clock. */
 private const val BLURRED_RISE_SEC = 0.3
 
+/**
+ * (4.0) A stopped time can't show before start + time: the vote's clock doesn't choose one first seen more than this too early (the
+ * start, from running times shown to the tenth, can be up to 0.1 s late). A QiYi's digits ghost while they change and read as 8s: two
+ * steps of one solve once both read "12.898" while it ran (12.2 and 12.7), 0.7 s before 12.898 could have been the time.
+ */
+private const val TOO_EARLY_SEC = 0.3
+
 /** It wasn't hidden when the timer was seen running, as the clock says, this short before the first frame. */
 private const val SEEN_RUNNING_SEC = 0.5
 
@@ -277,6 +284,7 @@ private class FinderScan(
             if (before.size >= 4) {
                 val start = middle(before.map { it.t - it.seconds })
                 val fits = counts.keys.filter { abs(votes[0].t - start - shownSeconds(it)) <= 0.75 }
+                    .filter { k -> shownTime(votes.first { it.text == k }.t) - start - shownSeconds(k) >= -TOO_EARLY_SEC }
                 if (fits.isNotEmpty() && time !in fits) time = fits.maxByOrNull { counts[it]!! }!!
             }
             val first = votes.first { it.text == time }.t
@@ -315,13 +323,15 @@ private class FinderScan(
             }
             t -= COARSE_BACK_STEP
         }
-        val gapFrom = if (!other.isNaN()) other else max(lowest, earliest - 0.6)
+        // (4.0) from and to where those pictures really were: a step may have landed a frame or two off (GraySource.setNear)
+        val gapFrom = if (!other.isNaN()) min(other, shownTime(other)) else max(lowest, earliest - 0.6)
+        val last = max(earliest, shownTime(earliest))
         val frames = ArrayList<TimeAt>()
-        val n = ((earliest - gapFrom) / frameSec).toInt() + 3
+        val n = ((last - gapFrom) / frameSec).toInt() + 3
         frameByFrame {
             for (k in -1..n) {
                 val ft = gapFrom + k * frameSec
-                if (ft < 0 || ft > earliest + 2 * frameSec) continue
+                if (ft < 0 || ft > last + 2 * frameSec) continue
                 if (isCancelled()) throw ScanCancelled()
                 readAt(ft)?.let { frames.add(TimeAt(frameTime(ft), it)) }
             }

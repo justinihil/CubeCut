@@ -519,10 +519,11 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
         const val NEAR_SAMPLES = 240
 
         /**
-         * (4.0) Off for now (2026-11-27): with every step 2 frames late, QiYi 01 got one false solve (12.898, flagged) and with every
-         * step 2 frames early one flowtimer cut moved 2 frames (ReferenceVideoTest, CUBECUT_REF_NEAR). On when that is solved.
+         * (4.0) Steps may take the nearest frame of the lower layers. Off at first (2026-11-27): with every step 2 frames late QiYi 01
+         * got one false solve, with every step 2 frames early one flowtimer cut moved 2 frames. Both fixed in FinderScan (TOO_EARLY_SEC;
+         * the cut search from the pictures' real times); then every reference video was as good as before or better. False switches it off.
          */
-        const val STEPS_NEAR = false
+        const val STEPS_NEAR = true
 
         /**
          * 16..235 stretched to 0..255, rounded to the nearest, as OpenCV's convertTo did ((y - 16) * 255 / 219 never lands on a half,

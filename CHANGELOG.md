@@ -41,7 +41,8 @@ The saved data is upgraded to database v12 on first start.
 - **Times already on the timer when the video begins** are no longer kept (they were listed in the editor as *Not a clip*). Saved ones go at the upgrade.
 
 ### Changed
-- **Find solves gets its pictures faster:** it only prepares the part of each picture around the timer (also for QiYi-like timers), and skips frames no other frame needs. Nothing it finds changes.
+- **Find solves gets its pictures faster:** it only prepares the part of each picture around the timer (also for QiYi-like timers), skips frames no other frame needs, and its half-second steps may take a frame or two away when that needs less decoding (the cut itself is still found frame by frame).
+- A QiYi-like display whose digits ghost while they change can no longer make a running time look like a stopped one that the clock then picks.
 - **Copy report** in the progress panel (tap the bar above the tabs): for every video, how long it waited, found the timer and scanned, and where the time went, to paste into a message.
 - If the fast way of getting pictures doesn't check out at the first of its three test moments, the other two are tried before Find solves falls back to the slow way.
 - **Find solves runs in the background.** You can leave the editor, use the Gallery or open another video while it runs; videos wait their turn. Only the video being scanned is locked (its list, *Forget*, *Delete video* and *Reconnect*). The notification names the video, and one says when all are done.
