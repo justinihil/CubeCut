@@ -38,6 +38,13 @@ private const val SEGMENT_PLACES_SOFT = 20
  * clip: 76 places, about 4 s each on the phone). Long videos have their places further apart anyway.
  */
 private const val SEGMENT_GAP = 1.5
+
+/**
+ * (4.0-S2, step D) When no row was worth checking in this many places, there is no seven-segment display to find: the search stops.
+ * About twice the latest first row of a real display in the reference videos (place 10: a small QiYi on the desk of 4x4_02; the QiYi
+ * videos and digital 4 at place 1 to 3). A video without any timer showed none in all of its 36 to 88 places.
+ */
+private const val SEGMENT_EARLY_PLACES = 20
 private const val SOFT = 1.3
 
 /** A run is this many pictures, this far apart, all rising with the clock. */
@@ -70,7 +77,8 @@ class FoundSegments(val grid: SegmentGrid, val t: Double, val shown: List<Double
  */
 class SegmentResult(
     val found: FoundSegments?, val places: Int, val checked: Int, val rowsSec: Double, val checkSec: Double, val fitSec: Double,
-    val held: List<Pair<Sighting, SegmentGrid>> = emptyList()
+    val held: List<Pair<Sighting, SegmentGrid>> = emptyList(),
+    val firstChecked: Int = -1          // (4.0) the place where a row was first worth checking (-1: none was)
 )
 
 /** A final time stands still: this long before or after it was seen, it reads the same (as in HeldFinder.kt). */
@@ -181,6 +189,7 @@ fun findSegmentsNear(
 fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}, isCancelled: () -> Boolean = { false }): SegmentResult {
     var places = 0
     var checked = 0
+    var firstChecked = -1
     var rowsNanos = 0L
     var checkNanos = 0L
     fun frame(t: Double): GrayPic? {
@@ -192,6 +201,7 @@ fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}
     val sharp = spreadPlaces(durationSec, SEGMENT_PLACES)
     val all = sharp.map { Pair(it, false) } + sharp.take(SEGMENT_PLACES_SOFT).map { Pair(it, true) }
     for ((t, soft) in all) {
+        if (firstChecked < 0 && places >= SEGMENT_EARLY_PLACES) break
         places++
         onProgress(min(99, 100 * places / all.size))
         if (t + (SEGMENT_PICTURES - 1) * SEGMENT_STEP > durationSec) continue
@@ -207,16 +217,17 @@ fun findSegments(pic: PicAt, durationSec: Double, onProgress: (Int) -> Unit = {}
             val grid = SegmentGrid.through(row)?.widenedIn(first) ?: continue
             tried++
             checked++
+            if (firstChecked < 0) firstChecked = places
             heldSegmentRow(grid, first)?.let { (row, here) -> held.add(Pair(Sighting(t, row), here)) }
             val (pics, shown) = rising(grid, t, first, kept, ::frame) ?: continue
             val fitStart = System.nanoTime()
             checkNanos += fitStart - checkStart
             val (better, fit) = grid.located(first, 4).first.refined(pics)
-            return SegmentResult(FoundSegments(better, t, shown, fit), places, checked, rowsNanos / 1e9, checkNanos / 1e9, (System.nanoTime() - fitStart) / 1e9)
+            return SegmentResult(FoundSegments(better, t, shown, fit), places, checked, rowsNanos / 1e9, checkNanos / 1e9, (System.nanoTime() - fitStart) / 1e9, firstChecked = firstChecked)
         }
         checkNanos += System.nanoTime() - checkStart
     }
-    return SegmentResult(null, places, checked, rowsNanos / 1e9, checkNanos / 1e9, 0.0, held)
+    return SegmentResult(null, places, checked, rowsNanos / 1e9, checkNanos / 1e9, 0.0, held, firstChecked)
 }
 
 private fun softPic(p: GrayPic): GrayPic {

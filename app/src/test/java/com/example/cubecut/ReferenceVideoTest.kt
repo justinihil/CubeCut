@@ -222,7 +222,7 @@ class ReferenceVideoTest {
             val f = r.found
             println(
                 "SEGMENTS ${v.name}: ${if (f == null) "none" else "at ${f.t} s, ${f.grid.box(f.grid.decimals + 2)}, digits ${f.grid.height.toInt()} px, shown ${f.shown}, fit ${"%.3f".format(f.fit)}"}; " +
-                        "${r.places} places, ${r.checked} rows checked; seconds: ${"%.1f".format(r.rowsSec)} rows, ${"%.1f".format(r.checkSec)} checks, ${"%.1f".format(r.fitSec)} fit, ${"%.1f".format(video.nanos / 1e9)} pictures"
+                        "${r.places} places, ${r.checked} rows checked, first at place ${r.firstChecked}; seconds: ${"%.1f".format(r.rowsSec)} rows, ${"%.1f".format(r.checkSec)} checks, ${"%.1f".format(r.fitSec)} fit, ${"%.1f".format(video.nanos / 1e9)} pictures"
             )
             if (f != null) println("   slope ${f.grid.slope} lean ${f.grid.lean} pitch/h ${f.grid.pitch / f.grid.height} gap/h ${f.grid.gap / f.grid.height} w/h ${f.grid.digitWidth / f.grid.height} decimals ${f.grid.decimals}")
             if ("4x4" !in v.name && (f != null) != ("qiyi" in v.name)) problems.add(v.name)
