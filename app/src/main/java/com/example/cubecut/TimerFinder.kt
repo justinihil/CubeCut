@@ -256,12 +256,34 @@ private fun rises(a: TimeRow, b: TimeRow, dt: Double): Boolean {
 /**
  * Looks for the timer of a video of [durationSec] seconds. [near]: the number the user chose, only numbers there count (null = any).
  * [otherKind] is asked once, early, when no number was seen running yet: it looks for another kind of timer, and true ends this search.
- * [onProgress] gets 0..100. Throws [ScanCancelled] when [isCancelled] says so.
+ * [onProgress] gets the places looked at so far, in all its searches (at most [solidPlaceBudget]). Throws [ScanCancelled] when
+ * [isCancelled] says so.
  */
 fun findTimer(
     pic: PicAt, durationSec: Double, fonts: DigitShapes, near: Area? = null, onProgress: (Int) -> Unit = {}, isCancelled: () -> Boolean = { false },
     otherKind: (() -> Boolean)? = null, hint: TimerHint.Solid? = null
 ): FinderResult = TimerSearch(pic, durationSec, fonts, near, onProgress, isCancelled, otherKind, hint).run()
+
+/** The places of one search, in the order they are looked at: spread over the video, halving the gaps, on the half second. */
+private fun searchOrder(duration: Double, most: Int): List<Double> {
+    val all = ArrayList<Double>()
+    var q = 2
+    while (all.size < most) {
+        for (i in 0 until q) all.add(round(duration * (2 * i + 1) / (2 * q) * 2) / 2)
+        q *= 2
+    }
+    return all.take(most).distinct()
+}
+
+/**
+ * (4.0) How many places [findTimer] looks at in a video of [durationSec] seconds when it finds nothing (with [hinted]: also where the
+ * last video's timer was). For the progress bar only: a short video has fewer places, so its bar fills as fast (owner, 2026-11-28: the
+ * bar stood still while the timer wasn't found).
+ */
+fun solidPlaceBudget(durationSec: Double, hinted: Boolean): Int {
+    fun n(most: Int) = searchOrder(durationSec, most).count { it + (RUN_PICTURES - 1) * RUN_STEP + 0.5 <= durationSec }
+    return (if (hinted) n(HINT_PLACES) else 0) + n(MAX_PLACES) + n(MAX_PLACES_FULL_SIZE)
+}
 
 private class TimerSearch(
     private val pic: PicAt, private val duration: Double, private val fonts: DigitShapes, private val near: Area?,
@@ -273,6 +295,7 @@ private class TimerSearch(
     private val notes = ArrayList<String>()
     private val frozen = ArrayList<String>()
     private var places = 0
+    private var looked = 0                              // (4.0) places looked at in all the searches, for the progress bar
     private var wholeFrames = 0
     private var areaReads = 0
     private var choices: List<TimerChoice> = emptyList()
@@ -399,7 +422,7 @@ private class TimerSearch(
             if (t + (RUN_PICTURES - 1) * RUN_STEP + 0.5 > duration) continue
             looked++
             places++
-            onProgress(min(45, places))
+            onProgress(++looked)
             val seen = ArrayList<List<TimeRow>>()
             for (k in 0 until RUN_PICTURES) {
                 if (isCancelled()) throw ScanCancelled()
@@ -440,13 +463,7 @@ private class TimerSearch(
         val runs = ArrayList<Run>()
 
         init {
-            val all = ArrayList<Double>()
-            var q = 2
-            while (all.size < most) {
-                for (i in 0 until q) all.add(round(duration * (2 * i + 1) / (2 * q) * 2) / 2)
-                q *= 2
-            }
-            order = all.take(most).distinct()
+            order = searchOrder(duration, most)
         }
     }
 
@@ -462,7 +479,7 @@ private class TimerSearch(
             val t = s.order[s.next++]
             if (t + (RUN_PICTURES - 1) * RUN_STEP + 0.5 > duration) continue
             places = ++s.places
-            onProgress(min(45, places))
+            onProgress(++looked)
             hits.addAll(runsAt(t).filter { isNear(it) })
             if (hits.size < RUNS_WANTED) continue
             val biggest = hits.maxOf { it[0].row.height }

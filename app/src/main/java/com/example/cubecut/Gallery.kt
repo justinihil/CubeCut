@@ -1079,7 +1079,7 @@ private fun scanBadgeText(f: Footage): Pair<String, Boolean>? {
     val state = job?.state
     return when {
         state == ScanState.WAITING -> Pair("Waiting to scan", false)
-        state == ScanState.SCANNING -> Pair("Finding solves ${job.percent}%", false)
+        state == ScanState.SCANNING -> Pair("Finding solves ${(job.done * 100).toInt()}%", false)
         // (4.0-H) once solves were added by hand, "not found" is no longer news
         (state == ScanState.NO_TIMER || (state == null && f.scanState == SCAN_NO_TIMER)) && f.cutCount == 0 -> Pair("Timer not found", true)
         state == ScanState.ASKS || (state == null && f.scanState == SCAN_ASKS) -> Pair("Choose the timer", true)
@@ -1144,7 +1144,7 @@ private fun FootageCell(
         // (4.0) this video's own scan, as a thin bar along the top of its picture (the Gallery's bar shows the whole batch)
         val job = AnalysisQueue.jobOf(f.id)
         if (job?.state == ScanState.SCANNING) {
-            LinearProgressIndicator(progress = { job.percent / 100f }, modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(4.dp))
+            LinearProgressIndicator(progress = { job.done }, modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(4.dp))
         }
         FlashOverlay(highlight)
         MoreButton(if (columns >= 5) 22.dp else 30.dp, Modifier.align(Alignment.BottomEnd).padding(4.dp), onMenu)
@@ -1193,7 +1193,7 @@ private fun FootageRow(
             // (4.0) this video's own scan
             val job = AnalysisQueue.jobOf(f.id)
             if (job?.state == ScanState.SCANNING) {
-                LinearProgressIndicator(progress = { job.percent / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp))
+                LinearProgressIndicator(progress = { job.done }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp))
             }
         }
         if (hintCount > 0) TextButton(onClick = onHints) { Text(placesToCheckText(hintCount), color = AppColors.check, style = MaterialTheme.typography.labelMedium) }

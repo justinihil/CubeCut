@@ -16,6 +16,8 @@
  */
 package com.example.cubecut
 
+import kotlin.math.min
+import kotlin.math.max
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -248,7 +250,7 @@ private fun byItselfReport(
         var segmentSec = 0.0
         var segmentTimer: FoundSegments? = null
         var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
-        val r = findTimer(pic, durationSec, fonts, null, { onProgress(it / 10, 100) }, isCancelled, otherKind = {
+        val r = findTimer(pic, durationSec, fonts, null, { onProgress(min(99, 100 * it / max(1, solidPlaceBudget(durationSec, false))), 100) }, isCancelled, otherKind = {
             val before = pictures
             val beforeNanos = inPictures
             val from = System.nanoTime()

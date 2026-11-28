@@ -349,6 +349,114 @@ class ReferenceVideoTest {
         assertTrue("$problems", problems.isEmpty())
     }
 
+    /**
+     * (4.0) What finding the timer costs, as Find solves does it (analyzeByItself, AutoScan.kt): the last video's timer first (F0), the
+     * usual search with the other kinds after 40 + 16 places (F1-F7), then the scan. CUBECUT_MEASURE is the video files in CUBECUT_REF in
+     * the order of the batch, separated by "|". Each video is measured alone (no timer before it), then the batch in that order with the
+     * timer of the video before, as the app's queue keeps it. The fonts are all the app's. Prints the places and pictures (whole and area,
+     * the phone's decoder cost) and the seconds without getting pictures; measures only, checks nothing. CUBECUT_MEASURE_SCAN=0 skips the scans.
+     */
+    @Test
+    fun measuresFindingLikeTheApp() {
+        val list = System.getenv("CUBECUT_MEASURE").orEmpty()
+        assumeTrue("set CUBECUT_MEASURE to run", list.isNotEmpty())
+        val scanToo = System.getenv("CUBECUT_MEASURE_SCAN") != "0"
+        val fonts = DigitShapes.from(DrawnTime.styles)
+        val files = list.split('|').map { File(dir, it.trim()) }
+        for (f in files) assertTrue("missing ${f.name}", f.exists())
+        // CUBECUT_MEASURE_BATCH=0: each video alone only
+        val modes = if (System.getenv("CUBECUT_MEASURE_BATCH") == "0") listOf("ALONE") else listOf("ALONE", "BATCH")
+        for (mode in modes) {
+            var last: TimerHint? = null
+            for (v in files) {
+                val hint = if (mode == "BATCH") last else null
+                val video = FfmpegVideo(v)
+                var whole = 0
+                var areas = 0
+                val pic = object : PicAt {
+                    override fun at(t: Double): GrayPic? { whole++; return video.at(t) }
+                    override fun area(t: Double, area: Area): AreaPic? { areas++; return video.at(t)?.let { AreaPic.of(it, area) } }
+                }
+                val started = System.nanoTime()
+                var segPlaces = 0
+                var segments: FoundSegments? = null
+                var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
+                var fromHint = false
+                if (hint is TimerHint.Segments) findSegmentsNear(pic, video.duration, hint)?.let { segments = it; fromHint = true }
+                // each part: wall seconds without getting pictures, and whole pictures (F1-F3 | F4 | F5-F7 solid | F7 seven segments)
+                val parts = ArrayList<String>()
+                var partStart = System.nanoTime()
+                var partNanos = video.nanos
+                var partWhole = 0
+                fun endPart(name: String) {
+                    val now = System.nanoTime()
+                    parts.add("$name ${"%.1f".format((now - partStart - (video.nanos - partNanos)) / 1e9)} s / ${whole - partWhole} pictures")
+                    partStart = now; partNanos = video.nanos; partWhole = whole
+                }
+                var segDetail = ""
+                val found = if (segments != null) null else findTimer(pic, video.duration, fonts, null, otherKind = {
+                    endPart("F0-F3")
+                    val r = findSegments(pic, video.duration)
+                    segPlaces = r.places
+                    segments = r.found
+                    segmentTimes = r.held
+                    segDetail = "rows ${"%.1f".format(r.rowsSec)} s, checks ${"%.1f".format(r.checkSec)} s (${r.checked} rows), ${r.held.size} final-time readings"
+                    endPart("F4")
+                    segments != null
+                }, hint = hint as? TimerHint.Solid)
+                endPart(if (segDetail.isEmpty()) "F0-F2" else "F5-F7 solid")
+                if (found?.fromHint == true) fromHint = true
+                // the last kind: a seven-segment timer by its final times (as analyzeByItself, after the search)
+                var heldGrid: SegmentGrid? = null
+                if (segments == null && found!!.timer == null && found.choices.isEmpty()) {
+                    heldGrid = findHeldSegments(segmentTimes, pic)
+                    endPart("F7 seven segments")
+                }
+                val findSec = (System.nanoTime() - started - video.nanos) / 1e9
+                val findWhole = whole
+                val findAreas = areas
+                val s = segments
+                val kind = when {
+                    s != null -> "seven segments" + if (fromHint) " (where the last video's was)" else ""
+                    heldGrid != null -> "seven segments by final times"
+                    found!!.timer?.held == true -> "solid by final times"
+                    found.timer != null -> "solid running" + if (fromHint) " (where the last video's was)" else ""
+                    found.choices.isNotEmpty() -> "ASKS which number"
+                    else -> "NOT FOUND"
+                }
+                val solidPlaces = found?.places ?: 0
+                println("MEASURE $mode ${v.name}: $kind; finding ${"%.1f".format(findSec)} s without getting pictures, $findWhole whole pictures, " +
+                        "$findAreas area reads; solid places $solidPlaces, segment places $segPlaces, hint ${if (hint == null) "none" else hint.javaClass.simpleName}")
+                println("   parts: ${parts.joinToString(" | ")}" + if (segDetail.isEmpty()) "" else "; F4: $segDetail")
+                found?.notes?.forEach { println("   $it") }
+                // the scan, and the timer the next video starts from (only a running timer gives one, as in the app)
+                var scan: ScanResult? = null
+                var next: TimerHint? = null
+                if (s != null) {
+                    val timer = SegmentTracker.follow(s, pic, video.duration)
+                    next = TimerHint.Segments(timer.grid, video.at(video.duration / 2)!!.w, video.at(video.duration / 2)!!.h)
+                    if (scanToo) scan = scanSegments(timer, video.duration, video.frameSec, { video.frameTime(it) })
+                } else if (heldGrid != null) {
+                    if (scanToo) scan = scanHeldTimer({ t -> pic.at(t)?.let { HeldShown(heldSegmentRow(heldGrid, it)?.first?.text, null) } }, video.duration, video.frameSec, { video.frameTime(it) })
+                } else found!!.timer?.let { timer ->
+                    if (!timer.held) {
+                        val p = video.at(video.duration / 2)!!
+                        next = TimerHint.Solid(timer.numbers, timer.digitHeight, p.w, p.h, timer.examples.takeIf { it.isLearned })
+                    }
+                    if (scanToo) scan = if (timer.held) scanHeldTimer({ t -> pic.area(t, timer.area)?.let { timer.readHeld(it) } }, video.duration, video.frameSec, { video.frameTime(it) })
+                    else scanFoundTimer({ t -> pic.area(t, timer.area)?.let { timer.read(it)?.text } }, video.duration, timer.runningDecimals, timer.stoppedDecimals, video.frameSec, { video.frameTime(it) })
+                }
+                val totalSec = (System.nanoTime() - started - video.nanos) / 1e9
+                scan?.let { sc ->
+                    println("   scan: ${sc.solves.size} solves ${sc.solves.map { "%.3f %s%s".format(Locale.ROOT, it.stopSec, it.timeText, if (it.note.isEmpty()) "" else " (check)") }}; " +
+                            "${whole - findWhole} whole pictures, ${areas - findAreas} area reads; all ${"%.1f".format(totalSec)} s without getting pictures")
+                }
+                if (next != null) last = next
+                video.close()
+            }
+        }
+    }
+
     /** The whole chain on the first video, with the picture moved after a third and again after two thirds of it. */
     @Test
     fun smallCameraMoves() {

@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlin.math.min
+import kotlin.math.max
 
 // (3.3-C) Find solves without a timer setup: the glue between the real video and the pure parts (TimerFinder.kt, FinderScan.kt), and the
 // window that asks which number is the timer when CubeCut isn't sure.
@@ -65,7 +67,11 @@ class ScanTiming {
     var source = ""                     // GraySource.note()
     var frameSec = 0.0
     var size = ""                       // "1080 x 1920"
+    var readySec = 0.0                  // (4.0) before the search: the fonts, the frame rate, opening the video
     var findSec = 0.0
+    var segmentsSec = 0.0               // (4.0) of findSec: looking for a seven-segment timer
+    var lastCheckSec = 0.0              // (4.0) a seven-segment timer by its final times, after the search
+    var saveSec = 0.0                   // (4.0) after the scan: saving the solves and the places to check
     var followSec = 0.0                 // seven segments only
     var scanSec = 0.0
     var findPictures = ""               // FrameStats.since for each part
@@ -94,12 +100,14 @@ fun analyzeByItself(
     timing: ScanTiming = ScanTiming(), hint: TimerHint? = null
 ): AutoScanResult {
     val durationSec = durationMs / 1000.0
+    val entered = System.nanoTime()
     val fonts = loadDigitFonts(context)
     val frameSec = videoFrameSec(context, uri)
     timing.frameSec = frameSec
     // (4.0) the next picture made while this one is read (PrefetchSource): off, see READ_AHEAD
     val source = if (READ_AHEAD) PrefetchSource(openFrameSource(context, uri, durationMs), frameSec) else openFrameSource(context, uri, durationMs)
     var partStart = System.nanoTime()
+    timing.readySec = (partStart - entered) / 1e9
     var partStats = source.stats()?.copy()
     /** The seconds since the last part began, and what the pictures took in it; the next part begins now. */
     fun part(): Pair<Double, String> {
@@ -126,34 +134,45 @@ fun analyzeByItself(
         }
         // (4.0) a timer chosen by the user is looked for where it was chosen, not where the one of the video before was
         val hinted = if (near == null) hint else null
+        // (4.0) while looking for the timer, the bar shows the share of every place the search would look at if it found nothing, so it
+        // moves all the way through a video without a timer (owner, 2026-11-28: it looked stuck at a few percent)
+        val segHintPlaces = if (hinted is TimerHint.Segments) segmentHintBudget(durationSec) else 0
+        val segPlaces = if (near == null) segmentPlaceBudget(durationSec) else 0
+        val budget = max(1, segHintPlaces + solidPlaceBudget(durationSec, hinted is TimerHint.Solid) + segPlaces)
+        var solidLooked = 0
+        var segLooked = 0
+        fun looking() = onProgress(true, min(99, 100 * (solidLooked + segLooked) / budget))
         var segments: FoundSegments? = null
         var segmentTimes: List<Pair<Sighting, SegmentGrid>> = emptyList()
         val otherKind = {
-            val r = findSegments(pic, durationSec, { onProgress(true, 5 + it / 20) }, isCancelled)
+            val from = System.nanoTime()
+            val r = findSegments(pic, durationSec, { segLooked = segHintPlaces + segPlaces * it / 100; looking() }, isCancelled)
+            timing.segmentsSec = (System.nanoTime() - from) / 1e9
             segments = r.found
             segmentTimes = r.held
             segments != null
         }
         // (4.0) a seven-segment timer where the one of the video before was: then the usual search isn't needed
         var fromHint = false
-        if (hinted is TimerHint.Segments) findSegmentsNear(pic, durationSec, hinted, { onProgress(true, it / 10) }, isCancelled)?.let {
+        if (hinted is TimerHint.Segments) findSegmentsNear(pic, durationSec, hinted, { segLooked = segHintPlaces * it / 100; looking() }, isCancelled)?.let {
             segments = it
             fromHint = true
         }
         // (a number the user chose is a solid one)
         val found = if (segments != null) null
-        else findTimer(pic, durationSec, fonts, near, { onProgress(true, it / 10) }, isCancelled, if (near == null) otherKind else null, hinted as? TimerHint.Solid)
+        else findTimer(pic, durationSec, fonts, near, { solidLooked = it; looking() }, isCancelled, if (near == null) otherKind else null, hinted as? TimerHint.Solid)
         if (found?.fromHint == true) fromHint = true
         part().let { (sec, pics) -> timing.findSec = sec; timing.findPictures = pics }
         segments?.let { s ->
             timing.timer = "seven segments (QiYi-like)" + (if (fromHint) ", where it was in the video before" else "")
-            val timer = SegmentTracker.follow(s, pic, durationSec, { onProgress(true, 10 + it / 10) }, isCancelled)
+            // (4.0) following it is the first tenth of reading it
+            val timer = SegmentTracker.follow(s, pic, durationSec, { onProgress(false, it / 10) }, isCancelled)
             part().let { (sec, pics) -> timing.followSec = sec; timing.followPictures = pics }
             // (4.0) the half-second steps may take a nearby frame of the video's lower layers (GraySource.setNear)
             source.setNear(true)
             source.setAhead(true)
             val scan = scanSegments(
-                timer, durationSec, frameSec, { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 20 + 80 * done / total) }, isCancelled,
+                timer, durationSec, frameSec, { t -> frameTimeOf(source, t) }, { done, total -> onProgress(false, 10 + 90 * done / total) }, isCancelled,
                 { source.setNear(!it) }
             )
             source.setAhead(false)
@@ -163,7 +182,10 @@ fun analyzeByItself(
         }
         found!!
         // last: a seven-segment timer that shows only its final times (csTimer's "digital" fonts with "solve"), from what the search above read
-        if (found.timer == null && found.choices.isEmpty()) findHeldSegments(segmentTimes, pic)?.let { grid ->
+        val lastCheck = System.nanoTime()
+        val heldGrid = if (found.timer == null && found.choices.isEmpty()) findHeldSegments(segmentTimes, pic) else null
+        timing.lastCheckSec = (System.nanoTime() - lastCheck) / 1e9
+        heldGrid?.let { grid ->
             timing.timer = "seven segments, by its final times"
             part()
             val scan = scanHeldTimer(

@@ -91,9 +91,13 @@ fun batchReportText(jobs: List<ScanJob>): String {
         out.add("   Took ${"%.1f".format(took)} s (${"%.1f".format(perMinute)} s per minute of video), after waiting ${"%.0f".format(waited)} s")
         if (tm == null) continue
         out.add("   Timer: ${tm.timer}")
-        out.add("   Finding the timer ${"%.1f".format(tm.findSec)} s" + (if (tm.findPictures.isNotEmpty()) ": pictures ${tm.findPictures}" else ""))
+        out.add("   Getting ready ${"%.1f".format(tm.readySec)} s")
+        out.add("   Finding the timer ${"%.1f".format(tm.findSec)} s" + (if (tm.segmentsSec > 0) " (seven segments ${"%.1f".format(tm.segmentsSec)} s)" else "") +
+                (if (tm.findPictures.isNotEmpty()) ": pictures ${tm.findPictures}" else ""))
+        if (tm.lastCheckSec >= 0.05) out.add("   Last check (seven segments by final times) ${"%.1f".format(tm.lastCheckSec)} s")
         if (tm.followSec > 0) out.add("   Following it ${"%.1f".format(tm.followSec)} s" + (if (tm.followPictures.isNotEmpty()) ": pictures ${tm.followPictures}" else ""))
         if (tm.scanSec > 0) out.add("   Scanning ${"%.1f".format(tm.scanSec)} s" + (if (tm.scanPictures.isNotEmpty()) ": pictures ${tm.scanPictures}" else ""))
+        if (tm.saveSec >= 0.05) out.add("   Saving ${"%.1f".format(tm.saveSec)} s")
         out.add("   ${tm.pictures} pictures; source: ${tm.source}")
     }
     return out.joinToString("\n")

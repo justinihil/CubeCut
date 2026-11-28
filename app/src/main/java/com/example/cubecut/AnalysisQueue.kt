@@ -19,6 +19,7 @@ package com.example.cubecut
 import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -68,8 +69,9 @@ class ScanOutcome(
 class ScanJob(val footageId: Long, val uri: Uri, val durationMs: Long, title: String, val near: Area?, val run: Int) {
     var title by mutableStateOf(title)
     var state by mutableStateOf(ScanState.WAITING)
-    var percent by mutableIntStateOf(0)
+    var percent by mutableIntStateOf(0)         // of the part it is in: looking for the timer, or reading it
     var finding by mutableStateOf(false)        // true while it looks for the timer, false while it reads it along the video
+    var done by mutableFloatStateOf(0f)         // (4.0) 0..1 of the whole video: both parts, weighed as in [scanCostSec]
     var outcome by mutableStateOf<ScanOutcome?>(null)
 
     /** (4.0) For the progress panel's Copy report: when it was asked for, began and ended (ms), and where its time went. */
@@ -81,6 +83,21 @@ class ScanJob(val footageId: Long, val uri: Uri, val durationMs: Long, title: St
     @Volatile
     var cancelAsked = false
 }
+
+/**
+ * (4.0) What a video's Find solves roughly costs on the phone: looking for the timer takes about this long whatever the length of the
+ * video, and reading it about [READ_COST_PER_SEC] per second of video (owner's phone, 2026-11-28: 10 to 25 s to find a timer; 4.9 to
+ * 8.8 s per minute to read one). Weighs the videos of a batch for the bar, so a short video whose timer is hard to find counts for
+ * more than its length.
+ */
+private const val FIND_COST_SEC = 20.0
+private const val READ_COST_PER_SEC = 0.12
+
+/** (4.0) The rough cost of Find solves on a video of [durationMs] (see [FIND_COST_SEC]). */
+fun scanCostSec(durationMs: Long): Double = FIND_COST_SEC + READ_COST_PER_SEC * maxOf(0L, durationMs) / 1000.0
+
+/** (4.0) The share of that cost that is looking for the timer. */
+fun findShare(durationMs: Long): Double = FIND_COST_SEC / scanCostSec(durationMs)
 
 object AnalysisQueue {
     /** Every video asked for since the app started, oldest first; finished ones stay until [clearFinished]. */
@@ -111,14 +128,14 @@ object AnalysisQueue {
 
     fun batchProgress(): BatchProgress {
         val b = batch
-        val totalMs = b.sumOf { maxOf(1L, it.durationMs) }.toDouble()
-        var doneMs = 0.0
-        for (j in b) doneMs += maxOf(1L, j.durationMs) * when {
+        val total = b.sumOf { scanCostSec(it.durationMs) }
+        var done = 0.0
+        for (j in b) done += scanCostSec(j.durationMs) * when {
             !j.state.isActive -> 1.0
-            j.state == ScanState.SCANNING -> j.percent / 100.0
+            j.state == ScanState.SCANNING -> j.done.toDouble()
             else -> 0.0
         }
-        return BatchProgress(b.count { !it.state.isActive }, b.size, if (totalMs > 0) (doneMs / totalMs).toFloat() else 0f)
+        return BatchProgress(b.count { !it.state.isActive }, b.size, if (total > 0) (done / total).toFloat() else 0f)
     }
 
     /** (4.0) Stops the scan in progress and every waiting one. The videos stay in Sessions, not scanned; each can be scanned again. */
@@ -268,6 +285,7 @@ object AnalysisQueue {
     private suspend fun scanOne(app: Context, job: ScanJob) {
         job.state = ScanState.SCANNING
         job.percent = 0
+        job.done = 0f
         job.finding = true
         val started = System.currentTimeMillis()
         job.startedMs = started
@@ -280,6 +298,8 @@ object AnalysisQueue {
                     onProgress = { finding, percent ->
                         job.finding = finding
                         job.percent = percent
+                        val share = findShare(job.durationMs)
+                        job.done = (if (finding) share * percent / 100.0 else share + (1 - share) * percent / 100.0).toFloat()
                         val p = batchProgress()
                         AnalysisService.update(app, p.percent, 100, batchLabel(p))
                     },
@@ -303,7 +323,9 @@ object AnalysisQueue {
                 job.state = ScanState.NO_TIMER
                 return
             }
+            val saving = System.nanoTime()
             val outcome = withContext(Dispatchers.IO) { saveScan(app, job, auto, report, started) }
+            timing.saveSec = (System.nanoTime() - saving) / 1e9
             if (outcome == null) {
                 job.outcome = ScanOutcome(FORGOTTEN)
                 job.state = ScanState.CANCELLED

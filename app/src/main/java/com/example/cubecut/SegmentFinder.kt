@@ -96,6 +96,12 @@ fun findHeldSegments(held: List<Pair<Sighting, SegmentGrid>>, pic: PicAt, notes:
     return gridOf.getValue(still[0].row)
 }
 
+/** (4.0) How many places [findSegments] looks at in a video of [durationSec] seconds when it finds nothing. For the progress bar. */
+fun segmentPlaceBudget(durationSec: Double): Int = spreadPlaces(durationSec, SEGMENT_PLACES).size.let { it + min(SEGMENT_PLACES_SOFT, it) }
+
+/** (4.0) The same for [findSegmentsNear] (where the last video's timer was). */
+fun segmentHintBudget(durationSec: Double): Int = spreadPlaces(durationSec, HINT_SEGMENT_PLACES).size
+
 /** Seconds spread over the video, halving the gaps. */
 private fun spreadPlaces(duration: Double, most: Int): List<Double> {
     val out = ArrayList<Double>()

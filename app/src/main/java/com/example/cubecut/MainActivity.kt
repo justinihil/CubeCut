@@ -1492,7 +1492,7 @@ fun EditorScreen(request: EditorRequest, onClose: (Long?, Double?) -> Unit) {
 
                 // ===== Find solves: at the top of the list (4.0: the Setup box is gone; padding and tags are set in the Gallery) =====
                 // (4.0-B) the progress is the queue's (or the scan report's)
-                val progressPercent = if (reportRunning) (if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0) else scanJob?.percent ?: 0
+                val progressPercent = if (reportRunning) (if (analysisTotal > 0) analysisDone * 100 / analysisTotal else 0) else ((scanJob?.done ?: 0f) * 100).toInt()
                 val waitingInQueue = !reportRunning && scanJob?.state == ScanState.WAITING
                 Button(
                     onClick = { showFindConfirm = true },
