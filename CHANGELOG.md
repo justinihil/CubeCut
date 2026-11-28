@@ -50,6 +50,8 @@ The saved data is upgraded to database v12 on first start.
 - While a video looks for its timer, its bar moves through the whole search, also when there is no timer to find (it stayed at a few percent).
 - **A video without a timer gives up much sooner:** Find solves looks at about a third as many places (still twice what the hardest test video needed).
 - **Looking for a QiYi-like timer is several times faster**, above all on busy pictures (a patterned mat) and in short videos.
+- **Find solves goes on with the screen off:** the phone no longer falls asleep in the middle of a batch.
+- If the phone's video decoder fails during a scan, it is started again instead of finishing the video the slow way (one video took 20 minutes instead of 3).
 - If the fast way of getting pictures doesn't check out at the first of its three test moments, the other two are tried before Find solves falls back to the slow way.
 - **Find solves runs in the background.** You can leave the editor, use the Gallery or open another video while it runs; videos wait their turn. Only the video being scanned is locked (its list, *Forget*, *Delete video* and *Reconnect*). The notification names the video, and one says when all are done.
 - Closing CubeCut from the recent apps no longer stops Find solves.

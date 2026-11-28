@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- (4.0) keeps the processor awake while Find solves runs (ADR-0019); Media3 declared it already, for playback -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!--
         No backups: CubeCut keeps everything on the phone. allowBackup="false" stops the Google backup; on Android 12 and newer
@@ -51,4 +53,4 @@
             android:foregroundServiceType="dataSync|mediaProcessing" />
     </application>
 
-</manifest>
+</manifest>

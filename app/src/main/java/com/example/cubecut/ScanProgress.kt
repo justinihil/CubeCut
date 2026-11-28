@@ -105,7 +105,9 @@ fun batchReportText(jobs: List<ScanJob>, installedMs: Long = 0L): String {
         if (tm.backSec >= 0.05) out.add("   Back to the queue ${"%.1f".format(tm.backSec)} s")
         if (tm.saveSec >= 0.05) out.add("   Saving ${"%.1f".format(tm.saveSec)} s")
         // (4.0) whatever no line above holds, so a gap can't hide (owner, 2026-11-28)
-        val lines = waitSec + tm.readySec + tm.findSec + tm.lastCheckSec + tm.followSec + tm.scanSec + tm.closeSec + tm.backSec + tm.saveSec
+        // (4.0) the parts are timed with a clock that stops while the phone sleeps; "Took" goes on (ADR-0019)
+        if (tm.asleepSec >= 0.5) out.add("   Phone asleep ${"%.1f".format(tm.asleepSec)} s (the scan stood still meanwhile)")
+        val lines = waitSec + tm.readySec + tm.findSec + tm.lastCheckSec + tm.followSec + tm.scanSec + tm.closeSec + tm.backSec + tm.saveSec + tm.asleepSec
         if (took - lines >= 0.5) out.add("   In none of these lines ${"%.1f".format(took - lines)} s")
         heatText(tm)?.let { out.add("   $it") }
         out.add("   ${tm.pictures} pictures; source: ${tm.source}")

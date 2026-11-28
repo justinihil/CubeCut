@@ -160,8 +160,11 @@ private fun bitmapToGray(bmp: Bitmap): GrayPic {
     }
 }
 
-/** One running decoder that is moved along the video as little as possible. */
-class CodecSource(context: Context, uri: Uri) : GraySource {
+/**
+ * One running decoder that is moved along the video as little as possible. [stats]: where its counts go (a decoder started again after a
+ * failure adds to the counts of the one before, so the report's parts stay right).
+ */
+class CodecSource(context: Context, uri: Uri, val stats: FrameStats = FrameStats()) : GraySource {
     private val extractor = MediaExtractor()      // feeds the decoder
     private val probe = MediaExtractor()          // only used to ask "where is the keyframe before this time?"
     private var codec: MediaCodec? = null
@@ -184,9 +187,6 @@ class CodecSource(context: Context, uri: Uri) : GraySource {
     private var nearSlackUs = 0L                  // ...and how far such a frame may be from the time asked for
     private var nearChecked = false
     private var holes = false                     // frames other frames need were left out since the last IDR: an exact read must jump
-
-    /** (4.0) Where the time went (debug Scan report). */
-    val stats = FrameStats()
 
     /** Degrees clockwise that turn the decoded picture upright. Worked out by [openFrameSource]. */
     var rotation = 0
@@ -644,13 +644,32 @@ private fun calibrate(fast: CodecSource, slow: RetrieverSource, durationSec: Dou
     return if (tried.isEmpty()) "no picture with enough detail to compare" else "best match " + tried.joinToString(", ")
 }
 
-/** Fast source with the old one as a safety net: if the decoder ever fails, every later read uses the old way. */
-private class AutoSource(context: Context, uri: Uri, private val durationMs: Long) : GraySource {
+/**
+ * (4.0) How often the fast decoder is started again in one video after it failed, before the old way takes over. A phone can take its
+ * decoder away for a moment (owner's phone, 2026-11-28: it failed 45 s into a 21 min video, with no message, and the old way then took
+ * 1057 s instead of about 100).
+ */
+private const val DECODER_RESTARTS = 2
+
+/** (4.0) An exception in words for the report: its kind, its message if it has one, and what MediaCodec adds. */
+private fun errorText(e: Exception): String {
+    val message = e.message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""
+    val codec = (e as? MediaCodec.CodecException)?.let { " (${it.diagnosticInfo}; transient ${it.isTransient}, recoverable ${it.isRecoverable})" } ?: ""
+    return e.javaClass.simpleName + message + codec
+}
+
+/**
+ * Fast source with the old one as a safety net. (4.0) If the decoder fails, a new one is started (at most [DECODER_RESTARTS] times); only
+ * if that fails too does every later read use the old way.
+ */
+private class AutoSource(private val context: Context, private val uri: Uri, private val durationMs: Long) : GraySource {
     private val slow = RetrieverSource(context, uri, durationMs)
     private var fast: CodecSource? = null
     private var counted: FrameStats? = null       // the fast source's counters (kept after a fall back, for the report)
     private var why = ""                          // (4.0) why the slow source is used, for the report
     private var slowFrom = -1.0                   // ...from which second of the video on (-1 = from the start, or not at all)
+    private var nearOn = false                    // (4.0) the last setNear, for a decoder started again
+    private val restarted = ArrayList<String>()   // (4.0) where and why the decoder was started again, for the report
 
     init {
         var c: CodecSource? = null
@@ -672,56 +691,77 @@ private class AutoSource(context: Context, uri: Uri, private val durationMs: Lon
             } catch (e2: Exception) {
             }
             fast = null
-            why = "the decoder failed to start: ${e.message ?: e.javaClass.simpleName}"
+            why = "the decoder failed to start: ${errorText(e)}"
             Log.d("CubeCut", "Frame source: MediaMetadataRetriever (fast path failed: ${e.message})")
         }
     }
 
     override fun gray(t: Double): GrayPic? {
         if (t < 0.0 || t * 1000.0 > durationMs) return null
-        val f = fast
-        if (f != null) {
+        var f = fast
+        while (f != null) {
             try {
                 return f.gray(t)
             } catch (e: Exception) {
-                fellBack(f, t, e)
+                f = recover(f, t, e)
             }
         }
         return slow.gray(t)
     }
 
-    private fun fellBack(f: CodecSource, t: Double, e: Exception) {
-        Log.d("CubeCut", "Frame source: fast path failed at ${t}s, back to MediaMetadataRetriever: ${e.message}")
+    /**
+     * The decoder [f] failed when asked for second [t]: it is closed, and a new one started in its place (the same turn, the same counts),
+     * at most [DECODER_RESTARTS] times. Returns the new one, or null when the old way takes over from here.
+     */
+    private fun recover(f: CodecSource, t: Double, e: Exception): CodecSource? {
+        val what = errorText(e)
+        Log.d("CubeCut", "Frame source: fast path failed at ${t}s: $what")
         try {
             f.close()
         } catch (e2: Exception) {
         }
         fast = null
+        var failed = what
+        if (restarted.size < DECODER_RESTARTS) {
+            restarted.add("${videoPlace(t)} ($what)")
+            try {
+                val c = CodecSource(context, uri, f.stats)
+                c.rotation = f.rotation
+                c.setNear(nearOn)
+                fast = c
+                return c
+            } catch (e2: Exception) {
+                failed = "$what, then it failed to start again: ${errorText(e2)}"
+            }
+        }
         slowFrom = t
-        why = "the decoder failed: ${e.message ?: e.javaClass.simpleName}"
+        why = "the decoder failed: $failed"
+        return null
     }
 
     override fun setNear(on: Boolean) {
+        nearOn = on
         fast?.setNear(on)
     }
 
     override fun note(): String {
         val f = fast
+        val again = if (restarted.isEmpty()) "" else "; the decoder was started again at " + restarted.joinToString(", ")
         return when {
-            f != null -> "fast (MediaCodec), " + f.describe()
-            slowFrom >= 0 -> "SLOW (MediaMetadataRetriever) from ${videoPlace(slowFrom)} on: $why"
+            f != null -> "fast (MediaCodec), " + f.describe() + again
+            slowFrom >= 0 -> "SLOW (MediaMetadataRetriever) from ${videoPlace(slowFrom)} on: $why$again"
             else -> "SLOW (MediaMetadataRetriever): $why"
         }
     }
 
     override fun grayArea(t: Double, area: Area): AreaPic? {
         if (t < 0.0 || t * 1000.0 > durationMs) return null
-        val f = fast
-        if (f != null) {
+        var f = fast
+        while (f != null) {
             try {
                 return f.grayArea(t, area)
             } catch (e: Exception) {
-                fellBack(f, t, e)
+                f = recover(f, t, e)
             }
         }
         return slow.gray(t)?.let { AreaPic.of(it, area) }

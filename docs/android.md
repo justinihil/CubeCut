@@ -31,7 +31,7 @@ These are the 7 permissions in the merged debug manifest (`processDebugManifest`
 | `FOREGROUND_SERVICE_DATA_SYNC` | app | The service type on Android 11–14, where `mediaProcessing` doesn't exist |
 | `POST_NOTIFICATIONS` | app | The progress and "finished" notifications on 13+. Asked the first time *Continue* is pressed on Find solves. If refused, the scan still runs |
 | `ACCESS_NETWORK_STATE` | Media3 | Library default. Kept on purpose; it does not allow internet access |
-| `WAKE_LOCK` | Media3 | Library default for playback. Kept on purpose |
+| `WAKE_LOCK` | app, Media3 | Since 4.0 the app's own: the queue keeps the processor awake while Find solves runs ([ADR-0019](adr/0019-keep-the-processor-awake-while-scanning.md)). Media3 declares it too, for playback |
 | `com.example.cubecut.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | AndroidX core | Internal signature permission for non-exported dynamic receivers |
 
 **No storage permission is needed.** Videos come from `OpenDocument` with a persisted read grant, and exports go through MediaStore. **There is no INTERNET permission**, by design ([ADR-0001](adr/0001-offline-classic-cv-no-ml.md)). After changing dependencies, check the merged manifest with `./gradlew :app:processDebugManifest` and inspect `app/build/intermediates/merged_manifest/debug/`.

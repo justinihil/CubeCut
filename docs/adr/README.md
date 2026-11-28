@@ -24,3 +24,4 @@ To add a new one, copy [0000-template.md](0000-template.md) to the next number. 
 | [0016](0016-find-the-timer-without-ml.md) | Find and read solid-digit timers without ML, from example digits of open fonts | Accepted |
 | [0017](0017-finder-first-setup-by-hand-as-backup.md) | The finder comes first; the setup by hand is a backup and goes in 4.0 | Accepted; done in 4.0-0 |
 | [0018](0018-app-wide-analysis-queue.md) | Find solves runs in an app-wide queue, kept alive by the foreground service; the lock is per video | Accepted |
+| [0019](0019-keep-the-processor-awake-while-scanning.md) | The queue keeps the processor awake while it runs (partial wake lock); the report says how long the phone slept | Accepted |

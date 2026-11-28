@@ -82,6 +82,7 @@ class ScanTiming {
     var batteryEndC = Double.NaN
     var heatStart = -1
     var heatWorst = -1
+    var asleepSec = 0.0                 // (4.0) how long the phone slept meanwhile (the scan stood still), ADR-0019
     var followSec = 0.0                 // seven segments only
     var scanSec = 0.0
     var findPictures = ""               // FrameStats.since for each part

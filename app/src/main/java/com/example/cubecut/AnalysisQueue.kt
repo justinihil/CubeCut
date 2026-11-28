@@ -22,6 +22,7 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -109,6 +110,7 @@ fun findShare(durationMs: Long): Double = FIND_COST_SEC / scanCostSec(durationMs
  * Make it when the scan begins (on the main thread), [stop] it when it ends.
  */
 private class PhoneHeat(private val app: Context) {
+    private val sleptBefore = SystemClock.elapsedRealtime() - SystemClock.uptimeMillis()   // (4.0) the phone's time asleep so far
     private val startC = batteryCelsius(app)
     private val power = app.getSystemService(PowerManager::class.java)
     private val start = power?.currentThermalStatus ?: -1
@@ -126,6 +128,7 @@ private class PhoneHeat(private val app: Context) {
         timing?.batteryEndC = batteryCelsius(app)
         timing?.heatStart = start
         timing?.heatWorst = maxOf(worst, now)
+        timing?.asleepSec = (SystemClock.elapsedRealtime() - SystemClock.uptimeMillis() - sleptBefore) / 1000.0
     }
 }
 
@@ -136,6 +139,12 @@ private fun batteryCelsius(app: Context): Double = try {
 } catch (e: Exception) {
     Double.NaN
 }
+
+/**
+ * (4.0) How long the processor is kept awake at most, renewed for every video (ADR-0019): long enough for any one video, short enough
+ * that a queue stuck for some reason can't drain the battery.
+ */
+private const val AWAKE_PER_VIDEO_MS = 2 * 60 * 60 * 1000L
 
 object AnalysisQueue {
     /** Every video asked for since the app started, oldest first; finished ones stay until [clearFinished]. */
@@ -148,6 +157,7 @@ object AnalysisQueue {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var appContext: Context? = null                 // for the marks in the database (the application, never a screen)
     private var running = false
+    private var awake: PowerManager.WakeLock? = null        // (4.0) held while the queue runs (ADR-0019)
     private var runs = 0
     private var batchFrom = 1                               // (4.0) the first job of the batch now running (see [batch])
     private var lastTimer: TimerHint? = null                // (4.0) where the timer of the video scanned last was (TimerHint)
@@ -280,6 +290,27 @@ object AnalysisQueue {
         jobs.removeAll { it.footageId == footageId && !it.state.isActive }
     }
 
+    /**
+     * (4.0) Keeps the processor awake for the next video (ADR-0019). The foreground service keeps the app alive, but with the screen off
+     * the phone could still fall asleep, and the scan then stood still: the owner's reports had 49 to 434 s in no line (2026-11-28).
+     */
+    private fun stayAwake(app: Context) {
+        try {
+            val lock = awake ?: app.getSystemService(PowerManager::class.java)
+                ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CubeCut:FindSolves")?.also { it.setReferenceCounted(false); awake = it }
+            lock?.acquire(AWAKE_PER_VIDEO_MS)
+        } catch (e: Exception) {
+        }
+    }
+
+    /** (4.0) The queue is done: the phone may sleep again. */
+    private fun letSleep() {
+        try {
+            awake?.let { if (it.isHeld) it.release() }
+        } catch (e: Exception) {
+        }
+    }
+
     private fun start(app: Context) {
         running = true
         batchFrom = jobs.firstOrNull { it.state == ScanState.WAITING }?.run ?: (runs + 1)
@@ -290,6 +321,7 @@ object AnalysisQueue {
             try {
                 while (true) {
                     val job = jobs.firstOrNull { it.state == ScanState.WAITING } ?: break
+                    stayAwake(app)
                     val heat = PhoneHeat(app)
                     scanOne(app, job)
                     heat.stop(job.timing)
@@ -303,6 +335,7 @@ object AnalysisQueue {
                 }
             } finally {
                 running = false
+                letSleep()
                 AnalysisService.stop(app)
             }
             val last = jobs.lastOrNull { !it.state.isActive }
