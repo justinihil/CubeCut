@@ -282,6 +282,7 @@ class SegmentFinderTest {
         pictures = 0
         assertNull(findTimer({ pictures++; empty }, 600.0, fonts).timer)
         assertEquals("going on looks at the same places", pictures, all)
-        assertTrue("$early of $all", early * 3 < all)
+        // (4.0-S2) since the limits are the early ones (40 + 16 places), going on adds no places; it used to be three times as many
+        assertTrue("$early of $all", early <= all)
     }
 }

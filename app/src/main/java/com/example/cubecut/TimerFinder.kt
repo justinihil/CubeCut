@@ -42,11 +42,18 @@ private const val RUN_STEP = 0.5
 /** The search stops after this many runs of the same number; more would only cost time. */
 private const val RUNS_WANTED = 3
 
-/** ...and gives up after looking at this many places. A video without a readable timer pays for all of them. */
-private const val MAX_PLACES = 160
+/**
+ * ...and gives up after looking at this many places. A video without a readable timer pays for all of them. (4.0-S2, owner 2026-11-28:
+ * about twice what the hardest reference video needed, 19 places; it was 160, and a 30 s video without a timer took minutes.) More
+ * finds a timer that is covered for most of the video; fewer gives up sooner on a video without one.
+ */
+private const val MAX_PLACES = 40
 
-/** The second search, at full size, is slower and only helps with tiny digits: it looks at fewer places. */
-private const val MAX_PLACES_FULL_SIZE = 64
+/**
+ * The second search, at full size, is slower and only helps with tiny digits: it looks at fewer places. (4.0-S2: no reference video
+ * needed it; it keeps its first 16, before the other kinds of timer. It was 64.)
+ */
+private const val MAX_PLACES_FULL_SIZE = 16
 
 /** After this many places (and then this many at full size) without any running number, another kind of timer is tried before going on. */
 private const val EARLY_PLACES = 40

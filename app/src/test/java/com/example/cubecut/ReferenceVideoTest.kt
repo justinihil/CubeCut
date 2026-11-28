@@ -460,7 +460,9 @@ class ReferenceVideoTest {
     /** The whole chain on the first video, with the picture moved after a third and again after two thirds of it. */
     @Test
     fun smallCameraMoves() {
-        val v = videos().first { it.name.startsWith("ref_cstimer") }
+        // csTimer 01, as documented (algorithms.md); "ref_cstimer" alone picked digital 1 once it was added. CUBECUT_MOVES_VIDEO: another one
+        val wanted = System.getenv("CUBECUT_MOVES_VIDEO") ?: "ref_cstimer_old_01"
+        val v = videos().first { it.name.startsWith(wanted) }
         val key = places(v).readLines().filter { !it.startsWith("#") && it.isNotBlank() }
             .map { l -> l.split(" ").let { ExpectedSolve(it[1].toDouble(), it[0]) } }
         // per stage: shift right, shift down (pixels of a 1080 x 1920 frame), zoom, turn (degrees)

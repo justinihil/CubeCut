@@ -24,9 +24,13 @@ import kotlin.math.roundToInt
 // first grid whose seconds and tenths RISE WITH THE CLOCK in several pictures is the timer. Nothing is learned: the ten digits look the
 // same on every such display. Pure logic, like TimerFinder.kt.
 
-/** Places looked at before giving up, and again in softened pictures (a strongly noisy video needs that, and it only helps there). */
-private const val SEGMENT_PLACES = 120
-private const val SEGMENT_PLACES_SOFT = 40
+/**
+ * Places looked at before giving up, and again in softened pictures (a strongly noisy video needs that, and it only helps there).
+ * (4.0-S2, owner 2026-11-28: about twice what the hardest reference video needed, 34 places; they were 120 and 40. Each place reads the
+ * whole picture at four sizes, which on a busy picture was 70 % of the time of a 30 s video without a timer.)
+ */
+private const val SEGMENT_PLACES = 68
+private const val SEGMENT_PLACES_SOFT = 20
 private const val SOFT = 1.3
 
 /** A run is this many pictures, this far apart, all rising with the clock. */
