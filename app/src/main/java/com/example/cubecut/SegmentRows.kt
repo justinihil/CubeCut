@@ -72,6 +72,12 @@ private const val ROW_PART = 8
 /** Leans that are tried: how far the top of a digit is to the side of its foot, per height. */
 private val ROW_LEANS = DoubleArray(23) { -0.77 + 0.07 * it }
 
+/**
+ * (4.0-S2) The leans are first tried this far apart (and the last one), then the ones between around the best: 13 tries instead of 23.
+ * Reading the rows of a busy picture (a patterned mat) took most of the time of a video without a timer, most of it in these tries.
+ */
+private const val LEAN_STEP = 3
+
 /** Below this likeness a blob of a first row isn't counted as a digit; and below this mean the whole row isn't one. */
 private const val ROW_DIGIT = 0.55f
 private const val ROW_MEAN = 0.5
@@ -343,6 +349,71 @@ private fun halved(a: FloatArray): FloatArray {
 private val ROW_SHAPES: List<FloatArray> by lazy { SEGMENT_DIGITS.map { (_, s) -> softened(drawnDigit(s), SEG_W, SEG_H, 1.2).also { evenOut(it) } } }
 private val ROUGH_SHAPES: List<FloatArray> by lazy { ROW_SHAPES.map { s -> halved(s).also { evenOut(it) } } }
 
+/**
+ * (4.0-S2) The shapes cell by cell: all of them for cell 0, then for cell 1, and so on, so that [likenesses] compares a place with every
+ * shape in one pass. Reading the rows of a busy picture spent a quarter of its time on these comparisons, one shape after another.
+ */
+private val ROW_BY_CELL: FloatArray by lazy { byCell(ROW_SHAPES) }
+private val ROUGH_BY_CELL: FloatArray by lazy { byCell(ROUGH_SHAPES) }
+
+private fun byCell(shapes: List<FloatArray>): FloatArray {
+    val n = shapes.size
+    val cells = shapes[0].size
+    return FloatArray(cells * n) { val cell = it / n; shapes[it % n][cell] }
+}
+
+/**
+ * (4.0-S2) [likeness] of [c] with every shape of [byCell] (made by [byCell]), into [into]: each sum is added up cell by cell in the
+ * same order as [likeness], so the numbers are exactly the same; the shapes' sums no longer wait for each other.
+ */
+private fun likenesses(c: FloatArray, byCell: FloatArray, into: FloatArray) {
+    val n = into.size
+    java.util.Arrays.fill(into, 0f)
+    var k = 0
+    for (i in c.indices) {
+        val v = c[i]
+        for (s in 0 until n) { into[s] += v * byCell[k]; k++ }
+    }
+}
+
+/**
+ * (4.0-S2) [softened] for one size and [sigma], with its tables made once: the same sums in the same order, so the same numbers. Every
+ * digit place is softened, at two sizes only, and making the tables again each time was a large part of reading a row.
+ */
+private class Softener(private val w: Int, private val h: Int, sigma: Double) {
+    private val k: FloatArray
+    private val column: IntArray
+    private val line: IntArray
+
+    init {
+        val r = max(1, (4 * sigma).roundToInt())
+        k = FloatArray(2 * r + 1) { val x = it - r; Math.exp(-x * x / (2 * sigma * sigma)).toFloat() }
+        val sum = k.sum()
+        for (i in k.indices) k[i] /= sum
+        column = IntArray(w + 2 * r) { mirror(it - r, w) }
+        line = IntArray(h + 2 * r) { mirror(it - r, h) }
+    }
+
+    fun apply(a: FloatArray): FloatArray {
+        val across = FloatArray(w * h)
+        for (y in 0 until h) for (x in 0 until w) {
+            var s = 0f
+            for (i in k.indices) s += k[i] * a[y * w + column[x + i]]
+            across[y * w + x] = s
+        }
+        val out = FloatArray(w * h)
+        for (y in 0 until h) for (i in k.indices) {
+            val from = line[y + i] * w
+            val f = k[i]
+            for (x in 0 until w) out[y * w + x] += f * across[from + x]
+        }
+        return out
+    }
+}
+
+private val ROUGH_SOFT = Softener(SEG_W / 2, SEG_H / 2, 0.6)
+private val FINE_SOFT = Softener(SEG_W, SEG_H, 1.2)
+
 // ---------------------------------------------------------------------------------------
 // rows
 // ---------------------------------------------------------------------------------------
@@ -511,14 +582,14 @@ private class Cut(blobs: Blobs, parts: List<Blob>) {
     private val by0 = parts.minOf { it.y0 }
     private val w = parts.maxOf { it.x1 } - bx0 + 1
     private val h = parts.maxOf { it.y1 } - by0 + 1
-    private val on = BooleanArray(w * h)
+    // (4.0-S2) 1 on the blob and 0 elsewhere, with a border of 0 all round: read without checking the edges, the same values as before
+    private val pw = w + 2
+    private val on = FloatArray(pw * (h + 2))
     val runs: IntArray = runsOf(blobs, parts)
 
     init {
-        for (i in runs.indices step 3) for (x in runs[i]..runs[i + 1]) on[(runs[i + 2] - by0) * w + x - bx0] = true
+        for (i in runs.indices step 3) for (x in runs[i]..runs[i + 1]) on[(runs[i + 2] - by0 + 1) * pw + x - bx0 + 1] = 1f
     }
-
-    private fun on(x: Int, y: Int): Float = if (x >= 0 && y >= 0 && x < w && y < h && on[y * w + x]) 1f else 0f
 
     /** The part of the level picture between these edges as one digit's place. A quarter of the cells ([rough]) is enough to choose a lean. */
     fun place(back: Flat, left: Double, right: Double, top: Double, bottom: Double, rough: Boolean): FloatArray {
@@ -536,10 +607,11 @@ private class Cut(blobs: Blobs, parts: List<Blob>) {
                 val iy = Math.floor(fy).toInt()
                 val u = (fx - ix).toFloat()
                 val v = (fy - iy).toFloat()
-                out[cy * cw + cx] = (on(ix, iy) * (1 - u) + on(ix + 1, iy) * u) * (1 - v) + (on(ix, iy + 1) * (1 - u) + on(ix + 1, iy + 1) * u) * v
+                val k = (iy + 1) * pw + ix + 1
+                out[cy * cw + cx] = (on[k] * (1 - u) + on[k + 1] * u) * (1 - v) + (on[k + pw] * (1 - u) + on[k + pw + 1] * u) * v
             }
         }
-        return softened(out, cw, ch, if (rough) 0.6 else 1.2)
+        return if (rough) ROUGH_SOFT.apply(out) else FINE_SOFT.apply(out)
     }
 }
 
@@ -559,6 +631,7 @@ private fun readSegmentRow(blobs: Blobs, row: List<Piece>, turn: Flat, dark: Boo
     val boxes = Array(n) { DoubleArray(4) }
     val digits = IntArray(n)
     val likes = FloatArray(n)
+    val sums = FloatArray(SEGMENT_DIGITS.size)
 
     class Level(val lean: Double, val score: Double, val height: Double, val digitWidth: Double, val top: Double, val bottom: Double)
 
@@ -580,16 +653,19 @@ private fun readSegmentRow(blobs: Blobs, row: List<Piece>, turn: Flat, dark: Boo
             // (a 1 is only the right edge of its place)
             val c = cuts[i].place(back, b[2] - max(digitWidth, b[2] - b[0]), b[2], top, bottom, rough)
             if (!evenOut(c)) continue
-            val shapes = if (rough) ROUGH_SHAPES else ROW_SHAPES
+            likenesses(c, if (rough) ROUGH_BY_CELL else ROW_BY_CELL, sums)
             var best = -2f
-            for (s in shapes.indices) { val x = likeness(c, shapes[s]); if (x > best) { best = x; digits[i] = SEGMENT_DIGITS[s].first } }
+            for (s in sums.indices) { val x = sums[s]; if (x > best) { best = x; digits[i] = SEGMENT_DIGITS[s].first } }
             likes[i] = best
             sum += best
         }
         return Level(lean, sum / n, height, digitWidth, top, bottom)
     }
 
-    val rough = ROW_LEANS.indices.maxByOrNull { at(ROW_LEANS[it], true).score }!!
+    val roughScore = DoubleArray(ROW_LEANS.size) { Double.NaN }
+    fun roughAt(i: Int): Double { if (roughScore[i].isNaN()) roughScore[i] = at(ROW_LEANS[i], true).score; return roughScore[i] }
+    val start = ((0 until ROW_LEANS.size step LEAN_STEP) + (ROW_LEANS.size - 1)).distinct().maxByOrNull { roughAt(it) }!!
+    val rough = (max(0, start - LEAN_STEP + 1)..min(ROW_LEANS.size - 1, start + LEAN_STEP - 1)).maxByOrNull { roughAt(it) }!!
     val close = (max(0, rough - 1)..min(ROW_LEANS.size - 1, rough + 1)).map { at(ROW_LEANS[it], false) }
     val best = close.maxByOrNull { it.score }!!
     if (best.score < ROW_MEAN) return null

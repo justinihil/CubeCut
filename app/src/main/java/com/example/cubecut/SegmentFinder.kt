@@ -31,6 +31,13 @@ import kotlin.math.roundToInt
  */
 private const val SEGMENT_PLACES = 68
 private const val SEGMENT_PLACES_SOFT = 20
+
+/**
+ * (4.0-S2) Places at least this far apart (seconds). A seven-segment timer shows its running time for a whole solve, so places every
+ * half second of a 30 s clip only read the same moments again, at the price of the most costly picture there is (owner's 30 s competition
+ * clip: 76 places, about 4 s each on the phone). Long videos have their places further apart anyway.
+ */
+private const val SEGMENT_GAP = 1.5
 private const val SOFT = 1.3
 
 /** A run is this many pictures, this far apart, all rising with the clock. */
@@ -106,15 +113,21 @@ fun segmentPlaceBudget(durationSec: Double): Int = spreadPlaces(durationSec, SEG
 /** (4.0) The same for [findSegmentsNear] (where the last video's timer was). */
 fun segmentHintBudget(durationSec: Double): Int = spreadPlaces(durationSec, HINT_SEGMENT_PLACES).size
 
-/** Seconds spread over the video, halving the gaps. */
+/**
+ * Seconds spread over the video, halving the gaps. (4.0-S2) A place closer than [SEGMENT_GAP] to one taken before is left out, so a
+ * short video isn't looked at every half second; a long one gets the same places as before.
+ */
 private fun spreadPlaces(duration: Double, most: Int): List<Double> {
     val out = ArrayList<Double>()
     var q = 2
-    while (out.size < most) {
-        for (i in 0 until q) out.add((duration * (2 * i + 1) / (2 * q) * 2).roundToInt() / 2.0)
+    while (out.size < most && duration / q >= SEGMENT_GAP / 4) {
+        for (i in 0 until q) {
+            val t = (duration * (2 * i + 1) / (2 * q) * 2).roundToInt() / 2.0
+            if (out.none { abs(it - t) < SEGMENT_GAP }) out.add(t)
+        }
         q *= 2
     }
-    return out.take(most).distinct()
+    return out.take(most)
 }
 
 /**
