@@ -17,7 +17,11 @@
 package com.example.cubecut
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.BatteryManager
+import android.os.PowerManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -98,6 +102,40 @@ fun scanCostSec(durationMs: Long): Double = FIND_COST_SEC + READ_COST_PER_SEC * 
 
 /** (4.0) The share of that cost that is looking for the timer. */
 fun findShare(durationMs: Long): Double = FIND_COST_SEC / scanCostSec(durationMs)
+
+/**
+ * (4.0) How warm the phone is while one video is scanned, for the Copy report: a warm phone slows itself down, and two runs of the same
+ * videos took 1134 and 1909 s (owner, 2026-11-28). Needs no permission: the battery's temperature and the heat status are for every app.
+ * Make it when the scan begins (on the main thread), [stop] it when it ends.
+ */
+private class PhoneHeat(private val app: Context) {
+    private val startC = batteryCelsius(app)
+    private val power = app.getSystemService(PowerManager::class.java)
+    private val start = power?.currentThermalStatus ?: -1
+    private var worst = start
+    private val listener = PowerManager.OnThermalStatusChangedListener { if (it > worst) worst = it }
+
+    init {
+        try { power?.addThermalStatusListener(app.mainExecutor, listener) } catch (e: Exception) { }
+    }
+
+    fun stop(timing: ScanTiming?) {
+        try { power?.removeThermalStatusListener(listener) } catch (e: Exception) { }
+        val now = power?.currentThermalStatus ?: -1
+        timing?.batteryStartC = startC
+        timing?.batteryEndC = batteryCelsius(app)
+        timing?.heatStart = start
+        timing?.heatWorst = maxOf(worst, now)
+    }
+}
+
+/** The battery's temperature in °C (Android tells it in tenths), or NaN. */
+private fun batteryCelsius(app: Context): Double = try {
+    val t = app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+    if (t == null || t == Int.MIN_VALUE) Double.NaN else t / 10.0
+} catch (e: Exception) {
+    Double.NaN
+}
 
 object AnalysisQueue {
     /** Every video asked for since the app started, oldest first; finished ones stay until [clearFinished]. */
@@ -252,7 +290,9 @@ object AnalysisQueue {
             try {
                 while (true) {
                     val job = jobs.firstOrNull { it.state == ScanState.WAITING } ?: break
+                    val heat = PhoneHeat(app)
                     scanOne(app, job)
+                    heat.stop(job.timing)
                     job.endedMs = System.currentTimeMillis()
                     // written before `finished` changes, so a screen that reloads then sees the new mark
                     val state = markOf(job.state)
@@ -308,6 +348,7 @@ object AnalysisQueue {
                     hint = lastTimer
                 )
             }
+            if (timing.leftMs > 0) timing.backSec = (System.currentTimeMillis() - timing.leftMs) / 1000.0
             auto.hint?.let { lastTimer = it }
             if (auto.choices.isNotEmpty()) {
                 val picture = withContext(Dispatchers.IO) { grabFrame(app, job.uri, (auto.choices[0].t * 1000).toLong()) }

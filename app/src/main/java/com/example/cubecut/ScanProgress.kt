@@ -71,11 +71,13 @@ fun scanStateText(job: ScanJob): String = when (job.state) {
  * (4.0) The progress panel's *Copy report* (owner, 2026-11-27): for every video, why it took as long as it did. Plain text, to paste
  * into a message: the video, how it ended, the timer, how long it waited, found, followed and scanned, and what the pictures took.
  */
-fun batchReportText(jobs: List<ScanJob>): String {
+fun batchReportText(jobs: List<ScanJob>, installedMs: Long = 0L): String {
     val out = ArrayList<String>()
     val ran = jobs.filter { it.startedMs > 0 }
     val total = ran.sumOf { (if (it.endedMs > 0) it.endedMs else System.currentTimeMillis()) - it.startedMs } / 1000.0
-    out.add("CubeCut ${BuildConfig.VERSION_NAME}${if (BuildConfig.DEBUG) " debug" else ""}: Find solves report, ${jobs.size} video" +
+    // (4.0) which build: the commit it was made from ("+" = with changes not committed yet) and when it was installed (owner, 2026-11-28)
+    val installed = if (installedMs > 0) " (installed " + java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.ENGLISH).format(java.util.Date(installedMs)) + ")" else ""
+    out.add("CubeCut ${BuildConfig.VERSION_NAME}${if (BuildConfig.DEBUG) " debug" else ""}, build ${BuildConfig.COMMIT}$installed: Find solves report, ${jobs.size} video" +
             (if (jobs.size == 1) "" else "s") + ", ${"%.0f".format(total)} s scanning in all")
     for ((i, j) in jobs.withIndex()) {
         val tm = j.timing
@@ -91,16 +93,44 @@ fun batchReportText(jobs: List<ScanJob>): String {
         out.add("   Took ${"%.1f".format(took)} s (${"%.1f".format(perMinute)} s per minute of video), after waiting ${"%.0f".format(waited)} s")
         if (tm == null) continue
         out.add("   Timer: ${tm.timer}")
+        val waitSec = if (tm.enteredMs > 0) (tm.enteredMs - j.startedMs) / 1000.0 else 0.0
+        if (waitSec >= 0.05) out.add("   Waiting to start ${"%.1f".format(waitSec)} s")
         out.add("   Getting ready ${"%.1f".format(tm.readySec)} s")
         out.add("   Finding the timer ${"%.1f".format(tm.findSec)} s" + (if (tm.segmentsSec > 0) " (seven segments ${"%.1f".format(tm.segmentsSec)} s)" else "") +
                 (if (tm.findPictures.isNotEmpty()) ": pictures ${tm.findPictures}" else ""))
         if (tm.lastCheckSec >= 0.05) out.add("   Last check (seven segments by final times) ${"%.1f".format(tm.lastCheckSec)} s")
         if (tm.followSec > 0) out.add("   Following it ${"%.1f".format(tm.followSec)} s" + (if (tm.followPictures.isNotEmpty()) ": pictures ${tm.followPictures}" else ""))
         if (tm.scanSec > 0) out.add("   Scanning ${"%.1f".format(tm.scanSec)} s" + (if (tm.scanPictures.isNotEmpty()) ": pictures ${tm.scanPictures}" else ""))
+        if (tm.closeSec >= 0.05) out.add("   Closing the video ${"%.1f".format(tm.closeSec)} s")
+        if (tm.backSec >= 0.05) out.add("   Back to the queue ${"%.1f".format(tm.backSec)} s")
         if (tm.saveSec >= 0.05) out.add("   Saving ${"%.1f".format(tm.saveSec)} s")
+        // (4.0) whatever no line above holds, so a gap can't hide (owner, 2026-11-28)
+        val lines = waitSec + tm.readySec + tm.findSec + tm.lastCheckSec + tm.followSec + tm.scanSec + tm.closeSec + tm.backSec + tm.saveSec
+        if (took - lines >= 0.5) out.add("   In none of these lines ${"%.1f".format(took - lines)} s")
+        heatText(tm)?.let { out.add("   $it") }
         out.add("   ${tm.pictures} pictures; source: ${tm.source}")
     }
     return out.joinToString("\n")
+}
+
+/** (4.0) "Phone: battery 31.5 → 38.2 °C; heat none, at worst moderate (slowing down)", or null when nothing is known. */
+private fun heatText(tm: ScanTiming): String? {
+    val parts = ArrayList<String>()
+    if (!tm.batteryStartC.isNaN() && !tm.batteryEndC.isNaN()) parts.add("battery ${"%.1f".format(tm.batteryStartC)} → ${"%.1f".format(tm.batteryEndC)} °C")
+    if (tm.heatStart >= 0) parts.add("heat ${heatName(tm.heatStart)}" + if (tm.heatWorst > tm.heatStart) ", at worst ${heatName(tm.heatWorst)}" else "")
+    return if (parts.isEmpty()) null else "Phone: " + parts.joinToString("; ")
+}
+
+/** Android's heat status in words; from "moderate" on the phone slows itself down to cool off. */
+private fun heatName(status: Int): String = when (status) {
+    0 -> "none"
+    1 -> "light"
+    2 -> "moderate (slowing down)"
+    3 -> "severe (slowing down a lot)"
+    4 -> "critical"
+    5 -> "emergency"
+    6 -> "shutting down"
+    else -> "unknown"
 }
 
 /** Does this finished video need the user (to choose the timer, to add solves by hand, or because it stopped)? */
@@ -189,7 +219,8 @@ fun ScanProgressPanel(
                     if (active > 1) TextButton(onClick = { askCancelAll = true }) { Text("Cancel all") }
                     // (4.0) for the owner's test rounds: why some videos took longer (owner, 2026-11-27)
                     if (done.isNotEmpty()) TextButton(onClick = {
-                        val text = batchReportText(jobs)
+                        val installed = try { context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime } catch (e: Exception) { 0L }
+                        val text = batchReportText(jobs, installed)
                         context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("CubeCut Find solves report", text))
                         copied = true
                     }) { Text(if (copied) "Copied" else "Copy report") }

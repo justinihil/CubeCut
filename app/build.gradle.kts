@@ -17,6 +17,16 @@ android {
         versionName = "3.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // (4.0) the commit this APK was built from, for the Copy report: "+" = with changes not committed yet (owner, 2026-11-28)
+        fun git(vararg args: String): String = try {
+            providers.exec { commandLine("git", *args); isIgnoreExitValue = true }.standardOutput.asText.get().trim()
+        } catch (e: Exception) {
+            ""
+        }
+        val commit = git("rev-parse", "--short", "HEAD").ifEmpty { "unknown" }
+        val changed = git("status", "--porcelain", "--untracked-files=no").isNotEmpty()
+        buildConfigField("String", "COMMIT", "\"$commit${if (changed) "+" else ""}\"")
     }
 
     buildTypes {

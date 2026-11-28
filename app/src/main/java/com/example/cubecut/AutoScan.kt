@@ -72,6 +72,16 @@ class ScanTiming {
     var segmentsSec = 0.0               // (4.0) of findSec: looking for a seven-segment timer
     var lastCheckSec = 0.0              // (4.0) a seven-segment timer by its final times, after the search
     var saveSec = 0.0                   // (4.0) after the scan: saving the solves and the places to check
+    // (4.0) the rest of the time a video took (owner, 2026-11-28: up to 434 s were in no line of the report)
+    var enteredMs = 0L                  // when Find solves really began (waiting for a thread before)
+    var leftMs = 0L                     // when it was over and the video closed
+    var closeSec = 0.0                  // closing the video
+    var backSec = 0.0                   // from then until the queue went on with it
+    // (4.0) how warm the phone was: the battery at the start and the end (°C), and the heat status (PowerManager.THERMAL_STATUS_*)
+    var batteryStartC = Double.NaN
+    var batteryEndC = Double.NaN
+    var heatStart = -1
+    var heatWorst = -1
     var followSec = 0.0                 // seven segments only
     var scanSec = 0.0
     var findPictures = ""               // FrameStats.since for each part
@@ -100,6 +110,7 @@ fun analyzeByItself(
     timing: ScanTiming = ScanTiming(), hint: TimerHint? = null
 ): AutoScanResult {
     val durationSec = durationMs / 1000.0
+    timing.enteredMs = System.currentTimeMillis()
     val entered = System.nanoTime()
     val fonts = loadDigitFonts(context)
     val frameSec = videoFrameSec(context, uri)
@@ -216,8 +227,11 @@ fun analyzeByItself(
         part().let { (sec, pics) -> timing.scanSec = sec; timing.scanPictures = pics }
         return AutoScanResult(scan, timer.numbers, emptyList(), if (timer.held) null else TimerHint.Solid(timer.numbers, timer.digitHeight, frameW, frameH, timer.examples.takeIf { it.isLearned }))
     } finally {
+        val closing = System.nanoTime()
         timing.source = source.note()
         source.close()
+        timing.closeSec = (System.nanoTime() - closing) / 1e9
+        timing.leftMs = System.currentTimeMillis()
     }
 }
 
